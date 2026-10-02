@@ -42,8 +42,12 @@ function validate_csrf_token($token) {
  */
 function sanitize_input($data) {
     $data = trim($data);
-    $data = stripslashes($data);
-    $data = htmlspecialchars($data, ENT_QUOTES, 'UTF-8');
+    // Remove null bytes and control characters (except tab/newline/carriage return).
+    // NOTE: no htmlspecialchars() here — output-time escaping is handled at
+    // every render point. Encoding at input time caused double-escaping
+    // (e.g. "O'Brien" stored as "O&#039;Brien", then rendered as "O&amp;#039;Brien").
+    $data = str_replace("\0", '', $data);
+    $data = preg_replace('/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $data);
     return $data;
 }
 
@@ -89,6 +93,74 @@ function redirect_to_dashboard($role) {
     } else {
         redirect('login.php');
     }
+}
+
+/**
+ * Generate a new arithmetic CAPTCHA and store the expected answer
+ * in the session. Call once per page render (GET or after a POST).
+ */
+function generate_captcha() {
+    $a = random_int(1, 9);
+    $b = random_int(1, 9);
+    $_SESSION['captcha_answer'] = $a + $b;
+    $_SESSION['captcha_question'] = 'What is ' . $a . ' + ' . $b . '?';
+}
+
+/**
+ * Verify the submitted CAPTCHA answer. The session value is unset after
+ * one attempt (pass or fail) so it cannot be replayed.
+ *
+ * To swap in Google reCAPTCHA later, you only need to change:
+ *   1) Config: add your reCAPTCHA site key + secret key constants here,
+ *   2) Client: in each form add <script src="https://www.google.com/recaptcha/api.js" async defer></script>
+ *      and <div class="g-recaptcha" data-sitekey="YOUR_SITE_KEY"></div>,
+ *   3) Server: replace this function body with a POST of the secret key and
+ *      $_POST['g-recaptcha-response'] to https://www.google.com/recaptcha/api/siteverify,
+ *      returning true only when the JSON response has "success": true.
+ */
+function verify_captcha() {
+    $expected = $_SESSION['captcha_answer'] ?? null;
+    unset($_SESSION['captcha_answer'], $_SESSION['captcha_question']);
+    $submitted = $_POST['captcha_answer'] ?? null;
+    return $expected !== null && $submitted !== null && ctype_digit(trim((string)$submitted)) && (int)$submitted === $expected;
+}
+
+/**
+ * Create a fresh one-time code for a user. Any previous unused codes for the
+ * same user+purpose are invalidated first. A 6-digit code is stored with a
+ * 15-minute expiry.
+ */
+function create_otp($db, $user_id, $purpose = 'activation') {
+    global $is_production;
+
+    $stmt = $db->prepare('UPDATE otp_codes SET used = 1 WHERE user_id = :uid AND purpose = :p AND used = 0');
+    $stmt->execute(['uid' => $user_id, 'p' => $purpose]);
+
+    $code = str_pad((string)random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+    $expires = date('Y-m-d H:i:s', time() + 900); // 15 minutes
+    $stmt = $db->prepare('INSERT INTO otp_codes (user_id, otp_code, purpose, expires_at) VALUES (:uid, :code, :p, :exp)');
+    $stmt->execute(['uid' => $user_id, 'code' => $code, 'p' => $purpose, 'exp' => $expires]);
+
+    // Best-effort email delivery. In a local XAMPP/demo environment there is
+    // usually no working SMTP, so we deliberately do NOT block the user flow
+    // on mail() succeeding — the code is still usable (see dev fallback below).
+    $stmt = $db->prepare('SELECT email FROM users WHERE id = :id');
+    $stmt->execute(['id' => $user_id]);
+    $user_email = $stmt->fetchColumn();
+    if ($user_email) {
+        @mail($user_email, 'CertiVault Verification Code',
+            "Your CertiVault verification code is: $code\nThis code expires in 15 minutes.");
+    }
+
+    // DEV/DEMO TRADE-OFF (an informed decision, not an oversight): because a
+    // 2-week local deadline means SMTP may never be configured, we also show
+    // the code directly on the confirmation screen. This is STRICTLY guarded
+    // by $is_production (CV_ENV=production) and never appears in production.
+    if (!$is_production) {
+        $_SESSION['dev_otp_display'] = $code;
+    }
+
+    return $code;
 }
 
 /**

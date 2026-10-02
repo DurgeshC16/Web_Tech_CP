@@ -1,0 +1,6 @@
+# Runtime-generated content — keep directories via .gitkeep, ignore the files they hold
+public/qrcodes/*
+!public/qrcodes/.gitkeep
+private_data/uploads/*
+!private_data/uploads/.gitkeep
+private_data/php_errors.log

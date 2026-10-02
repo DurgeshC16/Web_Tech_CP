@@ -33,6 +33,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Validation
     if (empty($student_email) || empty($student_name) || empty($title) || empty($issue_date) || !$file || $file['error'] !== UPLOAD_ERR_OK) {
         $error = 'All fields including the certificate file are required.';
+    } elseif (!filter_var($student_email, FILTER_VALIDATE_EMAIL)) {
+        $error = 'Please provide a valid student email address.';
     } elseif ($expiry_date && strtotime($expiry_date) <= strtotime($issue_date)) {
         $error = 'Expiry date must be after the issue date.';
     } else {
@@ -66,6 +68,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmt = $db->prepare('INSERT INTO students (user_id, full_name) VALUES (:user_id, :full_name)');
                     $stmt->execute(['user_id' => $new_user_id, 'full_name' => $student_name]);
                     $student_id = $db->lastInsertId();
+                    $new_student_user_id = $new_user_id; // remember for activation email/OTP after commit
                 }
                 
                 // 2. Generate Certificate ID
@@ -135,6 +138,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $db->commit();
                 $success = "Certificate successfully issued! Certificate ID: " . $cert_id;
                 $success_qr_token = $qr_token;
+
+                // For a brand-new inline student account, send/register an
+                // activation OTP. The student sets their real password and
+                // activates via activate_account.php — no orphaned accounts.
+                if (!empty($new_student_user_id)) {
+                    create_otp($db, $new_student_user_id, 'activation');
+                }
             } catch (Exception $e) {
                 $db->rollBack();
                 $error = 'Error issuing certificate: ' . $e->getMessage();
@@ -147,6 +157,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Issue Certificate - CertiVault</title>
     <link rel="stylesheet" href="assets/css/style.css">
 </head>
@@ -161,6 +172,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <?php if ($success): ?>
             <div class="alert alert-success">
                 <strong>Success!</strong> <?= htmlspecialchars($success) ?>
+                <?php
+                // DEV/DEMO ONLY: expose the newly created student's activation
+                // code on this screen since local SMTP is not guaranteed.
+                // Guarded by $is_production — never shown when CV_ENV=production.
+                if (!$is_production && isset($_SESSION['dev_otp_display'])): ?>
+                    <p><strong>Dev mode — student activation code:</strong>
+                    <?= htmlspecialchars($_SESSION['dev_otp_display']) ?></p>
+                <?php endif; ?>
             </div>
             
             <div style="text-align: center; margin: 20px 0; border: 1px solid #ccc; padding: 20px; border-radius: 8px;">

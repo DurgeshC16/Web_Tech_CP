@@ -6,7 +6,21 @@ CREATE TABLE users (
     email VARCHAR(255) NOT NULL UNIQUE,
     password_hash VARCHAR(255) NOT NULL,
     role ENUM('super_admin', 'admin', 'student') NOT NULL,
+    is_verified TINYINT(1) NOT NULL DEFAULT 0,
+    failed_login_attempts INT NOT NULL DEFAULT 0,
+    locked_until DATETIME NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE otp_codes (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    otp_code VARCHAR(6) NOT NULL,
+    purpose ENUM('activation','login_2fa') NOT NULL,
+    expires_at DATETIME NOT NULL,
+    used TINYINT(1) NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 CREATE TABLE institutions (
@@ -28,8 +42,8 @@ CREATE TABLE students (
 );
 
 -- Insert a default super_admin for demo purposes
-INSERT INTO users (email, password_hash, role) VALUES 
-('superadmin@certivault.com', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'super_admin'); 
+INSERT INTO users (email, password_hash, role, is_verified) VALUES 
+('superadmin@certivault.com', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'super_admin', 1); 
 -- password is 'password'
 
 CREATE TABLE certificates (

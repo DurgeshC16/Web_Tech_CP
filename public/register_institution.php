@@ -11,9 +11,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $name = sanitize_input($_POST['name'] ?? '');
     $email = sanitize_input($_POST['email'] ?? '');
     $password = $_POST['password'] ?? '';
+    $confirm_password = $_POST['confirm_password'] ?? '';
     
-    if (empty($name) || empty($email) || empty($password)) {
+    if (!verify_captcha()) {
+        $error = 'Incorrect CAPTCHA answer. Please try again.';
+    } elseif (empty($name) || empty($email) || empty($password)) {
         $error = 'All fields are required.';
+    } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $error = 'Please provide a valid email address.';
+    } elseif ($password !== $confirm_password) {
+        $error = 'Passwords do not match.';
     } else {
         $db = Database::getInstance();
         
@@ -35,7 +42,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmt->execute(['user_id' => $user_id, 'name' => $name]);
                 
                 $db->commit();
-                $success = 'Registration successful! Your account is pending approval.';
+                create_otp($db, $user_id, 'activation');
+                redirect('activate_account.php?user_id=' . $user_id);
             } catch (Exception $e) {
                 $db->rollBack();
                 $error = 'Registration failed. Please try again.';
@@ -44,10 +52,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 ?>
+<?php generate_captcha(); ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Institution Registration - CertiVault</title>
     <link rel="stylesheet" href="assets/css/style.css">
 </head>
@@ -74,6 +84,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <div class="form-group">
                 <label>Password:</label>
                 <input type="password" name="password" required>
+            </div>
+            <div class="form-group">
+                <label>Confirm Password:</label>
+                <input type="password" name="confirm_password" required>
+            </div>
+            <div class="form-group">
+                <label>CAPTCHA: <?= htmlspecialchars($_SESSION['captcha_question'] ?? '') ?></label>
+                <input type="text" name="captcha_answer" required autocomplete="off">
             </div>
             <button type="submit" class="btn">Register</button>
         </form>

@@ -20,10 +20,11 @@ $limit = 20;
 $offset = ($page - 1) * $limit;
 
 $filter_result = $_GET['result'] ?? '';
-$where_clauses = ['c.institution_id = :inst_id'];
+// Include unmatched (INVALID) lookups too: their certificate join is NULL.
+$where_clauses = ['(c.institution_id = :inst_id OR c.institution_id IS NULL)'];
 $params = ['inst_id' => $institution_id];
 
-if ($filter_result && in_array($filter_result, ['VALID', 'TAMPERED', 'EXPIRED', 'REVOKED', 'INVALID'])) {
+if ($filter_result && in_array($filter_result, ['VALID', 'TAMPERED', 'EXPIRED', 'REVOKED', 'INVALID', 'SUPERSEDED'])) {
     $where_clauses[] = 'v.result = :res';
     $params['res'] = $filter_result;
 }
@@ -34,7 +35,7 @@ $where_sql = implode(' AND ', $where_clauses);
 $count_stmt = $db->prepare("
     SELECT COUNT(*) 
     FROM verification_logs v
-    JOIN certificates c ON v.certificate_id_found = c.certificate_id
+    LEFT JOIN certificates c ON v.certificate_id_found = c.certificate_id
     WHERE $where_sql
 ");
 $count_stmt->execute($params);
@@ -45,8 +46,8 @@ $total_pages = ceil($total_rows / $limit);
 $query = "
     SELECT v.*, c.title, s.full_name as student_name
     FROM verification_logs v
-    JOIN certificates c ON v.certificate_id_found = c.certificate_id
-    JOIN students s ON c.student_id = s.id
+    LEFT JOIN certificates c ON v.certificate_id_found = c.certificate_id
+    LEFT JOIN students s ON c.student_id = s.id
     WHERE $where_sql
     ORDER BY v.verified_at DESC
     LIMIT :limit OFFSET :offset
@@ -91,6 +92,8 @@ $logs = $stmt->fetchAll();
                         <option value="TAMPERED" <?= $filter_result === 'TAMPERED' ? 'selected' : '' ?>>TAMPERED</option>
                         <option value="EXPIRED" <?= $filter_result === 'EXPIRED' ? 'selected' : '' ?>>EXPIRED</option>
                         <option value="REVOKED" <?= $filter_result === 'REVOKED' ? 'selected' : '' ?>>REVOKED</option>
+                        <option value="INVALID" <?= $filter_result === 'INVALID' ? 'selected' : '' ?>>INVALID</option>
+                        <option value="SUPERSEDED" <?= $filter_result === 'SUPERSEDED' ? 'selected' : '' ?>>SUPERSEDED</option>
                     </select>
                 </div>
                 <div>
@@ -118,12 +121,16 @@ $logs = $stmt->fetchAll();
                             <td><?= htmlspecialchars(date('Y-m-d H:i:s', strtotime($log['verified_at']))) ?></td>
                             <td style="word-break: break-all; max-width: 200px;"><small><?= htmlspecialchars($log['query_value']) ?></small></td>
                             <td>
-                                <a href="view_certificate_admin.php?id=<?= urlencode($log['certificate_id_found']) ?>" style="font-weight: bold; text-decoration: none; color: #007bff;">
-                                    <?= htmlspecialchars($log['certificate_id_found']) ?>
-                                </a><br>
-                                <small><?= htmlspecialchars($log['title']) ?></small>
+                                <?php if (!empty($log['certificate_id_found'])): ?>
+                                    <a href="view_certificate_admin.php?id=<?= urlencode($log['certificate_id_found']) ?>" style="font-weight: bold; text-decoration: none; color: #007bff;">
+                                        <?= htmlspecialchars($log['certificate_id_found']) ?>
+                                    </a><br>
+                                    <small><?= htmlspecialchars($log['title'] ?? '') ?></small>
+                                <?php else: ?>
+                                    — no match —
+                                <?php endif; ?>
                             </td>
-                            <td><?= htmlspecialchars($log['student_name']) ?></td>
+                            <td><?= $log['student_name'] !== null ? htmlspecialchars($log['student_name']) : '— no match —' ?></td>
                             <td>
                                 <span class="status-badge status-<?= strtolower($log['result']) ?>">
                                     <?= htmlspecialchars($log['result']) ?>
