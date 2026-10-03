@@ -1,0 +1,17 @@
+<?php
+// src/config/config.local.php — LOCAL dev overrides ONLY.
+//
+// XAMPP/Apache on Windows does not reliably pass OS environment variables to
+// PHP, so this file lets you set real SMTP credentials directly. Copy it to
+// src/config/config.local.php and fill in the real values.
+//
+// NEVER commit config.local.php with real credentials (it is gitignored).
+// In production, set real env vars or use a proper secrets store instead.
+
+define('SMTP_HOST', 'smtp.gmail.com');
+define('SMTP_PORT', 587);
+define('SMTP_USERNAME', 'your-email@gmail.com');
+define('SMTP_PASSWORD', 'your-16-char-app-password');
+define('SMTP_ENCRYPTION', 'tls');
+define('SMTP_FROM_EMAIL', 'your-email@gmail.com');
+define('SMTP_FROM_NAME', 'CertiVault');

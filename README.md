@@ -51,11 +51,22 @@ Composer required). Configure it with environment variables:
 - `SMTP_ENCRYPTION` (default `tls`; use `ssl` with port `465`)
 - `SMTP_FROM_EMAIL`, `SMTP_FROM_NAME` (default `CertiVault`)
 
+For local development, do **not** rely on OS environment variables — XAMPP/Apache on Windows doesn't reliably pass them to PHP. Instead:
+
+1. Copy the example override file:
+   ```
+   copy src\config\config.local.php.example src\config\config.local.php
+   ```
+2. Fill in the real values in `src/config/config.local.php` (it's gitignored, so credentials never get committed). `config.php` loads it automatically when present, and its values win over the env-var fallbacks.
+3. Restart Apache so the new settings are picked up.
+
 **Gmail:** set `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`, `SMTP_ENCRYPTION=tls`.
 `SMTP_PASSWORD` must be a **16-character Google App Password**, not your normal
 Gmail password — generate one at <https://myaccount.google.com/apppasswords>
 after enabling 2-Step Verification. A regular Gmail password will be rejected
 by Google's SMTP servers.
+
+If you'd rather use real environment variables (e.g. on Linux/hosted servers), set `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_ENCRYPTION` (default `tls`; use `ssl` with port `465`), `SMTP_FROM_EMAIL`, and `SMTP_FROM_NAME` (default `CertiVault`) — they're picked up as fallbacks when no `config.local.php` exists.
 
 For local development without SMTP, leave the variables unset: OTP creation
 still succeeds, the error is logged to `private_data/php_errors.log`, and the

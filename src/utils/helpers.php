@@ -149,6 +149,7 @@ function create_otp($db, $user_id, $purpose = 'activation') {
     $user_email = $stmt->fetchColumn();
 
     $email_sent = false;
+    $email_error = null;
     if ($user_email) {
         try {
             require_once __DIR__ . '/PHPMailer/Exception.php';
@@ -174,6 +175,7 @@ function create_otp($db, $user_id, $purpose = 'activation') {
         } catch (\Throwable $e) {
             error_log('CertiVault OTP email failed for user_id ' . $user_id . ': ' . $e->getMessage());
             $email_sent = false;
+            $email_error = $e->getMessage();
         }
     }
 
@@ -184,6 +186,10 @@ function create_otp($db, $user_id, $purpose = 'activation') {
     if (!$is_production) {
         if ($email_sent) {
             $_SESSION['dev_otp_display'] = "Verification code sent to your email. (Dev mode, also shown here: $code)";
+        } elseif ($email_error !== null) {
+            // Dev-only: surface the real PHPMailer error so SMTP misconfiguration
+            // is visible on screen without digging through php_errors.log.
+            $_SESSION['dev_otp_display'] = "Could not send email (code: $code) — error: " . $email_error;
         } else {
             $_SESSION['dev_otp_display'] = "Could not send email — dev mode fallback code: $code";
         }
