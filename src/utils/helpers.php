@@ -141,15 +141,40 @@ function create_otp($db, $user_id, $purpose = 'activation') {
     $stmt = $db->prepare('INSERT INTO otp_codes (user_id, otp_code, purpose, expires_at) VALUES (:uid, :code, :p, :exp)');
     $stmt->execute(['uid' => $user_id, 'code' => $code, 'p' => $purpose, 'exp' => $expires]);
 
-    // Best-effort email delivery. In a local XAMPP/demo environment there is
-    // usually no working SMTP, so we deliberately do NOT block the user flow
-    // on mail() succeeding — the code is still usable (see dev fallback below).
+    // Best-effort email delivery via PHPMailer over SMTP. In a local XAMPP/demo
+    // environment SMTP may not be configured, so we deliberately do NOT block
+    // the user flow on delivery — the code is still usable (see dev fallback).
     $stmt = $db->prepare('SELECT email FROM users WHERE id = :id');
     $stmt->execute(['id' => $user_id]);
     $user_email = $stmt->fetchColumn();
+
+    $email_sent = false;
     if ($user_email) {
-        @mail($user_email, 'CertiVault Verification Code',
-            "Your CertiVault verification code is: $code\nThis code expires in 15 minutes.");
+        try {
+            require_once __DIR__ . '/PHPMailer/Exception.php';
+            require_once __DIR__ . '/PHPMailer/SMTP.php';
+            require_once __DIR__ . '/PHPMailer/PHPMailer.php';
+
+            $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
+            $mail->isSMTP();
+            $mail->Host       = SMTP_HOST;
+            $mail->SMTPAuth   = true;
+            $mail->Username   = SMTP_USERNAME;
+            $mail->Password   = SMTP_PASSWORD;
+            $mail->SMTPSecure = SMTP_ENCRYPTION; // 'tls' or 'ssl'
+            $mail->Port       = SMTP_PORT;
+
+            $mail->setFrom(SMTP_FROM_EMAIL, SMTP_FROM_NAME);
+            $mail->addAddress($user_email);
+            $mail->Subject = 'CertiVault Verification Code';
+            $mail->Body    = "Your CertiVault verification code is: $code\nThis code expires in 15 minutes.";
+            $mail->isHTML(false); // plain-text message
+
+            $email_sent = $mail->send();
+        } catch (\Throwable $e) {
+            error_log('CertiVault OTP email failed for user_id ' . $user_id . ': ' . $e->getMessage());
+            $email_sent = false;
+        }
     }
 
     // DEV/DEMO TRADE-OFF (an informed decision, not an oversight): because a
@@ -157,7 +182,11 @@ function create_otp($db, $user_id, $purpose = 'activation') {
     // the code directly on the confirmation screen. This is STRICTLY guarded
     // by $is_production (CV_ENV=production) and never appears in production.
     if (!$is_production) {
-        $_SESSION['dev_otp_display'] = $code;
+        if ($email_sent) {
+            $_SESSION['dev_otp_display'] = "Verification code sent to your email. (Dev mode, also shown here: $code)";
+        } else {
+            $_SESSION['dev_otp_display'] = "Could not send email — dev mode fallback code: $code";
+        }
     }
 
     return $code;

@@ -46,13 +46,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['generate_share'])) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>View Certificate - CertiVault</title>
     <link rel="stylesheet" href="assets/css/style.css">
+    <?php require_once __DIR__ . '/../src/partials/head_fonts.php'; ?>
 </head>
 <body>
-    <div class="container" style="max-width: 600px;">
-        <h2>Certificate Details</h2>
-        <a href="student_dashboard.php" class="btn" style="float: right; margin-top: -40px;">Back</a>
-        
-        <div class="card" style="margin-top: 20px;">
+    <div class="container shell-wide">
+        <div class="page-head">
+            <h2>Certificate Details</h2>
+            <a href="student_dashboard.php" class="btn btn-secondary">Back</a>
+        </div>
+
+        <div class="card">
             <h3><?= htmlspecialchars($cert['title']) ?></h3>
             <p><strong>Certificate ID:</strong> <?= htmlspecialchars($cert['certificate_id']) ?></p>
             <p><strong>Version:</strong> <?= $cert['version'] ?></p>
@@ -63,46 +66,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['generate_share'])) {
             <?php endif; ?>
             <p>
                 <strong>Status:</strong> 
-                <span class="status-badge status-<?= htmlspecialchars($cert['status']) ?>">
+                <span class="badge-status badge-<?= htmlspecialchars($cert['status'] === 'active' ? 'valid' : $cert['status']) ?>">
                     <?= htmlspecialchars($cert['status']) ?>
                 </span>
             </p>
             
             <?php if ($cert['status'] === 'superseded' && !empty($cert['superseded_by_id'])): ?>
-                <div class="alert alert-info" style="margin-top:10px;">
+                <div class="alert alert-info">
                     <strong>This version has been superseded.</strong> A corrected version has been issued.<br>
                     <a href="view_certificate_student.php?id=<?= $cert['superseded_by_id'] ?>">View Current Version →</a>
                 </div>
             <?php endif; ?>
             
             <?php if ($cert['status'] === 'revoked'): ?>
-                <div class="alert alert-danger" style="margin-top:10px;">
+                <div class="alert alert-danger">
                     <strong>This certificate has been revoked</strong> by the issuing institution and is no longer valid.
                 </div>
             <?php endif; ?>
             
             <?php if ($cert['qr_token'] && $cert['status'] === 'active'): ?>
-                <div style="text-align: center; margin: 20px 0;">
+                <div class="qr-hero">
                     <p><strong>Verification QR:</strong></p>
-                    <img src="qrcodes/<?= htmlspecialchars($cert['qr_token']) ?>.png" alt="QR Code" style="max-width: 150px; border: 1px solid #ccc;">
+                    <img src="qrcodes/<?= htmlspecialchars($cert['qr_token']) ?>.png" alt="QR Code">
                 </div>
             <?php endif; ?>
             
             <?php if ($cert['status'] === 'active'): ?>
-            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                <a href="download.php?id=<?= $cert['id'] ?>" class="btn">Download File</a>
-                <form method="POST" action="" style="margin: 0;">
+            <div class="actions-row">
+                <a href="download.php?id=<?= $cert['id'] ?>" class="btn btn-primary">Download File</a>
+                <form method="POST" action="" class="inline-form">
                     <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
                     <input type="hidden" name="generate_share" value="1">
-                    <button type="submit" class="btn" style="background-color: #28a745;">Generate Share Link (24h)</button>
+                    <button type="submit" class="btn btn-verified">Generate Share Link (24h)</button>
                 </form>
             </div>
             <?php endif; ?>
             
             <?php if ($share_link): ?>
-                <div class="alert alert-success" style="margin-top: 20px;">
+                <div class="alert alert-success">
                     <strong>Share Link:</strong><br>
-                    <input type="text" value="<?= htmlspecialchars($share_link) ?>" readonly style="width: 100%; margin-top: 5px; padding: 5px;" onclick="this.select();">
+                    <input type="text" value="<?= htmlspecialchars($share_link) ?>" readonly class="share-input" onclick="this.select();">
                     <small>This link is valid for 24 hours.</small>
                 </div>
             <?php endif; ?>

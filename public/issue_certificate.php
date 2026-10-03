@@ -160,12 +160,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Issue Certificate - CertiVault</title>
     <link rel="stylesheet" href="assets/css/style.css">
+    <?php require_once __DIR__ . '/../src/partials/head_fonts.php'; ?>
 </head>
 <body>
-    <div class="container">
-        <h2>Issue Certificate</h2>
-        <a href="admin_dashboard.php" class="btn" style="float: right; margin-top: -40px;">Back to Dashboard</a>
-        
+    <div class="container shell-wide">
+        <div class="page-head">
+            <h2>Issue Certificate</h2>
+            <a href="admin_dashboard.php" class="btn btn-secondary">Back to Dashboard</a>
+        </div>
+
         <?php if ($error): ?>
             <div class="alert alert-danger"><?= htmlspecialchars($error) ?></div>
         <?php endif; ?>
@@ -177,20 +180,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // code on this screen since local SMTP is not guaranteed.
                 // Guarded by $is_production — never shown when CV_ENV=production.
                 if (!$is_production && isset($_SESSION['dev_otp_display'])): ?>
-                    <p><strong>Dev mode — student activation code:</strong>
-                    <?= htmlspecialchars($_SESSION['dev_otp_display']) ?></p>
+                    <p><?= htmlspecialchars($_SESSION['dev_otp_display']) ?></p>
                 <?php endif; ?>
             </div>
             
-            <div style="text-align: center; margin: 20px 0; border: 1px solid #ccc; padding: 20px; border-radius: 8px;">
+            <div class="qr-hero">
                 <h3>Certificate QR Code</h3>
                 <p>This QR code can be scanned by employers to verify the certificate's authenticity.</p>
-                <img src="qrcodes/<?= htmlspecialchars($success_qr_token) ?>.png" alt="QR Code" style="max-width: 250px; border: 1px solid #eee;">
+                <img src="qrcodes/<?= htmlspecialchars($success_qr_token) ?>.png" alt="QR Code">
                 <br>
-                <a href="qrcodes/<?= htmlspecialchars($success_qr_token) ?>.png" download="Certificate_QR.png" class="btn" style="margin-top: 15px;">Download QR Code (PNG)</a>
+                <a href="qrcodes/<?= htmlspecialchars($success_qr_token) ?>.png" download="Certificate_QR.png" class="btn btn-primary">Download QR Code (PNG)</a>
             </div>
-            
-            <a href="issue_certificate.php" class="btn">Issue Another</a>
+
+            <a href="issue_certificate.php" class="btn btn-secondary">Issue Another</a>
         <?php else: ?>
         
         <form method="POST" action="" enctype="multipart/form-data">
@@ -222,7 +224,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <input type="file" name="certificate_file" accept=".pdf, .png, .jpg, .jpeg" required>
             </div>
             
-            <button type="submit" class="btn">Issue Certificate</button>
+            <button type="submit" class="btn btn-primary">Issue Certificate</button>
         </form>
         <?php endif; ?>
     </div>

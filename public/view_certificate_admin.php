@@ -59,21 +59,19 @@ $history = $hist_stmt->fetchAll();
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Certificate Detail & History - CertiVault</title>
     <link rel="stylesheet" href="assets/css/style.css">
-    <style>
-        .pagination { display: flex; gap: 5px; justify-content: flex-start; margin-top: 15px; }
-        .pagination a { padding: 4px 8px; border: 1px solid #ccc; text-decoration: none; border-radius: 4px; color: #333; font-size: 0.9em; }
-        .pagination a.active { background: #007bff; color: white; border-color: #007bff; }
-    </style>
+    <?php require_once __DIR__ . '/../src/partials/head_fonts.php'; ?>
 </head>
 <body>
-    <div class="container" style="max-width: 900px;">
-        <h2>Certificate Detail & Verification History</h2>
-        <a href="admin_dashboard.php" class="btn" style="float: right; margin-top: -40px;">Back to Dashboard</a>
-        
-        <div style="display: flex; gap: 20px; flex-wrap: wrap; margin-top: 20px;">
+    <div class="container shell-wide">
+        <div class="page-head">
+            <h2>Certificate Detail & Verification History</h2>
+            <a href="admin_dashboard.php" class="btn btn-secondary">Back to Dashboard</a>
+        </div>
+
+        <div class="split">
             <!-- Certificate Details Card -->
-            <div class="card" style="flex: 1; min-width: 300px;">
-                <h3 style="margin-top:0;"><?= htmlspecialchars($cert['title']) ?></h3>
+            <div class="card split-main">
+                <h3><?= htmlspecialchars($cert['title']) ?></h3>
                 <p><strong>Certificate ID:</strong> <?= htmlspecialchars($cert['certificate_id']) ?></p>
                 <p><strong>Version:</strong> <?= $cert['version'] ?></p>
                 <p><strong>Awarded To:</strong> <?= htmlspecialchars($cert['student_name']) ?></p>
@@ -83,47 +81,48 @@ $history = $hist_stmt->fetchAll();
                 <?php endif; ?>
                 <p>
                     <strong>Status:</strong> 
-                    <span class="status-badge status-<?= htmlspecialchars($cert['status']) ?>">
+                    <span class="badge-status badge-<?= htmlspecialchars($cert['status'] === 'active' ? 'valid' : $cert['status']) ?>">
                         <?= htmlspecialchars($cert['status']) ?>
                     </span>
                 </p>
                 
                 <?php if ($cert['status'] === 'revoked' && !empty($cert['revocation_reason'])): ?>
-                    <div class="alert alert-danger" style="margin-top:10px;">
+                    <div class="alert alert-danger">
                         <strong>Revocation Reason:</strong><br>
                         <?= htmlspecialchars($cert['revocation_reason']) ?>
                     </div>
                 <?php endif; ?>
                 
                 <?php if ($cert['status'] === 'superseded' && !empty($cert['superseded_by_id'])): ?>
-                    <div class="alert alert-info" style="margin-top:10px;">
+                    <div class="alert alert-info">
                         <strong>Superseded.</strong> This version has been replaced.<br>
                         <a href="view_certificate_admin.php?id=<?= $cert['superseded_by_id'] ?>">View Current Version →</a>
                     </div>
                 <?php endif; ?>
                 
                 <?php if (!empty($cert['previous_version_id'])): ?>
-                    <p style="margin-top:10px;"><small><a href="view_certificate_admin.php?id=<?= $cert['previous_version_id'] ?>">← View Previous Version</a></small></p>
+                    <p><small><a href="view_certificate_admin.php?id=<?= $cert['previous_version_id'] ?>">← View Previous Version</a></small></p>
                 <?php endif; ?>
-                
+
                 <?php if ($cert['qr_token']): ?>
-                    <div style="margin-top: 15px;">
-                        <p><strong>QR Token:</strong> <br><small style="word-break: break-all;"><?= htmlspecialchars($cert['qr_token']) ?></small></p>
+                    <div>
+                        <p><strong>QR Token:</strong> <br><small class="break-all"><?= htmlspecialchars($cert['qr_token']) ?></small></p>
                     </div>
                 <?php endif; ?>
                 
                 <?php if (in_array($cert['status'], ['active', 'expired'])): ?>
-                    <div style="margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
-                        <a href="revoke_certificate.php?id=<?= $cert['id'] ?>" class="btn" style="background-color: #dc3545;">Revoke</a>
-                        <a href="supersede_certificate.php?id=<?= $cert['id'] ?>" class="btn" style="background-color: #fd7e14;">Supersede / Correct</a>
+                    <div class="actions-row">
+                        <a href="revoke_certificate.php?id=<?= $cert['id'] ?>" class="btn btn-danger">Revoke</a>
+                        <a href="supersede_certificate.php?id=<?= $cert['id'] ?>" class="btn btn-warn">Supersede / Correct</a>
                     </div>
                 <?php endif; ?>
             </div>
             
             <!-- History Table -->
-            <div style="flex: 2; min-width: 400px;">
-                <h3 style="margin-top: 0;">Verification History</h3>
-                <table class="table" style="font-size: 0.9em;">
+            <div class="split-side">
+                <h3>Verification History</h3>
+                <div class="table-wrap">
+                <table class="table">
                     <thead>
                         <tr>
                             <th>Timestamp</th>
@@ -138,7 +137,7 @@ $history = $hist_stmt->fetchAll();
                                 <tr>
                                     <td><?= htmlspecialchars(date('M j, Y H:i', strtotime($log['verified_at']))) ?></td>
                                     <td>
-                                        <span class="status-badge status-<?= strtolower($log['result']) ?>">
+                                        <span class="badge-status badge-<?= htmlspecialchars(strtolower($log['result'])) ?>">
                                             <?= htmlspecialchars($log['result']) ?>
                                         </span>
                                     </td>
@@ -148,11 +147,12 @@ $history = $hist_stmt->fetchAll();
                             <?php endforeach; ?>
                         <?php else: ?>
                             <tr>
-                                <td colspan="4" style="text-align: center;">No verification attempts yet.</td>
+                                <td colspan="4" class="text-center">No verification attempts yet.</td>
                             </tr>
                         <?php endif; ?>
                     </tbody>
                 </table>
+                </div>
                 
                 <?php if ($total_pages > 1): ?>
                     <div class="pagination">

@@ -69,9 +69,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Activate Account - CertiVault</title>
     <link rel="stylesheet" href="assets/css/style.css">
+    <?php require_once __DIR__ . '/../src/partials/head_fonts.php'; ?>
 </head>
 <body>
-    <div class="container">
+    <div class="container shell-narrow">
         <h2>Activate Your Account</h2>
         <p>Enter the 6-digit code sent to <strong><?= htmlspecialchars($user['email']) ?></strong> and set your password.</p>
         <?php if ($error): ?>
@@ -83,7 +84,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // production (CV_ENV=production).
         if (!$is_production && isset($_SESSION['dev_otp_display'])): ?>
             <div class="alert alert-success">
-                <strong>Dev mode — your verification code is:</strong>
                 <?= htmlspecialchars($_SESSION['dev_otp_display']) ?>
             </div>
         <?php endif; ?>
@@ -103,7 +103,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <label>Confirm Password:</label>
                 <input type="password" name="confirm_password" required>
             </div>
-            <button type="submit" class="btn">Activate Account</button>
+            <button type="submit" class="btn btn-primary">Activate Account</button>
         </form>
         <p>Need a new code? <a href="login.php?resend=<?= urlencode($user['email']) ?>">Resend verification code</a></p>
     </div>

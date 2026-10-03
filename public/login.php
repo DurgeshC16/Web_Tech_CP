@@ -106,9 +106,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login - CertiVault</title>
     <link rel="stylesheet" href="assets/css/style.css">
+    <?php require_once __DIR__ . '/../src/partials/head_fonts.php'; ?>
 </head>
 <body>
-    <div class="container">
+    <div class="container shell-narrow">
         <h2>Login to CertiVault</h2>
         <?php if ($error): ?>
             <div class="alert alert-danger"><?= htmlspecialchars($error) ?></div>
@@ -134,7 +135,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <label>CAPTCHA: <?= htmlspecialchars($_SESSION['captcha_question'] ?? '') ?></label>
                 <input type="text" name="captcha_answer" required autocomplete="off">
             </div>
-            <button type="submit" class="btn">Login</button>
+            <button type="submit" class="btn btn-primary">Login</button>
         </form>
         <p>Don't have an account? <a href="register_student.php">Register as Student</a> or <a href="register_institution.php">Register as Institution</a></p>
     </div>

@@ -155,13 +155,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error)) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Supersede Certificate - CertiVault</title>
     <link rel="stylesheet" href="assets/css/style.css">
+    <?php require_once __DIR__ . '/../src/partials/head_fonts.php'; ?>
 </head>
 <body>
-    <div class="container" style="max-width: 650px;">
-        <h2>Supersede / Correct Certificate</h2>
-        <a href="view_certificate_admin.php?id=<?= $old_cert_id ?>" class="btn" style="float: right; margin-top: -40px;">Back</a>
-        
-        <div class="alert alert-info" style="margin-top: 10px;">
+    <div class="container shell-wide">
+        <div class="page-head">
+            <h2>Supersede / Correct Certificate</h2>
+            <a href="view_certificate_admin.php?id=<?= $old_cert_id ?>" class="btn btn-secondary">Back</a>
+        </div>
+
+        <div class="alert alert-info">
             <strong>Original Certificate:</strong> <?= htmlspecialchars($old_cert['certificate_id']) ?> (v<?= $old_cert['version'] ?>)<br>
             <strong>Title:</strong> <?= htmlspecialchars($old_cert['title']) ?><br>
             <strong>Student:</strong> <?= htmlspecialchars($old_cert['student_name']) ?> (<?= htmlspecialchars($old_cert['student_email']) ?>)
@@ -176,14 +179,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error)) {
                 The original certificate (<?= htmlspecialchars($old_cert['certificate_id']) ?>) is now marked as <strong>superseded</strong>.
             </div>
             
-            <div style="text-align: center; margin: 20px 0; border: 1px solid #ccc; padding: 20px; border-radius: 8px;">
+            <div class="qr-hero">
                 <h3>New Certificate QR Code</h3>
-                <img src="qrcodes/<?= htmlspecialchars($success_qr_token) ?>.png" alt="QR Code" style="max-width: 250px; border: 1px solid #eee;">
+                <img src="qrcodes/<?= htmlspecialchars($success_qr_token) ?>.png" alt="QR Code">
                 <br>
-                <a href="qrcodes/<?= htmlspecialchars($success_qr_token) ?>.png" download="Certificate_QR.png" class="btn" style="margin-top: 15px;">Download QR Code (PNG)</a>
+                <a href="qrcodes/<?= htmlspecialchars($success_qr_token) ?>.png" download="Certificate_QR.png" class="btn btn-primary">Download QR Code (PNG)</a>
             </div>
             
-            <a href="admin_dashboard.php" class="btn">Back to Dashboard</a>
+            <a href="admin_dashboard.php" class="btn btn-secondary">Back to Dashboard</a>
         <?php elseif (in_array($old_cert['status'], ['active', 'expired'])): ?>
         
         <p>Submit the corrected certificate data below. The original will be preserved but marked as <strong>superseded</strong>.</p>
@@ -208,7 +211,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error)) {
                 <input type="file" name="certificate_file" accept=".pdf, .png, .jpg, .jpeg" required>
             </div>
             
-            <button type="submit" class="btn" style="width: 100%; background-color: #fd7e14;">Issue Corrected Version</button>
+            <button type="submit" class="btn btn-warn btn-block">Issue Corrected Version</button>
         </form>
         <?php endif; ?>
     </div>

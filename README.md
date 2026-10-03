@@ -41,6 +41,26 @@ Web_Tech_CP/
 └── README.md
 ```
 
+# Email setup
+
+OTP codes are delivered by email via SMTP using PHPMailer (vendored at
+`src/utils/PHPMailer/`, mirroring the `src/utils/phpqrcode/` pattern — no
+Composer required). Configure it with environment variables:
+
+- `SMTP_HOST`, `SMTP_PORT` (default `587`), `SMTP_USERNAME`, `SMTP_PASSWORD`
+- `SMTP_ENCRYPTION` (default `tls`; use `ssl` with port `465`)
+- `SMTP_FROM_EMAIL`, `SMTP_FROM_NAME` (default `CertiVault`)
+
+**Gmail:** set `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`, `SMTP_ENCRYPTION=tls`.
+`SMTP_PASSWORD` must be a **16-character Google App Password**, not your normal
+Gmail password — generate one at <https://myaccount.google.com/apppasswords>
+after enabling 2-Step Verification. A regular Gmail password will be rejected
+by Google's SMTP servers.
+
+For local development without SMTP, leave the variables unset: OTP creation
+still succeeds, the error is logged to `private_data/php_errors.log`, and the
+code is shown on screen (non-production only).
+
 # Setup
 
 1. **Clone** the repository into your XAMPP `htdocs` folder.

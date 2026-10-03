@@ -28,12 +28,15 @@ $certificates = $stmt->fetchAll();
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Student Dashboard - CertiVault</title>
     <link rel="stylesheet" href="assets/css/style.css">
+    <?php require_once __DIR__ . '/../src/partials/head_fonts.php'; ?>
 </head>
 <body>
-    <div class="container" style="max-width: 800px;">
-        <h2>My Certificates</h2>
-        <a href="logout.php" class="btn" style="float: right; margin-top: -40px;">Logout</a>
-        
+    <div class="container shell-wide">
+        <div class="page-head">
+            <h2>My Certificates</h2>
+            <a href="logout.php" class="btn btn-secondary">Logout</a>
+        </div>
+
         <?php if (count($certificates) > 0): ?>
             <div class="grid-container">
                 <?php foreach ($certificates as $cert): ?>
@@ -43,12 +46,12 @@ $certificates = $stmt->fetchAll();
                         <div class="card-meta"><strong>Issued By:</strong> <?= htmlspecialchars($cert['institution_name']) ?></div>
                         <div class="card-meta"><strong>Date:</strong> <?= htmlspecialchars(date('F j, Y', strtotime($cert['issue_date']))) ?></div>
                         <div>
-                            <span class="status-badge status-<?= htmlspecialchars($cert['status']) ?>">
+                            <span class="badge-status badge-<?= htmlspecialchars($cert['status'] === 'active' ? 'valid' : $cert['status']) ?>">
                                 <?= htmlspecialchars($cert['status']) ?>
                             </span>
                         </div>
                         <?php if ($cert['status'] === 'superseded' && !empty($cert['superseded_by_id'])): ?>
-                            <div class="card-meta" style="margin-top:8px; color:#856404;">
+                            <div class="card-meta text-warn">
                                 <small>This version has been replaced. <a href="view_certificate_student.php?id=<?= $cert['superseded_by_id'] ?>">View current version →</a></small>
                             </div>
                         <?php endif; ?>

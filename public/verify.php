@@ -167,80 +167,74 @@ if ($query_type !== null) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Verify Certificate - CertiVault</title>
     <link rel="stylesheet" href="assets/css/style.css">
+    <?php require_once __DIR__ . '/../src/partials/head_fonts.php'; ?>
 </head>
 <body>
-    <div class="container" style="max-width: 650px;">
+    <div class="container shell-narrow">
         <h2 style="text-align:center;">CertiVault — Certificate Verification</h2>
 
         <?php if ($verdict === null): ?>
         <!-- ── Landing / Search Form ─────────────────────────────── -->
-        <p style="text-align:center; color:#666;">
+        <p style="text-align:center; color:var(--muted);">
             Enter a Certificate ID below, or scan the QR code printed on the certificate.
         </p>
-        <form method="POST" action="" style="margin-top:20px;">
+        <form method="POST" action="" style="margin-top:20px;" class="card">
             <div class="form-group">
-                <label>Certificate ID (e.g. CV-2026-000001):</label>
-                <input type="text" name="certificate_id" placeholder="CV-YYYY-NNNNNN" required>
+                <label for="certificate_id">Certificate ID</label>
+                <input type="text" id="certificate_id" name="certificate_id" placeholder="CV-YYYY-NNNNNN" required>
             </div>
-            <button type="submit" class="btn" style="width:100%;">Verify</button>
+            <button type="submit" class="btn btn-primary" style="width:100%;">Verify</button>
         </form>
 
         <?php else: ?>
         <!-- ── Verdict Display ───────────────────────────────────── -->
-        <div class="verdict-card verdict-<?= strtolower($verdict) ?>">
-            <div class="verdict-icon">
-                <?php
-                    $icons = [
-                        'VALID'      => '✓',
-                        'TAMPERED'   => '✗',
-                        'EXPIRED'    => '⏱',
-                        'REVOKED'    => '⊘',
-                        'SUPERSEDED' => '↻',
-                        'INVALID'    => '?',
-                    ];
-                    echo $icons[$verdict] ?? '?';
-                ?>
+        <div style="text-align:center; margin-top:20px;">
+            <div class="verdict-seal verdict-seal-<?= strtolower($verdict) ?>">
+                <?= $verdict ?>
             </div>
-            <div class="verdict-label"><?= $verdict ?></div>
-            <p class="verdict-detail"><?= htmlspecialchars($detail) ?></p>
+            <p class="verdict-detail" style="text-align:center;"><?= htmlspecialchars($detail) ?></p>
         </div>
 
         <?php if (in_array($verdict, ['VALID', 'EXPIRED'])): ?>
         <!-- Show certificate details only for VALID / EXPIRED -->
         <div class="card" style="margin-top:25px;">
-            <h3 style="margin-top:0;"><?= htmlspecialchars($cert['title']) ?></h3>
-            <p><strong>Certificate ID:</strong> <?= htmlspecialchars($cert['certificate_id']) ?></p>
-            <p><strong>Awarded To:</strong> <?= htmlspecialchars($cert['student_name']) ?></p>
-            <p><strong>Issued By:</strong> <?= htmlspecialchars($cert['institution_name']) ?></p>
-            <p><strong>Issue Date:</strong> <?= htmlspecialchars(date('F j, Y', strtotime($cert['issue_date']))) ?></p>
-            <?php if ($cert['expiry_date']): ?>
-                <p><strong>Expiry Date:</strong> <?= htmlspecialchars(date('F j, Y', strtotime($cert['expiry_date']))) ?></p>
-            <?php endif; ?>
-            <p>
-                <strong>Status:</strong>
-                <span class="status-badge status-<?= htmlspecialchars($cert['status']) ?>">
-                    <?= htmlspecialchars($cert['status']) ?>
-                </span>
-            </p>
+            <h3 class="cert-details-title"><?= htmlspecialchars($cert['title']) ?></h3>
+            <dl class="cert-details">
+                <dt>Certificate ID</dt><dd><?= htmlspecialchars($cert['certificate_id']) ?></dd>
+                <dt>Awarded To</dt><dd><?= htmlspecialchars($cert['student_name']) ?></dd>
+                <dt>Issued By</dt><dd><?= htmlspecialchars($cert['institution_name']) ?></dd>
+                <dt>Issue Date</dt><dd><?= htmlspecialchars(date('F j, Y', strtotime($cert['issue_date']))) ?></dd>
+                <?php if ($cert['expiry_date']): ?>
+                    <dt>Expiry Date</dt><dd><?= htmlspecialchars(date('F j, Y', strtotime($cert['expiry_date']))) ?></dd>
+                <?php endif; ?>
+                <dt>Status</dt>
+                <dd>
+                    <span class="badge-status badge-<?= $cert['status'] === 'active' ? 'valid' : htmlspecialchars($cert['status']) ?>">
+                        <?= htmlspecialchars($cert['status']) ?>
+                    </span>
+                </dd>
+            </dl>
         </div>
 
         <?php elseif ($verdict === 'REVOKED'): ?>
         <!-- For REVOKED show only the cert ID so the verifier knows which record -->
         <div class="card" style="margin-top:25px;">
             <p><strong>Certificate ID:</strong> <?= htmlspecialchars($cert['certificate_id']) ?></p>
-            <p style="color:#721c24;">This certificate has been revoked and is no longer valid. Contact the issuing institution for details.</p>
+            <p style="color:var(--danger);">This certificate has been revoked and is no longer valid. Contact the issuing institution for details.</p>
         </div>
 
         <?php elseif ($verdict === 'SUPERSEDED'): ?>
         <!-- For SUPERSEDED show details + link to current version -->
         <div class="card" style="margin-top:25px;">
-            <h3 style="margin-top:0;"><?= htmlspecialchars($cert['title']) ?></h3>
-            <p><strong>Certificate ID:</strong> <?= htmlspecialchars($cert['certificate_id']) ?> (v<?= $cert['version'] ?>)</p>
-            <p><strong>Awarded To:</strong> <?= htmlspecialchars($cert['student_name']) ?></p>
-            <p><strong>Issued By:</strong> <?= htmlspecialchars($cert['institution_name']) ?></p>
-            <p style="color:#856404;">This version has been superseded by a corrected certificate.</p>
+            <h3 class="cert-details-title"><?= htmlspecialchars($cert['title']) ?></h3>
+            <dl class="cert-details">
+                <dt>Certificate ID</dt><dd><?= htmlspecialchars($cert['certificate_id']) ?> (v<?= $cert['version'] ?>)</dd>
+                <dt>Awarded To</dt><dd><?= htmlspecialchars($cert['student_name']) ?></dd>
+                <dt>Issued By</dt><dd><?= htmlspecialchars($cert['institution_name']) ?></dd>
+            </dl>
+            <p style="color:var(--warn); margin-top:12px;">This version has been superseded by a corrected certificate.</p>
             <?php if ($superseded_by): ?>
-                <a href="verify.php?token=<?= urlencode($superseded_by['qr_token']) ?>" class="btn" style="background-color:#28a745;">Verify Current Version (<?= htmlspecialchars($superseded_by['certificate_id']) ?>) →</a>
+                <a href="verify.php?token=<?= urlencode($superseded_by['qr_token']) ?>" class="btn btn-primary">Verify Current Version (<?= htmlspecialchars($superseded_by['certificate_id']) ?>) →</a>
             <?php endif; ?>
         </div>
         <?php endif; ?>

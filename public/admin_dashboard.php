@@ -33,15 +33,18 @@ $certificates = $stmt->fetchAll();
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Dashboard - CertiVault</title>
     <link rel="stylesheet" href="assets/css/style.css">
+    <?php require_once __DIR__ . '/../src/partials/head_fonts.php'; ?>
 </head>
 <body>
-    <div class="container" style="max-width: 900px;">
-        <h2><?= htmlspecialchars($institution['name']) ?> Dashboard</h2>
-        <a href="logout.php" class="btn" style="float: right; margin-top: -40px;">Logout</a>
-        
-        <div style="margin: 20px 0; display: flex; gap: 10px;">
-            <a href="issue_certificate.php" class="btn">Issue New Certificate</a>
-            <a href="audit_logs.php" class="btn" style="background-color: #6c757d;">View Global Audit Logs</a>
+    <div class="container shell-wide">
+        <div class="page-head">
+            <h2><?= htmlspecialchars($institution['name']) ?> Dashboard</h2>
+            <a href="logout.php" class="btn btn-secondary">Logout</a>
+        </div>
+
+        <div class="actions-row">
+            <a href="issue_certificate.php" class="btn btn-primary">Issue New Certificate</a>
+            <a href="audit_logs.php" class="btn btn-secondary">View Global Audit Logs</a>
         </div>
 
         <h3>Issued Certificates</h3>
@@ -54,7 +57,7 @@ $certificates = $stmt->fetchAll();
                         <div class="card-meta"><strong>Awarded To:</strong> <?= htmlspecialchars($cert['student_name']) ?></div>
                         <div class="card-meta"><strong>Issue Date:</strong> <?= htmlspecialchars(date('F j, Y', strtotime($cert['issue_date']))) ?></div>
                         <div>
-                            <span class="status-badge status-<?= htmlspecialchars($cert['status']) ?>">
+                            <span class="badge-status badge-<?= htmlspecialchars($cert['status'] === 'active' ? 'valid' : $cert['status']) ?>">
                                 <?= htmlspecialchars($cert['status']) ?>
                             </span>
                         </div>

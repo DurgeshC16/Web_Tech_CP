@@ -59,18 +59,22 @@ $pending_institutions = $stmt->fetchAll();
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Super Admin - CertiVault</title>
     <link rel="stylesheet" href="assets/css/style.css">
+    <?php require_once __DIR__ . '/../src/partials/head_fonts.php'; ?>
 </head>
 <body>
-    <div class="container">
-        <h2>Super Admin Dashboard</h2>
-        <a href="logout.php" class="btn" style="float: right; margin-top: -40px;">Logout</a>
-        
+    <div class="container shell-wide">
+        <div class="page-head">
+            <h2>Super Admin Dashboard</h2>
+            <a href="logout.php" class="btn btn-secondary">Logout</a>
+        </div>
+
         <?php if ($message): ?>
             <div class="alert alert-info"><?= htmlspecialchars($message) ?></div>
         <?php endif; ?>
         
         <h3>Pending Institutions</h3>
         <?php if (count($pending_institutions) > 0): ?>
+            <div class="table-wrap">
             <table class="table">
                 <thead>
                     <tr>
@@ -87,16 +91,17 @@ $pending_institutions = $stmt->fetchAll();
                             <td><?= htmlspecialchars($inst['name']) ?></td>
                             <td><?= htmlspecialchars($inst['email']) ?></td>
                             <td>
-                                <form method="POST" action="" style="margin:0;">
+                                <form method="POST" action="" class="inline-form">
                                     <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
                                     <input type="hidden" name="approve_id" value="<?= $inst['id'] ?>">
-                                    <button type="submit" class="btn">Approve</button>
+                                    <button type="submit" class="btn btn-primary">Approve</button>
                                 </form>
                             </td>
                         </tr>
                     <?php endforeach; ?>
                 </tbody>
             </table>
+            </div>
         <?php else: ?>
             <p>No pending institutions.</p>
         <?php endif; ?>
