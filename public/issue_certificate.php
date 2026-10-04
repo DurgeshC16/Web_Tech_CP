@@ -3,9 +3,11 @@ require_once __DIR__ . '/../src/config/Database.php';
 require_once __DIR__ . '/../src/utils/helpers.php';
 
 require_role('admin');
+require_approved_institution();
 
 $db = Database::getInstance();
 $error = '';
+$errors = [];
 $success = '';
 
 // Get Institution ID for the logged-in user
@@ -26,32 +28,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $title = sanitize_input($_POST['title'] ?? '');
     $issue_date = sanitize_input($_POST['issue_date'] ?? '');
     $expiry_date = sanitize_input($_POST['expiry_date'] ?? '');
-    
+    $errors = [];
+
     // File details
     $file = $_FILES['certificate_file'] ?? null;
-    
+
     // Validation
-    if (empty($student_email) || empty($student_name) || empty($title) || empty($issue_date) || !$file || $file['error'] !== UPLOAD_ERR_OK) {
-        $error = 'All fields including the certificate file are required.';
-    } elseif (!filter_var($student_email, FILTER_VALIDATE_EMAIL)) {
-        $error = 'Please provide a valid student email address.';
-    } elseif ($expiry_date && strtotime($expiry_date) <= strtotime($issue_date)) {
-        $error = 'Expiry date must be after the issue date.';
+    if (($e = v_required($student_email, 'Student Email')) !== true) { $errors['student_email'] = $e; }
+    elseif (($e = v_email($student_email)) !== true) { $errors['student_email'] = $e; }
+    if (($e = v_required($student_name, 'Student Full Name')) !== true) { $errors['student_name'] = $e; }
+    elseif (($e = v_person_name($student_name)) !== true) { $errors['student_name'] = $e; }
+    if (($e = v_required($title, 'Certificate Title')) !== true) { $errors['title'] = $e; }
+    elseif (($e = v_length($title, 3, 200, 'Certificate Title')) !== true) { $errors['title'] = $e; }
+    if (($e = v_required($issue_date, 'Issue Date')) !== true) {
+        $errors['issue_date'] = $e;
     } else {
-        // File validation
-        $allowed_types = ['application/pdf', 'image/png', 'image/jpeg'];
-        $max_size = 5 * 1024 * 1024; // 5MB
-        $finfo = finfo_open(FILEINFO_MIME_TYPE);
-        $mime_type = finfo_file($finfo, $file['tmp_name']);
-        finfo_close($finfo);
-        
-        if (!in_array($mime_type, $allowed_types)) {
-            $error = 'Invalid file type. Only PDF, PNG, and JPG are allowed.';
-        } elseif ($file['size'] < 1024) {
-            $error = 'File appears to be empty or corrupted.';
-        } elseif ($file['size'] > $max_size) {
-            $error = 'File size exceeds the 5MB limit.';
-        } else {
+        $dr = v_date_range($issue_date, $expiry_date ?: null);
+        if ($dr !== true) {
+            $errors[strpos($dr, 'Expiry') === 0 ? 'expiry_date' : 'issue_date'] = $dr;
+        }
+    }
+    if (($file_e = v_upload($file)) !== true) { $errors['certificate_file'] = $file_e; }
+
+    if (!empty($errors)) {
+        $error = 'Please correct the highlighted fields below.';
+    } else {
+            $destination = null;
+            $qr_path = null;
             try {
                 $db->beginTransaction();
                 
@@ -141,30 +144,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $success = "Certificate successfully issued! Certificate ID: " . $cert_id;
                 $success_qr_token = $qr_token;
 
-                // For a brand-new inline student account, send/register an
-                // activation OTP. The student sets their real password and
-                // activates via activate_account.php — no orphaned accounts.
+                // For a brand-new inline student account, send an activation
+                // OTP. The student sets their real password and activates via
+                // activate_account.php — no orphaned accounts.
                 if (!empty($new_student_user_id)) {
-                    create_otp($db, $new_student_user_id, 'activation');
+                    $activate_url = BASE_URL . '/activate_account.php?user_id=' . $new_student_user_id;
+                    $otp_result = create_otp($db, $new_student_user_id, 'activation', $activate_url);
+                    if ($otp_result === 'sent') {
+                        $activation_msg = 'Activation email sent to ' . htmlspecialchars(mask_email($student_email)) . '.';
+                    } else {
+                        $activation_msg = "We couldn't send the activation email right now. The student can request a new code from the login page.";
+                    }
                 }
             } catch (Exception $e) {
                 $db->rollBack();
                 $error = 'Error issuing certificate: ' . $e->getMessage();
+                // Remove orphaned files left behind by a failed issue attempt
+                if ($destination && is_file($destination)) { @unlink($destination); }
+                if ($qr_path && is_file($qr_path)) { @unlink($qr_path); }
             }
         }
     }
-}
 ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Issue Certificate - CertiVault</title>
-    <link rel="stylesheet" href="assets/css/style.css">
-    <?php require_once __DIR__ . '/../src/partials/head_fonts.php'; ?>
-</head>
-<body>
+<?php $page_title = 'Issue Certificate - CertiVault'; require __DIR__ . '/../src/partials/head.php'; ?>
+<?php require __DIR__ . '/../src/partials/header.php'; ?>
+<main id="main">
     <div class="container shell-wide">
         <div class="page-head">
             <h2>Issue Certificate</h2>
@@ -174,20 +178,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <?php if ($error): ?>
             <div class="alert alert-danger"><?= htmlspecialchars($error) ?></div>
         <?php endif; ?>
+        <?php if (!empty($errors)): ?>
+            <div class="alert alert-danger">Please correct the highlighted fields below.</div>
+        <?php endif; ?>
         <?php if ($success): ?>
             <div class="alert alert-success">
                 <strong>Success!</strong> <?= htmlspecialchars($success) ?>
-                <?php
-                // DEV/DEMO ONLY: expose the newly created student's activation
-                // code on this screen since local SMTP is not guaranteed.
-                // Guarded by $is_production — never shown when CV_ENV=production.
-                if (!$is_production && isset($_SESSION['dev_otp_display'])): ?>
-                    <p><?= htmlspecialchars($_SESSION['dev_otp_display']) ?></p>
+                <?php if (!empty($activation_msg)): ?>
+                    <p><?= $activation_msg ?></p>
                 <?php endif; ?>
             </div>
             
-            <div class="qr-hero">
-                <h3>Certificate QR Code</h3>
+            <div class="seal-frame">
+                <h3>Certificate QR — Digital Seal</h3>
                 <p>This QR code can be scanned by employers to verify the certificate's authenticity.</p>
                 <img src="qrcodes/<?= htmlspecialchars($success_qr_token) ?>.png" alt="QR Code">
                 <br>
@@ -200,35 +203,56 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <form method="POST" action="" enctype="multipart/form-data">
             <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
             
+            <div class="form-row">
             <div class="form-group">
                 <label>Student Email:</label>
-                <input type="email" name="student_email" required>
+                <input type="email" name="student_email" value="<?= htmlspecialchars($student_email ?? '') ?>" data-validate="required|email" required>
                 <small>If student does not exist, an account will be created automatically.</small>
+                <?php render_field_error($errors, 'student_email'); ?>
             </div>
             <div class="form-group">
                 <label>Student Full Name:</label>
-                <input type="text" name="student_name" required>
+                <input type="text" name="student_name" value="<?= htmlspecialchars($student_name ?? '') ?>" data-validate="required|personname" required>
+                <?php render_field_error($errors, 'student_name'); ?>
+            </div>
             </div>
             <div class="form-group">
                 <label>Certificate Title (e.g., Bachelor of Science in Computer Science):</label>
-                <input type="text" name="title" required>
+                <input type="text" name="title" value="<?= htmlspecialchars($title ?? '') ?>" data-validate="required|min:3|max:200" required>
+                <?php render_field_error($errors, 'title'); ?>
             </div>
+            <div class="form-row">
             <div class="form-group">
                 <label>Issue Date:</label>
-                <input type="date" name="issue_date" required>
+                <input type="date" name="issue_date" id="issue_date" value="<?= htmlspecialchars($issue_date ?? '') ?>" data-validate="required|daterange" required>
+                <?php render_field_error($errors, 'issue_date'); ?>
             </div>
             <div class="form-group">
                 <label>Expiry Date (Optional):</label>
-                <input type="date" name="expiry_date">
+                <input type="date" name="expiry_date" value="<?= htmlspecialchars($expiry_date ?? '') ?>" data-validate="after:#issue_date">
+                <?php render_field_error($errors, 'expiry_date'); ?>
+            </div>
             </div>
             <div class="form-group">
                 <label>Certificate File (PDF, PNG, JPG - Max 5MB):</label>
-                <input type="file" name="certificate_file" accept=".pdf, .png, .jpg, .jpeg" required>
+                <input type="file" name="certificate_file" id="certificate_file" accept=".pdf, .png, .jpg, .jpeg" data-validate="upload" required>
+                <small class="file-name-display" id="file_name_display"></small>
+                <?php render_field_error($errors, 'certificate_file'); ?>
             </div>
-            
+            <script>
+            document.getElementById('certificate_file').addEventListener('change', function (e) {
+                var f = e.target.files[0];
+                var el = document.getElementById('file_name_display');
+                if (f) { el.textContent = f.name + ' — ' + (f.size / 1024).toFixed(1) + ' KB'; } else { el.textContent = ''; }
+            });
+            </script>
+
             <button type="submit" class="btn btn-primary">Issue Certificate</button>
         </form>
         <?php endif; ?>
     </div>
+    <script src="assets/js/validation.js"></script>
+</main>
+<?php require __DIR__ . '/../src/partials/footer.php'; ?>
 </body>
 </html>

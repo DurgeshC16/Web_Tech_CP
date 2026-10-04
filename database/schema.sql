@@ -15,10 +15,11 @@ CREATE TABLE users (
 CREATE TABLE otp_codes (
     id INT AUTO_INCREMENT PRIMARY KEY,
     user_id INT NOT NULL,
-    otp_code VARCHAR(6) NOT NULL,
-    purpose ENUM('activation','login_2fa') NOT NULL,
+    otp_code VARCHAR(64) NOT NULL,
+    purpose ENUM('activation','password_reset','password_change') NOT NULL,
     expires_at DATETIME NOT NULL,
     used TINYINT(1) NOT NULL DEFAULT 0,
+    attempts TINYINT NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
@@ -30,6 +31,7 @@ CREATE TABLE institutions (
     status ENUM('pending', 'approved', 'rejected') DEFAULT 'pending',
     public_key TEXT,
     encrypted_private_key TEXT,
+    rejection_reason VARCHAR(500) DEFAULT NULL,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
@@ -60,6 +62,8 @@ CREATE TABLE certificates (
     previous_version_id INT NULL,
     superseded_by_id INT NULL,
     revocation_reason TEXT NULL,
+    revoked_at DATETIME NULL DEFAULT NULL,
+    revoked_by INT NULL DEFAULT NULL,
     sha256_hash VARCHAR(64) NULL,
     digital_signature TEXT NULL,
     qr_token VARCHAR(255) NULL,
@@ -69,6 +73,11 @@ CREATE TABLE certificates (
     FOREIGN KEY (previous_version_id) REFERENCES certificates(id),
     FOREIGN KEY (superseded_by_id) REFERENCES certificates(id)
 );
+
+-- Indexes (kept in sync with database/migrations/003_verification_integrity_indexes.sql)
+CREATE INDEX idx_certificates_student_id ON certificates(student_id);
+CREATE INDEX idx_certificates_institution_id ON certificates(institution_id);
+CREATE UNIQUE INDEX uniq_certificates_qr_token ON certificates(qr_token);
 
 CREATE TABLE verification_logs (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -80,3 +89,5 @@ CREATE TABLE verification_logs (
     verifier_ip VARCHAR(45) NOT NULL,
     verified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+CREATE INDEX idx_vlogs_ip_time ON verification_logs(verifier_ip, verified_at);
+CREATE INDEX idx_vlogs_cert_found ON verification_logs(certificate_id_found);

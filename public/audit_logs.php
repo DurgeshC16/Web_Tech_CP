@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../src/config/Database.php';
 require_once __DIR__ . '/../src/utils/helpers.php';
 require_role('admin');
+require_approved_institution();
 
 $db = Database::getInstance();
 
@@ -62,22 +63,22 @@ $stmt->execute();
 $logs = $stmt->fetchAll();
 
 ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Audit Logs - CertiVault</title>
-    <link rel="stylesheet" href="assets/css/style.css">
-    <?php require_once __DIR__ . '/../src/partials/head_fonts.php'; ?>
-</head>
-<body>
+<?php $page_title = 'Audit Logs - CertiVault'; require __DIR__ . '/../src/partials/head.php'; ?>
+<?php require __DIR__ . '/../src/partials/header.php'; ?>
+<main id="main">
     <div class="container shell-wide">
         <div class="page-head">
             <h2>Global Audit Logs</h2>
             <a href="admin_dashboard.php" class="btn btn-secondary">Back to Dashboard</a>
         </div>
         <p>This trail shows all verification attempts against certificates issued by your institution.</p>
+
+        <div class="chip-row">
+            <a href="audit_logs.php" class="chip <?= $filter_result === '' ? 'active' : '' ?>">All</a>
+            <?php foreach (['VALID','TAMPERED','EXPIRED','REVOKED','INVALID','SUPERSEDED'] as $v): ?>
+                <a href="?result=<?= $v ?>" class="chip chip-<?= strtolower($v) ?> <?= $filter_result === $v ? 'active' : '' ?>"><?= $v ?></a>
+            <?php endforeach; ?>
+        </div>
 
         <div class="filter-bar">
             <form method="GET" action="" class="filter-form">
@@ -101,7 +102,7 @@ $logs = $stmt->fetchAll();
         </div>
 
         <div class="table-wrap">
-        <table class="table">
+        <table class="table table-striped">
             <thead>
                 <tr>
                     <th>Timestamp</th>
@@ -116,9 +117,9 @@ $logs = $stmt->fetchAll();
                 <?php if (count($logs) > 0): ?>
                     <?php foreach ($logs as $log): ?>
                         <tr>
-                            <td><?= htmlspecialchars(date('Y-m-d H:i:s', strtotime($log['verified_at']))) ?></td>
-                            <td class="break-all"><small><?= htmlspecialchars($log['query_value']) ?></small></td>
-                            <td>
+                            <td data-label="Timestamp"><?= htmlspecialchars(date('Y-m-d H:i:s', strtotime($log['verified_at']))) ?></td>
+                            <td data-label="Entered ID / Token" class="break-all"><small><?= htmlspecialchars($log['query_value']) ?></small></td>
+                            <td data-label="Matched Certificate">
                                 <?php if (!empty($log['certificate_id_found'])): ?>
                                     <a href="view_certificate_admin.php?id=<?= urlencode($log['certificate_id_found']) ?>" class="text-link">
                                         <?= htmlspecialchars($log['certificate_id_found']) ?>
@@ -128,13 +129,13 @@ $logs = $stmt->fetchAll();
                                     — no match —
                                 <?php endif; ?>
                             </td>
-                            <td><?= $log['student_name'] !== null ? htmlspecialchars($log['student_name']) : '— no match —' ?></td>
-                            <td>
+                            <td data-label="Student"><?= $log['student_name'] !== null ? htmlspecialchars($log['student_name']) : '— no match —' ?></td>
+                            <td data-label="Result">
                                 <span class="badge-status badge-<?= htmlspecialchars(strtolower($log['result'])) ?>">
                                     <?= htmlspecialchars($log['result']) ?>
                                 </span>
                             </td>
-                            <td><?= htmlspecialchars($log['verifier_ip']) ?></td>
+                            <td data-label="IP Address"><?= htmlspecialchars($log['verifier_ip']) ?></td>
                         </tr>
                     <?php endforeach; ?>
                 <?php else: ?>
@@ -149,12 +150,14 @@ $logs = $stmt->fetchAll();
         <?php if ($total_pages > 1): ?>
             <div class="pagination">
                 <?php for ($i = 1; $i <= $total_pages; $i++): ?>
-                    <a href="?page=<?= $i ?>&result=<?= urlencode($filter_result) ?>" class="<?= $i === $page ? 'active' : '' ?>">
-                        <?= $i ?>
+                    <a href="?page=<?= (int)$i ?>&result=<?= urlencode($filter_result) ?>" class="<?= $i === $page ? 'active' : '' ?>">
+                        <?= (int)$i ?>
                     </a>
                 <?php endfor; ?>
             </div>
         <?php endif; ?>
     </div>
+</main>
+<?php require __DIR__ . '/../src/partials/footer.php'; ?>
 </body>
 </html>

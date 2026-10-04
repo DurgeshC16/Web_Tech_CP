@@ -4,12 +4,17 @@ require_once __DIR__ . '/../src/utils/helpers.php';
 require_once __DIR__ . '/../src/services/CryptoService.php';
 require_once __DIR__ . '/../src/services/QRService.php';
 require_role('admin');
+require_approved_institution();
 
 $db = Database::getInstance();
 $old_cert_id = (int)($_GET['id'] ?? 0);
 $error = '';
+$errors = [];
 $success = '';
 $success_qr_token = '';
+$title = '';
+$issue_date = '';
+$expiry_date = '';
 
 // Get Institution ID
 $stmt = $db->prepare('SELECT id FROM institutions WHERE user_id = :user_id LIMIT 1');
@@ -45,25 +50,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error)) {
     $title = sanitize_input($_POST['title'] ?? '');
     $issue_date = sanitize_input($_POST['issue_date'] ?? '');
     $expiry_date = sanitize_input($_POST['expiry_date'] ?? '');
+
     $file = $_FILES['certificate_file'] ?? null;
-    
-    if (empty($title) || empty($issue_date) || !$file || $file['error'] !== UPLOAD_ERR_OK) {
-        $error = 'All fields including the certificate file are required.';
-    } elseif ($expiry_date && strtotime($expiry_date) <= strtotime($issue_date)) {
-        $error = 'Expiry date must be after the issue date.';
+    $errors = [];
+
+    if (($e = v_required($title, 'Certificate Title')) !== true) { $errors['title'] = $e; }
+    elseif (($e = v_length($title, 3, 200, 'Certificate Title')) !== true) { $errors['title'] = $e; }
+    if (($e = v_required($issue_date, 'Issue Date')) !== true) {
+        $errors['issue_date'] = $e;
     } else {
-        // File validation
-        $allowed_types = ['application/pdf', 'image/png', 'image/jpeg'];
-        $max_size = 5 * 1024 * 1024;
-        $finfo = finfo_open(FILEINFO_MIME_TYPE);
-        $mime_type = finfo_file($finfo, $file['tmp_name']);
-        finfo_close($finfo);
-        
-        if (!in_array($mime_type, $allowed_types)) {
-            $error = 'Invalid file type. Only PDF, PNG, and JPG are allowed.';
-        } elseif ($file['size'] > $max_size) {
-            $error = 'File size exceeds the 5MB limit.';
-        } else {
+        $dr = v_date_range($issue_date, $expiry_date ?: null);
+        if ($dr !== true) {
+            $errors[strpos($dr, 'Expiry') === 0 ? 'expiry_date' : 'issue_date'] = $dr;
+        }
+    }
+    if (($file_e = v_upload($file)) !== true) { $errors['certificate_file'] = $file_e; }
+
+    if (!empty($errors)) {
+        $error = 'Please correct the highlighted fields below.';
+    } else {
+            $destination = null;
+            $qr_path = null;
             try {
                 $db->beginTransaction();
                 
@@ -143,25 +150,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error)) {
             } catch (Exception $e) {
                 $db->rollBack();
                 $error = 'Error superseding certificate: ' . $e->getMessage();
+                // Remove orphaned files left behind by a failed supersede attempt
+                if ($destination && is_file($destination)) { @unlink($destination); }
+                if ($qr_path && is_file($qr_path)) { @unlink($qr_path); }
             }
         }
     }
-}
 ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Supersede Certificate - CertiVault</title>
-    <link rel="stylesheet" href="assets/css/style.css">
-    <?php require_once __DIR__ . '/../src/partials/head_fonts.php'; ?>
-</head>
-<body>
+<?php $page_title = 'Supersede Certificate - CertiVault'; require __DIR__ . '/../src/partials/head.php'; ?>
+<?php require __DIR__ . '/../src/partials/header.php'; ?>
+<main id="main">
     <div class="container shell-wide">
         <div class="page-head">
             <h2>Supersede / Correct Certificate</h2>
-            <a href="view_certificate_admin.php?id=<?= $old_cert_id ?>" class="btn btn-secondary">Back</a>
+            <a href="view_certificate_admin.php?id=<?= (int)$old_cert_id ?>" class="btn btn-secondary">Back</a>
         </div>
 
         <div class="alert alert-info">
@@ -173,14 +175,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error)) {
         <?php if ($error): ?>
             <div class="alert alert-danger"><?= htmlspecialchars($error) ?></div>
         <?php endif; ?>
+        <?php if (!empty($errors)): ?>
+            <div class="alert alert-danger">Please correct the highlighted fields below.</div>
+        <?php endif; ?>
         <?php if ($success): ?>
             <div class="alert alert-success">
                 <strong>Success!</strong> <?= htmlspecialchars($success) ?><br>
                 The original certificate (<?= htmlspecialchars($old_cert['certificate_id']) ?>) is now marked as <strong>superseded</strong>.
             </div>
             
-            <div class="qr-hero">
-                <h3>New Certificate QR Code</h3>
+            <div class="seal-frame">
+                <h3>New Certificate QR — Digital Seal</h3>
                 <img src="qrcodes/<?= htmlspecialchars($success_qr_token) ?>.png" alt="QR Code">
                 <br>
                 <a href="qrcodes/<?= htmlspecialchars($success_qr_token) ?>.png" download="Certificate_QR.png" class="btn btn-primary">Download QR Code (PNG)</a>
@@ -196,24 +201,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error)) {
             
             <div class="form-group">
                 <label>Corrected Certificate Title:</label>
-                <input type="text" name="title" value="<?= htmlspecialchars($old_cert['title']) ?>" required>
+                <input type="text" name="title" value="<?= htmlspecialchars($title !== '' ? $title : $old_cert['title']) ?>" data-validate="required|min:3|max:200" required>
+                <?php render_field_error($errors, 'title'); ?>
             </div>
+            <div class="form-row">
             <div class="form-group">
                 <label>Issue Date:</label>
-                <input type="date" name="issue_date" value="<?= htmlspecialchars($old_cert['issue_date']) ?>" required>
+                <input type="date" name="issue_date" id="issue_date" value="<?= htmlspecialchars($issue_date !== '' ? $issue_date : $old_cert['issue_date']) ?>" data-validate="required|daterange" required>
+                <?php render_field_error($errors, 'issue_date'); ?>
             </div>
             <div class="form-group">
                 <label>Expiry Date (Optional):</label>
-                <input type="date" name="expiry_date" value="<?= htmlspecialchars($old_cert['expiry_date'] ?? '') ?>">
+                <input type="date" name="expiry_date" value="<?= htmlspecialchars($expiry_date !== '' ? $expiry_date : ($old_cert['expiry_date'] ?? '')) ?>" data-validate="after:#issue_date">
+                <?php render_field_error($errors, 'expiry_date'); ?>
+            </div>
             </div>
             <div class="form-group">
                 <label>Updated Certificate File (PDF, PNG, JPG - Max 5MB):</label>
-                <input type="file" name="certificate_file" accept=".pdf, .png, .jpg, .jpeg" required>
+                <input type="file" name="certificate_file" id="certificate_file" accept=".pdf, .png, .jpg, .jpeg" data-validate="upload" required>
+                <small class="file-name-display" id="file_name_display"></small>
+                <?php render_field_error($errors, 'certificate_file'); ?>
             </div>
-            
+            <script>
+            document.getElementById('certificate_file').addEventListener('change', function (e) {
+                var f = e.target.files[0];
+                var el = document.getElementById('file_name_display');
+                if (f) { el.textContent = f.name + ' — ' + (f.size / 1024).toFixed(1) + ' KB'; } else { el.textContent = ''; }
+            });
+            </script>
+
             <button type="submit" class="btn btn-warn btn-block">Issue Corrected Version</button>
         </form>
         <?php endif; ?>
     </div>
+    <script src="assets/js/validation.js"></script>
+</main>
+<?php require __DIR__ . '/../src/partials/footer.php'; ?>
 </body>
 </html>

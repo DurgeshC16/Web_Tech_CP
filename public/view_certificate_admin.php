@@ -1,7 +1,9 @@
 <?php
 require_once __DIR__ . '/../src/config/Database.php';
 require_once __DIR__ . '/../src/utils/helpers.php';
+require_once __DIR__ . '/../src/services/VerificationService.php';
 require_role('admin');
+require_approved_institution();
 
 $db = Database::getInstance();
 $cert_id_param = $_GET['id'] ?? '';
@@ -52,16 +54,9 @@ $hist_stmt->execute();
 $history = $hist_stmt->fetchAll();
 
 ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Certificate Detail & History - CertiVault</title>
-    <link rel="stylesheet" href="assets/css/style.css">
-    <?php require_once __DIR__ . '/../src/partials/head_fonts.php'; ?>
-</head>
-<body>
+<?php $page_title = 'Certificate Detail & History - CertiVault'; require __DIR__ . '/../src/partials/head.php'; ?>
+<?php require __DIR__ . '/../src/partials/header.php'; ?>
+<main id="main">
     <div class="container shell-wide">
         <div class="page-head">
             <h2>Certificate Detail & Verification History</h2>
@@ -73,7 +68,7 @@ $history = $hist_stmt->fetchAll();
             <div class="card split-main">
                 <h3><?= htmlspecialchars($cert['title']) ?></h3>
                 <p><strong>Certificate ID:</strong> <?= htmlspecialchars($cert['certificate_id']) ?></p>
-                <p><strong>Version:</strong> <?= $cert['version'] ?></p>
+                <p><strong>Version:</strong> <?= (int)$cert['version'] ?></p>
                 <p><strong>Awarded To:</strong> <?= htmlspecialchars($cert['student_name']) ?></p>
                 <p><strong>Issue Date:</strong> <?= htmlspecialchars(date('F j, Y', strtotime($cert['issue_date']))) ?></p>
                 <?php if ($cert['expiry_date']): ?>
@@ -81,8 +76,9 @@ $history = $hist_stmt->fetchAll();
                 <?php endif; ?>
                 <p>
                     <strong>Status:</strong> 
-                    <span class="badge-status badge-<?= htmlspecialchars($cert['status'] === 'active' ? 'valid' : $cert['status']) ?>">
-                        <?= htmlspecialchars($cert['status']) ?>
+                    <?php $effStatus = VerificationService::effectiveStatus($cert); ?>
+                    <span class="badge-status badge-<?= htmlspecialchars($effStatus === 'active' ? 'valid' : $effStatus) ?>">
+                        <?= htmlspecialchars($effStatus) ?>
                     </span>
                 </p>
                 
@@ -90,19 +86,49 @@ $history = $hist_stmt->fetchAll();
                     <div class="alert alert-danger">
                         <strong>Revocation Reason:</strong><br>
                         <?= htmlspecialchars($cert['revocation_reason']) ?>
+                        <?php if (!empty($cert['revoked_at']) || !empty($cert['revoked_by'])): ?>
+                            <p style="margin-top:8px;margin-bottom:0;"><small>
+                                <?php if (!empty($cert['revoked_at'])): ?>Revoked at: <?= htmlspecialchars(date('F j, Y H:i', strtotime($cert['revoked_at']))) ?><?php endif; ?>
+                                <?php if (!empty($cert['revoked_by'])): ?><?= !empty($cert['revoked_at']) ? ' · ' : '' ?>Revoked by user ID <?= (int)$cert['revoked_by'] ?><?php endif; ?>
+                            </small></p>
+                        <?php endif; ?>
                     </div>
                 <?php endif; ?>
                 
                 <?php if ($cert['status'] === 'superseded' && !empty($cert['superseded_by_id'])): ?>
                     <div class="alert alert-info">
                         <strong>Superseded.</strong> This version has been replaced.<br>
-                        <a href="view_certificate_admin.php?id=<?= $cert['superseded_by_id'] ?>">View Current Version →</a>
+                        <a href="view_certificate_admin.php?id=<?= (int)$cert['superseded_by_id'] ?>">View Current Version →</a>
                     </div>
                 <?php endif; ?>
                 
                 <?php if (!empty($cert['previous_version_id'])): ?>
-                    <p><small><a href="view_certificate_admin.php?id=<?= $cert['previous_version_id'] ?>">← View Previous Version</a></small></p>
+                    <p><small><a href="view_certificate_admin.php?id=<?= (int)$cert['previous_version_id'] ?>">← View Previous Version</a></small></p>
                 <?php endif; ?>
+
+                <h4>Version Timeline</h4>
+                <?php
+                $prevRow = null; $nextRow = null;
+                if (!empty($cert['previous_version_id'])) {
+                    $ps = $db->prepare('SELECT id, certificate_id, version, status FROM certificates WHERE id = :id');
+                    $ps->execute(['id' => $cert['previous_version_id']]);
+                    $prevRow = $ps->fetch() ?: null;
+                }
+                if (!empty($cert['superseded_by_id'])) {
+                    $ns = $db->prepare('SELECT id, certificate_id, version, status FROM certificates WHERE id = :id');
+                    $ns->execute(['id' => $cert['superseded_by_id']]);
+                    $nextRow = $ns->fetch() ?: null;
+                }
+                ?>
+                <ul class="timeline">
+                    <?php if ($prevRow): ?>
+                        <li><a href="view_certificate_admin.php?id=<?= (int)$prevRow['id'] ?>"><?= htmlspecialchars($prevRow['certificate_id']) ?> (v<?= (int)$prevRow['version'] ?>)</a> — <?= htmlspecialchars($prevRow['status']) ?></li>
+                    <?php endif; ?>
+                    <li class="current"><?= htmlspecialchars($cert['certificate_id']) ?> (v<?= (int)$cert['version'] ?>) — current (<?= htmlspecialchars($cert['status']) ?>)</li>
+                    <?php if ($nextRow): ?>
+                        <li><a href="view_certificate_admin.php?id=<?= (int)$nextRow['id'] ?>"><?= htmlspecialchars($nextRow['certificate_id']) ?> (v<?= (int)$nextRow['version'] ?>)</a> — <?= htmlspecialchars($nextRow['status']) ?></li>
+                    <?php endif; ?>
+                </ul>
 
                 <?php if ($cert['qr_token']): ?>
                     <div>
@@ -110,10 +136,10 @@ $history = $hist_stmt->fetchAll();
                     </div>
                 <?php endif; ?>
                 
-                <?php if (in_array($cert['status'], ['active', 'expired'])): ?>
+                <?php if (in_array(VerificationService::effectiveStatus($cert), ['active', 'expired'], true)): ?>
                     <div class="actions-row">
-                        <a href="revoke_certificate.php?id=<?= $cert['id'] ?>" class="btn btn-danger">Revoke</a>
-                        <a href="supersede_certificate.php?id=<?= $cert['id'] ?>" class="btn btn-warn">Supersede / Correct</a>
+                        <a href="revoke_certificate.php?id=<?= (int)$cert['id'] ?>" class="btn btn-danger">Revoke</a>
+                        <a href="supersede_certificate.php?id=<?= (int)$cert['id'] ?>" class="btn btn-warn">Supersede / Correct</a>
                     </div>
                 <?php endif; ?>
             </div>
@@ -157,8 +183,8 @@ $history = $hist_stmt->fetchAll();
                 <?php if ($total_pages > 1): ?>
                     <div class="pagination">
                         <?php for ($i = 1; $i <= $total_pages; $i++): ?>
-                            <a href="?id=<?= urlencode($cert_id_param) ?>&page=<?= $i ?>" class="<?= $i === $page ? 'active' : '' ?>">
-                                <?= $i ?>
+                            <a href="?id=<?= urlencode($cert_id_param) ?>&page=<?= (int)$i ?>" class="<?= $i === $page ? 'active' : '' ?>">
+                                <?= (int)$i ?>
                             </a>
                         <?php endfor; ?>
                     </div>
@@ -166,5 +192,7 @@ $history = $hist_stmt->fetchAll();
             </div>
         </div>
     </div>
+</main>
+<?php require __DIR__ . '/../src/partials/footer.php'; ?>
 </body>
 </html>

@@ -4,6 +4,12 @@
 // Session, CSRF, sanitization, role-check middleware
 // ─────────────────────────────────────────────────────────────────────
 
+require_once __DIR__ . '/validators.php';
+
+// ── Session lifetime policy ─────────────────────────────────────────
+const SESSION_IDLE_TIMEOUT = 1800;    // 30 minutes of inactivity
+const SESSION_ABSOLUTE_LIFETIME = 28800; // 8 hours total
+
 // ── Secure Session Configuration ────────────────────────────────────
 if (session_status() === PHP_SESSION_NONE) {
     ini_set('session.cookie_httponly', '1');     // JS cannot read the cookie
@@ -33,7 +39,13 @@ function generate_csrf_token() {
 function validate_csrf_token($token) {
     if (empty($token) || !isset($_SESSION['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $token)) {
         http_response_code(403);
-        die('<div style="font-family:sans-serif;padding:40px;text-align:center;"><h2>403 — Forbidden</h2><p>CSRF token validation failed. Please go back and try again.</p></div>');
+        $page_title = '403 Forbidden - CertiVault';
+        require __DIR__ . '/../partials/head.php';
+        require __DIR__ . '/../partials/header.php';
+        echo '<main id="main"><div class="container shell-narrow"><h2>403 — Forbidden</h2><p>CSRF token validation failed. Please go back and try again.</p></div></main>';
+        require __DIR__ . '/../partials/footer.php';
+        echo '</body></html>';
+        exit();
     }
 }
 
@@ -60,6 +72,56 @@ function redirect($url) {
 }
 
 /**
+ * Enforce idle + absolute session lifetimes. Called from require_role().
+ * On expiry the session is destroyed and the user is sent to login.
+ */
+function check_session_expiry() {
+    if (!isset($_SESSION['user_id'])) {
+        return;
+    }
+    $now = time();
+    $last = $_SESSION['last_activity'] ?? 0;
+    $started = $_SESSION['login_time'] ?? 0;
+
+    if (($last && ($now - $last) > SESSION_IDLE_TIMEOUT) || ($started && ($now - $started) > SESSION_ABSOLUTE_LIFETIME)) {
+        destroy_session();
+        redirect('login.php?expired=1');
+    }
+    $_SESSION['last_activity'] = $now;
+}
+
+/**
+ * Send no-store cache headers so authenticated pages are not shown
+ * from the browser cache (Back button) after logout.
+ */
+function send_no_store_headers() {
+    header('Cache-Control: no-store, no-cache, must-revalidate');
+    header('Pragma: no-cache');
+    header('Expires: 0');
+}
+
+/**
+ * Fully terminate the current session: clear array, expire cookie, destroy.
+ */
+function destroy_session() {
+    $_SESSION = [];
+    if (ini_get('session.use_cookies')) {
+        $params = session_get_cookie_params();
+        setcookie(session_name(), '', time() - 42000, $params['path'], $params['domain'], $params['secure'], $params['httponly']);
+    }
+    session_destroy();
+}
+
+/**
+ * Read the theme preference cookie. Defaults to 'light'; anything
+ * other than light/dark is ignored (defense against cookie tampering).
+ */
+function current_theme() {
+    $t = $_COOKIE['cv_theme'] ?? 'light';
+    return $t === 'dark' ? 'dark' : 'light';
+}
+
+/**
  * Require a specific role to access a page.
  * If not logged in, redirect to login.
  * If wrong role, redirect to their respective dashboard.
@@ -68,6 +130,10 @@ function require_role($required_role) {
     if (!isset($_SESSION['user_id']) || !isset($_SESSION['role'])) {
         redirect('login.php');
     }
+
+    // Idle / absolute lifetime enforcement + no-store on auth pages
+    check_session_expiry();
+    send_no_store_headers();
 
     $current_role = $_SESSION['role'];
     
@@ -92,6 +158,27 @@ function redirect_to_dashboard($role) {
         redirect('super_admin.php');
     } else {
         redirect('login.php');
+    }
+}
+
+/**
+ * Require the current user to be an approved institution admin.
+ * An institution rejected/unapproved after login loses access
+ * immediately: the session is destroyed and they are sent to login.
+ */
+function require_approved_institution() {
+    if (!isset($_SESSION['user_id'])) {
+        redirect('login.php');
+    }
+    // Always call with a DB connection available.
+    $db = Database::getInstance();
+    $stmt = $db->prepare('SELECT status FROM institutions WHERE user_id = :uid LIMIT 1');
+    $stmt->execute(['uid' => $_SESSION['user_id']]);
+    $status = $stmt->fetchColumn();
+
+    if ($status !== 'approved') {
+        destroy_session();
+        redirect('login.php?denied=1');
     }
 }
 
@@ -146,70 +233,247 @@ function create_smtp_mailer() {
     $mail->Password   = SMTP_PASSWORD;
     $mail->SMTPSecure = SMTP_ENCRYPTION; // 'tls' or 'ssl'
     $mail->Port       = SMTP_PORT;
+    $mail->Timeout    = 10;              // seconds
+    $mail->SMTPDebug  = 0;               // no debug output
+    $mail->CharSet    = 'UTF-8';
 
     return $mail;
 }
 
 /**
- * Create a fresh one-time code for a user. Any previous unused codes for the
- * same user+purpose are invalidated first. A 6-digit code is stored with a
- * 15-minute expiry.
+ * Mask an email address for safe display (e.g. "d****@gmail.com").
+ *
+ * @param  string $email  Full email address.
+ * @return string          Masked email.
  */
-function create_otp($db, $user_id, $purpose = 'activation') {
-    global $is_production;
+function mask_email($email) {
+    $parts = explode('@', $email, 2);
+    $local = $parts[0];
+    $domain = $parts[1] ?? '';
+    if (strlen($local) <= 1) {
+        $masked_local = $local . '****';
+    } else {
+        $masked_local = $local[0] . str_repeat('*', max(4, strlen($local) - 1));
+    }
+    return $masked_local . '@' . $domain;
+}
 
+/**
+ * HMAC a 6-digit OTP code using the application pepper.
+ *
+ * @param  string $code  The raw 6-digit code.
+ * @return string        64-char hex HMAC-SHA256.
+ */
+function hash_otp($code) {
+    return hash_hmac('sha256', $code, OTP_PEPPER);
+}
+
+/**
+ * Create a fresh one-time code for a user and deliver it by email.
+ *
+ * Any previous unused codes for the same user+purpose are invalidated first.
+ * A 6-digit code is generated, HMAC-hashed before storage, and sent via email.
+ *
+ * Rate limits:
+ *   - 60-second resend cooldown per user+purpose.
+ *   - Max 5 codes per user per hour (across all purposes).
+ *
+ * The plaintext code is NEVER returned, stored in the session, logged, or
+ * displayed anywhere except the email body.
+ *
+ * @param  PDO         $db            Database connection.
+ * @param  int         $user_id       Target user ID.
+ * @param  string      $purpose       OTP purpose ('activation', 'password_reset', 'password_change').
+ * @param  string|null $activate_url  Optional activation page URL to include in the email.
+ * @return string                     'sent' | 'cooldown' | 'limit' | 'mail_failed'
+ */
+function create_otp($db, $user_id, $purpose = 'activation', $activate_url = null) {
+    // ── 60-second resend cooldown ──────────────────────────────────
+    $stmt = $db->prepare(
+        'SELECT created_at FROM otp_codes WHERE user_id = :uid AND purpose = :p ORDER BY id DESC LIMIT 1'
+    );
+    $stmt->execute(['uid' => $user_id, 'p' => $purpose]);
+    $last = $stmt->fetchColumn();
+    if ($last && (time() - strtotime($last)) < 60) {
+        return 'cooldown';
+    }
+
+    // ── Max 5 codes per user per hour ──────────────────────────────
+    $stmt = $db->prepare(
+        'SELECT COUNT(*) FROM otp_codes WHERE user_id = :uid AND created_at > DATE_SUB(NOW(), INTERVAL 1 HOUR)'
+    );
+    $stmt->execute(['uid' => $user_id]);
+    if ((int)$stmt->fetchColumn() >= 5) {
+        return 'limit';
+    }
+
+    // ── Invalidate previous unused codes for this user+purpose ─────
     $stmt = $db->prepare('UPDATE otp_codes SET used = 1 WHERE user_id = :uid AND purpose = :p AND used = 0');
     $stmt->execute(['uid' => $user_id, 'p' => $purpose]);
 
+    // ── Generate and store the HMAC-hashed code ────────────────────
     $code = str_pad((string)random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+    $hashed = hash_otp($code);
     $expires = date('Y-m-d H:i:s', time() + 900); // 15 minutes
-    $stmt = $db->prepare('INSERT INTO otp_codes (user_id, otp_code, purpose, expires_at) VALUES (:uid, :code, :p, :exp)');
-    $stmt->execute(['uid' => $user_id, 'code' => $code, 'p' => $purpose, 'exp' => $expires]);
+    $stmt = $db->prepare(
+        'INSERT INTO otp_codes (user_id, otp_code, purpose, expires_at) VALUES (:uid, :code, :p, :exp)'
+    );
+    $stmt->execute(['uid' => $user_id, 'code' => $hashed, 'p' => $purpose, 'exp' => $expires]);
 
-    // Best-effort email delivery via PHPMailer over SMTP. In a local XAMPP/demo
-    // environment SMTP may not be configured, so we deliberately do NOT block
-    // the user flow on delivery — the code is still usable (see dev fallback).
+    // ── Fetch the recipient email ──────────────────────────────────
     $stmt = $db->prepare('SELECT email FROM users WHERE id = :id');
     $stmt->execute(['id' => $user_id]);
     $user_email = $stmt->fetchColumn();
 
-    $email_sent = false;
-    $email_error = null;
-    if ($user_email) {
-        try {
-            $mail = create_smtp_mailer();
-
-            $mail->setFrom(SMTP_FROM_EMAIL, SMTP_FROM_NAME);
-            $mail->addAddress($user_email);
-            $mail->Subject = 'CertiVault Verification Code';
-            $mail->Body    = "Your CertiVault verification code is: $code\nThis code expires in 15 minutes.";
-            $mail->isHTML(false); // plain-text message
-
-            $email_sent = $mail->send();
-        } catch (\Throwable $e) {
-            error_log('CertiVault OTP email failed for user_id ' . $user_id . ': ' . $e->getMessage());
-            $email_sent = false;
-            $email_error = $e->getMessage();
-        }
+    if (!$user_email) {
+        error_log('CertiVault OTP: no email found for user_id ' . $user_id);
+        $db->prepare('UPDATE otp_codes SET used = 1 WHERE user_id = :uid AND purpose = :p AND otp_code = :code')
+           ->execute(['uid' => $user_id, 'p' => $purpose, 'code' => $hashed]);
+        return 'mail_failed';
     }
 
-    // DEV/DEMO TRADE-OFF (an informed decision, not an oversight): because a
-    // 2-week local deadline means SMTP may never be configured, we also show
-    // the code directly on the confirmation screen. This is STRICTLY guarded
-    // by $is_production (CV_ENV=production) and never appears in production.
-    if (!$is_production) {
-        if ($email_sent) {
-            $_SESSION['dev_otp_display'] = "Verification code sent to your email. (Dev mode, also shown here: $code)";
-        } elseif ($email_error !== null) {
-            // Dev-only: surface the real PHPMailer error so SMTP misconfiguration
-            // is visible on screen without digging through php_errors.log.
-            $_SESSION['dev_otp_display'] = "Could not send email (code: $code) — error: " . $email_error;
-        } else {
-            $_SESSION['dev_otp_display'] = "Could not send email — dev mode fallback code: $code";
+    // ── Send the email ─────────────────────────────────────────────
+    try {
+        $mail = create_smtp_mailer();
+
+        $mail->setFrom(SMTP_FROM_EMAIL, SMTP_FROM_NAME);
+        $mail->addAddress($user_email);
+        $mail->Subject = 'Your CertiVault verification code';
+        $mail->isHTML(true);
+
+        // Build optional activation-link block
+        $link_html = '';
+        $link_text = '';
+        if ($activate_url) {
+            $safe_url = htmlspecialchars($activate_url, ENT_QUOTES, 'UTF-8');
+            $link_html = '<p style="margin-top:16px;"><a href="' . $safe_url . '" style="display:inline-block;padding:10px 24px;background:#2563eb;color:#fff;text-decoration:none;border-radius:5px;font-size:14px;">Activate your account</a></p>';
+            $link_text = "\nActivate your account here: $activate_url\n";
         }
+
+        // HTML body
+        $mail->Body = '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"></head><body style="font-family:Arial,Helvetica,sans-serif;background:#f4f4f4;padding:20px;">'
+            . '<div style="max-width:480px;margin:0 auto;background:#ffffff;border-radius:8px;padding:30px;text-align:center;">'
+            . '<h2 style="color:#333;margin-bottom:10px;">CertiVault Verification Code</h2>'
+            . '<p style="color:#555;font-size:16px;">Use the code below to verify your account:</p>'
+            . '<div style="font-size:36px;font-weight:bold;letter-spacing:8px;color:#2563eb;margin:24px 0;">' . htmlspecialchars($code) . '</div>'
+            . '<p style="color:#888;font-size:14px;">This code expires in <strong>15 minutes</strong>.</p>'
+            . $link_html
+            . '<hr style="border:none;border-top:1px solid #eee;margin:24px 0;">'
+            . '<p style="color:#aaa;font-size:12px;">If you didn\'t request this, please ignore this email.</p>'
+            . '</div></body></html>';
+
+        // Plain-text alternative
+        $mail->AltBody = "Your CertiVault verification code is: $code\n\n"
+            . "This code expires in 15 minutes.\n"
+            . $link_text . "\n"
+            . "If you didn't request this, please ignore this email.";
+
+        $mail->send();
+        return 'sent';
+    } catch (\Throwable $e) {
+        error_log('CertiVault OTP email failed for user_id ' . $user_id . ': ' . $e->getMessage());
+        $db->prepare('UPDATE otp_codes SET used = 1 WHERE user_id = :uid AND purpose = :p AND otp_code = :code')
+           ->execute(['uid' => $user_id, 'p' => $purpose, 'code' => $hashed]);
+        return 'mail_failed';
+    }
+}
+
+/**
+ * Verify a 6-digit OTP code submitted by the user.
+ *
+ * Uses constant-time comparison (hash_equals on the HMAC).
+ * Tracks wrong attempts: after 5 failures the code is invalidated.
+ *
+ * @param  PDO    $db       Database connection.
+ * @param  int    $user_id  Target user ID.
+ * @param  string $purpose  OTP purpose.
+ * @param  string $code     The raw 6-digit code submitted by the user.
+ * @return string           'ok' | 'invalid' | 'expired' | 'locked' | 'none'
+ */
+function verify_otp($db, $user_id, $purpose, $code) {
+    // Basic format check
+    if (!preg_match('/^\d{6}$/', $code)) {
+        return 'invalid';
     }
 
-    return $code;
+    // Fetch the latest unused code for this user+purpose
+    $stmt = $db->prepare(
+        'SELECT id, otp_code, expires_at, attempts FROM otp_codes '
+        . 'WHERE user_id = :uid AND purpose = :p AND used = 0 ORDER BY id DESC LIMIT 1'
+    );
+    $stmt->execute(['uid' => $user_id, 'p' => $purpose]);
+    $otp = $stmt->fetch();
+
+    if (!$otp) {
+        return 'none';
+    }
+
+    // Expiry check
+    if (strtotime($otp['expires_at']) < time()) {
+        $db->prepare('UPDATE otp_codes SET used = 1 WHERE id = :id')->execute(['id' => $otp['id']]);
+        return 'expired';
+    }
+
+    // Max attempts check (already at 5 = locked)
+    if ((int)$otp['attempts'] >= 5) {
+        $db->prepare('UPDATE otp_codes SET used = 1 WHERE id = :id')->execute(['id' => $otp['id']]);
+        return 'locked';
+    }
+
+    // Constant-time comparison via HMAC
+    $submitted_hash = hash_otp($code);
+    if (hash_equals($otp['otp_code'], $submitted_hash)) {
+        // Success — mark as used
+        $db->prepare('UPDATE otp_codes SET used = 1 WHERE id = :id')->execute(['id' => $otp['id']]);
+        return 'ok';
+    }
+
+    // Wrong code — increment attempts
+    $new_attempts = (int)$otp['attempts'] + 1;
+    if ($new_attempts >= 5) {
+        // Invalidate after 5th wrong attempt
+        $db->prepare('UPDATE otp_codes SET used = 1, attempts = :a WHERE id = :id')
+           ->execute(['a' => $new_attempts, 'id' => $otp['id']]);
+        return 'locked';
+    }
+    $db->prepare('UPDATE otp_codes SET attempts = :a WHERE id = :id')
+       ->execute(['a' => $new_attempts, 'id' => $otp['id']]);
+    return 'invalid';
+}
+
+/**
+ * Send a simple notification email (no OTP).
+ *
+ * @param  string $to_email  Recipient email.
+ * @param  string $subject   Email subject.
+ * @param  string $heading   HTML heading text.
+ * @param  string $body_text Plain-text body paragraph.
+ * @return bool              True if sent, false on failure.
+ */
+function send_notification_email($to_email, $subject, $heading, $body_text) {
+    try {
+        $mail = create_smtp_mailer();
+        $mail->setFrom(SMTP_FROM_EMAIL, SMTP_FROM_NAME);
+        $mail->addAddress($to_email);
+        $mail->Subject = $subject;
+        $mail->isHTML(true);
+
+        $mail->Body = '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"></head><body style="font-family:Arial,Helvetica,sans-serif;background:#f4f4f4;padding:20px;">'
+            . '<div style="max-width:480px;margin:0 auto;background:#ffffff;border-radius:8px;padding:30px;text-align:center;">'
+            . '<h2 style="color:#333;margin-bottom:10px;">' . htmlspecialchars($heading) . '</h2>'
+            . '<p style="color:#555;font-size:16px;">' . htmlspecialchars($body_text) . '</p>'
+            . '<hr style="border:none;border-top:1px solid #eee;margin:24px 0;">'
+            . '<p style="color:#aaa;font-size:12px;">If you did not perform this action, please contact support immediately.</p>'
+            . '</div></body></html>';
+
+        $mail->AltBody = $body_text . "\n\nIf you did not perform this action, please contact support immediately.";
+
+        $mail->send();
+        return true;
+    } catch (\Throwable $e) {
+        error_log('CertiVault notification email failed to ' . $to_email . ': ' . $e->getMessage());
+        return false;
+    }
 }
 
 /**
@@ -224,14 +488,9 @@ function create_otp($db, $user_id, $purpose = 'activation') {
  * @return true|string            True when valid; error message string otherwise.
  */
 function validate_password_strength($password) {
-    $len = strlen($password);
-    if ($len < 8) {
-        return 'Password must be at least 8 characters long.';
-    }
-    if ($len > 72) {
-        return 'Password must not exceed 72 characters (bcrypt silently truncates longer input, so extra characters add no security).';
-    }
-    return true;
+    // Delegates to the shared validator so every existing caller
+    // picks up the full policy (upper/lower/digit/special, 8–72).
+    return v_password_strong($password);
 }
 
 /**
@@ -239,11 +498,17 @@ function validate_password_strength($password) {
  */
 function show_error_page($title, $message) {
     http_response_code(500);
-    echo '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Error - CertiVault</title><link rel="stylesheet" href="assets/css/style.css"></head><body>';
-    echo '<div class="container" style="max-width:500px;text-align:center;margin-top:60px;">';
+    $page_title = $title . ' - CertiVault';
+    require __DIR__ . '/../partials/head.php';
+    require __DIR__ . '/../partials/header.php';
+    echo '<main id="main">';
+    echo '<div class="container shell-narrow">';
     echo '<h2>' . htmlspecialchars($title) . '</h2>';
     echo '<p>' . htmlspecialchars($message) . '</p>';
     echo '<a href="login.php" class="btn">Go to Login</a>';
-    echo '</div></body></html>';
+    echo '</div></main>';
+    require __DIR__ . '/../partials/footer.php';
+    echo '</body></html>';
     exit();
 }
+

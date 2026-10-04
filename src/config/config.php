@@ -19,6 +19,15 @@ define('BASE_URL', getenv('CV_BASE_URL') ?: 'http://localhost:8081/certivault/pu
 // random value stored outside the repo (e.g. in an env var).
 define('APP_ENCRYPTION_KEY', getenv('CV_ENCRYPTION_KEY') ?: 'CHANGE-ME-local-dev-only-32chars!!');
 
+// HMAC pepper for OTP codes at rest. Separate from APP_ENCRYPTION_KEY so
+// compromise of one secret does not expose the other.
+defined('OTP_PEPPER') || define('OTP_PEPPER', getenv('CV_OTP_PEPPER') ?: 'certivault-otp-pepper-dev-only!!');
+
+// Secret for share-link HMACs (view_certificate_student.php / share.php).
+// Deliberately separate from APP_ENCRYPTION_KEY so a share-link leak does
+// not compromise the key that encrypts institution private keys.
+defined('SHARE_LINK_SECRET') || define('SHARE_LINK_SECRET', getenv('CV_SHARE_SECRET') ?: 'certivault-share-secret-dev-only!!');
+
 // ── Local overrides ─────────────────────────────────────────────────
 // XAMPP/Apache on Windows does NOT reliably pass OS environment variables
 // to PHP, so getenv() below can silently come back empty. For local dev you
@@ -48,3 +57,20 @@ ini_set('display_startup_errors', $is_production ? '0' : '1');
 ini_set('log_errors', '1');
 ini_set('error_log', __DIR__ . '/../../private_data/php_errors.log');
 error_reporting(E_ALL);
+
+// ── Production secret guard ─────────────────────────────────────────
+// Refuse to run with committed default secrets in production.
+if ($is_production) {
+    $defaults = [
+        'APP_ENCRYPTION_KEY' => 'CHANGE-ME-local-dev-only-32chars!!',
+        'SHARE_LINK_SECRET'  => 'certivault-share-secret-dev-only!!',
+        'OTP_PEPPER'         => 'certivault-otp-pepper-dev-only!!',
+    ];
+    foreach ($defaults as $name => $default) {
+        if (defined($name) && constant($name) === $default) {
+            error_log("[CertiVault] FATAL: $name is still the committed development default while CV_ENV=production. Set a strong value via its environment variable before deploying.");
+            http_response_code(500);
+            die('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Server Error</title></head><body><h1>500 — Internal Server Error</h1><p>The service is misconfigured. Please contact the site administrator.</p></body></html>');
+        }
+    }
+}

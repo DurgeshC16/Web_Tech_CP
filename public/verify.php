@@ -3,6 +3,9 @@
 require_once __DIR__ . '/../src/config/Database.php';
 require_once __DIR__ . '/../src/config/config.php';
 require_once __DIR__ . '/../src/services/CryptoService.php';
+require_once __DIR__ . '/../src/services/VerificationService.php';
+require_once __DIR__ . '/../src/utils/validators.php';
+require_once __DIR__ . '/../src/utils/helpers.php';
 
 $db = Database::getInstance();
 
@@ -26,108 +29,61 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['certificate_id'])) {
     $query_value = trim($_POST['certificate_id']);
 }
 
-// ── Verification Engine ────────────────────────────────────────────────
+// ── Pre-flight format check ────────────────────────────────────────────
+// Reject malformed identifiers BEFORE hitting the database.
 if ($query_type !== null) {
-
-    // Step 1 – Existence check
+    $well_formed = true;
     if ($query_type === 'token') {
-        $stmt = $db->prepare('
-            SELECT c.*, i.name AS institution_name, i.public_key,
-                   s.full_name AS student_name
-            FROM certificates c
-            JOIN institutions i ON c.institution_id = i.id
-            JOIN students     s ON c.student_id     = s.id
-            WHERE c.qr_token = :val
-            LIMIT 1
-        ');
-        $stmt->execute(['val' => $query_value]);
+        $well_formed = (bool)preg_match('/^[A-Za-z0-9_-]{43}$/', $query_value);
     } else {
-        $stmt = $db->prepare('
-            SELECT c.*, i.name AS institution_name, i.public_key,
-                   s.full_name AS student_name
-            FROM certificates c
-            JOIN institutions i ON c.institution_id = i.id
-            JOIN students     s ON c.student_id     = s.id
-            WHERE c.certificate_id = :val
-            LIMIT 1
-        ');
-        $stmt->execute(['val' => $query_value]);
+        $well_formed = (v_certificate_id($query_value) === true);
     }
+    if (!$well_formed) {
+        $verdict = 'INVALID';
+        $detail  = 'The provided identifier is malformed. Expected format: '
+            . ($query_type === 'token' ? 'a 43-character QR token.' : 'CV-YYYY-NNNNNN.');
+    }
+}
 
-    $cert = $stmt->fetch();
+// ── Rate limiting ─────────────────────────────────────────────────────
+// More than 30 distinct lookups from one IP in 10 minutes → HTTP 429.
+// Logged, and NO certificate query runs for that request.
+$rate_limited = false;
+if ($query_type !== null) {
+    $ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+    $rateStmt = $db->prepare('
+        SELECT COUNT(DISTINCT query_value) as cnt
+        FROM verification_logs
+        WHERE verifier_ip = :ip AND verified_at > DATE_SUB(NOW(), INTERVAL 10 MINUTE)
+    ');
+    $rateStmt->execute(['ip' => $ip]);
+    if ((int)$rateStmt->fetchColumn() > 30) {
+        $rate_limited = true;
+        error_log("[CertiVault] Rate limit exceeded for IP $ip on verify.php — returned 429.");
+        http_response_code(429);
+        die('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Too Many Requests</title><link rel="stylesheet" href="assets/css/style.css"></head><body><div class="container" style="max-width:500px;text-align:center;margin-top:60px;"><h2>429 — Too Many Requests</h2><p>You have made too many verification lookups. Please wait a few minutes and try again.</p><a href="verify.php" class="btn">Back to Verification</a></div></body></html>');
+    }
+}
+
+// ── Verification Engine ────────────────────────────────────────────────
+if ($query_type !== null && $verdict === null) {
+    $cert = $query_type === 'token'
+        ? VerificationService::findByToken($db, $query_value)
+        : VerificationService::findByCertificateId($db, $query_value);
 
     if (!$cert) {
-        // ──────────────────────── INVALID ────────────────────────
         $verdict = 'INVALID';
         $detail  = 'No certificate found matching the provided identifier.';
     } else {
-        // Step 2 – Integrity: recompute SHA-256 hash and compare
-        $filePath = __DIR__ . '/../private_data/uploads/' . $cert['file_path'];
-        $hashOK   = false;
-
-        if (file_exists($filePath) && !empty($cert['sha256_hash'])) {
-            $certData = [
-                'certificate_id' => $cert['certificate_id'],
-                'institution_id' => $cert['institution_id'],
-                'student_id'     => $cert['student_id'],
-                'title'          => $cert['title'],
-                'issue_date'     => $cert['issue_date'],
-                'expiry_date'    => $cert['expiry_date'],
-            ];
-            $recomputedHash = CryptoService::computeCertificateHash($certData, $filePath);
-            $hashOK = hash_equals($cert['sha256_hash'], $recomputedHash);
-        }
-
-        if (!$hashOK) {
-            // ──────────────────── TAMPERED (hash) ────────────────────
-            $verdict = 'TAMPERED';
-            $detail  = 'Data integrity check failed — the certificate data or file has been altered since issuance.';
-        } else {
-            // Step 3 – Authenticity: verify RSA signature
-            $sigOK = false;
-            if (!empty($cert['digital_signature']) && !empty($cert['public_key'])) {
-                $sigOK = CryptoService::verifyCertificateSignature(
-                    $recomputedHash,
-                    $cert['digital_signature'],
-                    $cert['public_key']
-                );
-            }
-
-            if (!$sigOK) {
-                // ──────────────── TAMPERED (signature) ────────────────
-                $verdict = 'TAMPERED';
-                $detail  = 'Digital signature verification failed — the certificate may be forged or the issuing institution\'s key does not match.';
-            } else {
-                // Step 4 – Expiry check
-                if (!empty($cert['expiry_date']) && strtotime($cert['expiry_date']) < strtotime('today')) {
-                    // ──────────────────── EXPIRED ─────────────────────
-                    $verdict = 'EXPIRED';
-                    $detail  = 'This certificate expired on ' . date('F j, Y', strtotime($cert['expiry_date'])) . '.';
-                } elseif ($cert['status'] === 'revoked') {
-                    // Step 5 – Revocation check
-                    // ──────────────────── REVOKED ─────────────────────
-                    $verdict = 'REVOKED';
-                    $detail  = 'This certificate has been revoked by the issuing institution.';
-                } elseif ($cert['status'] === 'superseded') {
-                    // Step 6 – Supersession check
-                    // ──────────────────── SUPERSEDED ──────────────────
-                    $verdict = 'SUPERSEDED';
-                    $detail  = 'This certificate has been superseded by a newer corrected version.';
-                    if (!empty($cert['superseded_by_id'])) {
-                        $sbStmt = $db->prepare('SELECT certificate_id, qr_token FROM certificates WHERE id = :id');
-                        $sbStmt->execute(['id' => $cert['superseded_by_id']]);
-                        $superseded_by = $sbStmt->fetch();
-                    }
-                } else {
-                    // ──────────────────── VALID ───────────────────────
-                    $verdict = 'VALID';
-                    $detail  = 'All integrity, authenticity, expiry, and status checks passed.';
-                }
-            }
-        }
+        $result = VerificationService::verify($db, $cert);
+        $verdict       = $result['verdict'];
+        $detail        = $result['detail'];
+        $superseded_by = $result['superseded_by'];
     }
+}
 
-    // ── Audit Logging ─────────────────────────────────────────────────
+// ── Audit Logging ─────────────────────────────────────────────────
+if ($query_type !== null) {
     $ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
     $logStmt = $db->prepare('
         INSERT INTO verification_logs
@@ -137,17 +93,15 @@ if ($query_type !== null) {
     ');
     $logStmt->execute([
         'qt'  => $query_type,
-        'qv'  => $query_value,
+        // Truncate to 255 so long/hostile input cannot overflow the column
+        'qv'  => mb_substr((string)$query_value, 0, 255),
         'cid' => $cert ? $cert['certificate_id'] : null,
         'res' => $verdict,
         'det' => $detail,
         'ip'  => $ip,
     ]);
-    
+
     // ── Anti-Enumeration Awareness ────────────────────────────────────
-    // Log a server-side warning if this IP has made many distinct lookups
-    // recently. This is awareness/forensics, not a blocker — sufficient
-    // for a college project, would need a proper rate limiter in production.
     $rateStmt = $db->prepare('
         SELECT COUNT(DISTINCT query_value) as cnt
         FROM verification_logs
@@ -160,16 +114,9 @@ if ($query_type !== null) {
     }
 }
 ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Verify Certificate - CertiVault</title>
-    <link rel="stylesheet" href="assets/css/style.css">
-    <?php require_once __DIR__ . '/../src/partials/head_fonts.php'; ?>
-</head>
-<body>
+<?php $page_title = 'Verify Certificate - CertiVault'; require __DIR__ . '/../src/partials/head.php'; ?>
+<?php require __DIR__ . '/../src/partials/header.php'; ?>
+<main id="main">
     <div class="container shell-narrow">
         <h2 style="text-align:center;">CertiVault — Certificate Verification</h2>
 
@@ -181,15 +128,26 @@ if ($query_type !== null) {
         <form method="POST" action="" style="margin-top:20px;" class="card">
             <div class="form-group">
                 <label for="certificate_id">Certificate ID</label>
-                <input type="text" id="certificate_id" name="certificate_id" placeholder="CV-YYYY-NNNNNN" required>
+                <input type="text" id="certificate_id" name="certificate_id" placeholder="CV-YYYY-NNNNNN" data-validate="required|certid" required>
             </div>
             <button type="submit" class="btn btn-primary" style="width:100%;">Verify</button>
         </form>
 
         <?php else: ?>
         <!-- ── Verdict Display ───────────────────────────────────── -->
-        <div style="text-align:center; margin-top:20px;">
+        <div class="verdict-wrap" style="text-align:center; margin-top:20px;">
+            <?php
+            $verdict_icons = [
+                'VALID' => '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 13l4 4L19 7"/></svg>',
+                'TAMPERED' => '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+                'EXPIRED' => '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>',
+                'REVOKED' => '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="9"/><path d="M6 6l12 12"/></svg>',
+                'SUPERSEDED' => '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M4 16l4-4-4-4M12 16l4-4-4-4"/></svg>',
+                'INVALID' => '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg>',
+            ];
+            ?>
             <div class="verdict-seal verdict-seal-<?= strtolower($verdict) ?>">
+                <?= $verdict_icons[$verdict] ?? '' ?>
                 <?= $verdict ?>
             </div>
             <p class="verdict-detail" style="text-align:center;"><?= htmlspecialchars($detail) ?></p>
@@ -197,7 +155,7 @@ if ($query_type !== null) {
 
         <?php if (in_array($verdict, ['VALID', 'EXPIRED'])): ?>
         <!-- Show certificate details only for VALID / EXPIRED -->
-        <div class="card" style="margin-top:25px;">
+        <div class="card diploma" style="margin-top:25px;">
             <h3 class="cert-details-title"><?= htmlspecialchars($cert['title']) ?></h3>
             <dl class="cert-details">
                 <dt>Certificate ID</dt><dd><?= htmlspecialchars($cert['certificate_id']) ?></dd>
@@ -244,5 +202,8 @@ if ($query_type !== null) {
         </div>
         <?php endif; ?>
     </div>
+    <script src="assets/js/validation.js"></script>
+</main>
+<?php require __DIR__ . '/../src/partials/footer.php'; ?>
 </body>
 </html>

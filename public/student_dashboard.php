@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../src/config/Database.php';
 require_once __DIR__ . '/../src/utils/helpers.php';
+require_once __DIR__ . '/../src/services/VerificationService.php';
 require_role('student');
 
 $db = Database::getInstance();
@@ -21,20 +22,15 @@ $stmt = $db->prepare('
 $stmt->execute(['student_id' => $student_id]);
 $certificates = $stmt->fetchAll();
 ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Student Dashboard - CertiVault</title>
-    <link rel="stylesheet" href="assets/css/style.css">
-    <?php require_once __DIR__ . '/../src/partials/head_fonts.php'; ?>
-</head>
-<body>
+<?php $page_title = 'Student Dashboard - CertiVault'; require __DIR__ . '/../src/partials/head.php'; ?>
+<?php require __DIR__ . '/../src/partials/header.php'; ?>
+<main id="main">
     <div class="container shell-wide">
         <div class="page-head">
             <h2>My Certificates</h2>
-            <a href="logout.php" class="btn btn-secondary">Logout</a>
+            <div>
+                <a href="change_password.php" class="btn btn-secondary">Change Password</a>
+            </div>
         </div>
 
         <?php if (count($certificates) > 0): ?>
@@ -46,17 +42,18 @@ $certificates = $stmt->fetchAll();
                         <div class="card-meta"><strong>Issued By:</strong> <?= htmlspecialchars($cert['institution_name']) ?></div>
                         <div class="card-meta"><strong>Date:</strong> <?= htmlspecialchars(date('F j, Y', strtotime($cert['issue_date']))) ?></div>
                         <div>
-                            <span class="badge-status badge-<?= htmlspecialchars($cert['status'] === 'active' ? 'valid' : $cert['status']) ?>">
-                                <?= htmlspecialchars($cert['status']) ?>
+                            <?php $effStatus = VerificationService::effectiveStatus($cert); ?>
+                            <span class="badge-status badge-<?= htmlspecialchars($effStatus === 'active' ? 'valid' : $effStatus) ?>">
+                                <?= htmlspecialchars($effStatus) ?>
                             </span>
                         </div>
                         <?php if ($cert['status'] === 'superseded' && !empty($cert['superseded_by_id'])): ?>
                             <div class="card-meta text-warn">
-                                <small>This version has been replaced. <a href="view_certificate_student.php?id=<?= $cert['superseded_by_id'] ?>">View current version →</a></small>
+                                <small>This version has been replaced. <a href="view_certificate_student.php?id=<?= (int)$cert['superseded_by_id'] ?>">View current version →</a></small>
                             </div>
                         <?php endif; ?>
                         <div class="card-actions">
-                            <a href="view_certificate_student.php?id=<?= $cert['id'] ?>" class="btn btn-sm">View Details</a>
+                            <a href="view_certificate_student.php?id=<?= (int)$cert['id'] ?>" class="btn btn-sm">View Details</a>
                         </div>
                     </div>
                 <?php endforeach; ?>
@@ -65,5 +62,7 @@ $certificates = $stmt->fetchAll();
             <p>You have not been issued any certificates yet.</p>
         <?php endif; ?>
     </div>
+</main>
+<?php require __DIR__ . '/../src/partials/footer.php'; ?>
 </body>
 </html>

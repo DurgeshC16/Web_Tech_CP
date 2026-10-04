@@ -3,27 +3,35 @@ require_once __DIR__ . '/../src/config/Database.php';
 require_once __DIR__ . '/../src/utils/helpers.php';
 
 $error = '';
+$errors = [];
 $success = '';
+$name = '';
+$email = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     validate_csrf_token($_POST['csrf_token'] ?? '');
-    
+
     $name = sanitize_input($_POST['name'] ?? '');
     $email = sanitize_input($_POST['email'] ?? '');
     $password = $_POST['password'] ?? '';
     $confirm_password = $_POST['confirm_password'] ?? '';
-    
-    if (!verify_captcha()) {
+
+    $captcha = trim($_POST['captcha_answer'] ?? '');
+    if (($e = v_range($captcha, 2, 18, 'CAPTCHA answer')) !== true) {
+        $errors['captcha_answer'] = $e;
+        $error = 'Please correct the highlighted fields below.';
+    } elseif (!verify_captcha()) {
         $error = 'Incorrect CAPTCHA answer. Please try again.';
-    } elseif (empty($name) || empty($email) || empty($password)) {
-        $error = 'All fields are required.';
-    } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-        $error = 'Please provide a valid email address.';
-    } elseif ($password !== $confirm_password) {
-        $error = 'Passwords do not match.';
-    } elseif (($pw_error = validate_password_strength($password)) !== true) {
-        $error = $pw_error;
     } else {
+        if (($e = v_required($name, 'Institution Name')) !== true) { $errors['name'] = $e; }
+        elseif (($e = v_length($name, 2, 100, 'Institution Name')) !== true) { $errors['name'] = $e; }
+        if (($e = v_required($email, 'Email')) !== true) { $errors['email'] = $e; }
+        elseif (($e = v_email($email)) !== true) { $errors['email'] = $e; }
+        if (($e = v_required($password, 'Password')) !== true) { $errors['password'] = $e; }
+        elseif (($e = v_password_strong($password)) !== true) { $errors['password'] = $e; }
+        if (($e = v_compare($password, $confirm_password, 'Passwords')) !== true) { $errors['confirm_password'] = $e; }
+
+        if (empty($errors)) {
         $db = Database::getInstance();
         
         // Check if email exists
@@ -44,28 +52,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmt->execute(['user_id' => $user_id, 'name' => $name]);
                 
                 $db->commit();
-                create_otp($db, $user_id, 'activation');
+                $otp_result = create_otp($db, $user_id, 'activation');
+                if ($otp_result === 'sent') {
+                    $_SESSION['otp_sent'] = true;
+                } else {
+                    $_SESSION['otp_send_failed'] = true;
+                }
                 redirect('activate_account.php?user_id=' . $user_id);
             } catch (Exception $e) {
                 $db->rollBack();
                 $error = 'Registration failed. Please try again.';
             }
         }
+        } // end empty($errors)
     }
 }
 ?>
 <?php generate_captcha(); ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Institution Registration - CertiVault</title>
-    <link rel="stylesheet" href="assets/css/style.css">
-    <?php require_once __DIR__ . '/../src/partials/head_fonts.php'; ?>
-</head>
-<body>
-    <div class="container shell-narrow">
+<?php $page_title = 'Institution Registration - CertiVault'; require __DIR__ . '/../src/partials/head.php'; ?>
+<?php require __DIR__ . '/../src/partials/header.php'; ?>
+<main id="main">
+    <div class="auth-wrap">
+    <div class="auth-card">
+        <div class="auth-brand">
+            <svg width="40" height="40" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="14" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="16" cy="16" r="9" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M16 10 L18.2 14.2 L22.5 14.8 L19.2 17.8 L20.2 22 L16 19.6 L11.8 22 L12.8 17.8 L9.5 14.8 L13.8 14.2 Z" fill="currentColor"/></svg>
+            <div class="brand-name">CertiVault</div>
+        </div>
         <h2>Institution Registration</h2>
         <?php if ($error): ?>
             <div class="alert alert-danger"><?= htmlspecialchars($error) ?></div>
@@ -74,31 +86,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <div class="alert alert-success"><?= htmlspecialchars($success) ?></div>
         <?php endif; ?>
         
+        <?php if (!empty($errors)): ?>
+            <div class="alert alert-danger">Please correct the highlighted fields below.</div>
+        <?php endif; ?>
+
         <form method="POST" action="">
             <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
             <div class="form-group">
                 <label>Institution Name:</label>
-                <input type="text" name="name" required>
+                <input type="text" name="name" value="<?= htmlspecialchars($name) ?>" data-validate="required|min:2|max:100" required>
+                <?php render_field_error($errors, 'name'); ?>
             </div>
             <div class="form-group">
                 <label>Email:</label>
-                <input type="email" name="email" required>
+                <input type="email" name="email" value="<?= htmlspecialchars($email) ?>" data-validate="required|email" required>
+                <?php render_field_error($errors, 'email'); ?>
             </div>
             <div class="form-group">
                 <label>Password:</label>
-                <input type="password" name="password" required>
+                <input type="password" name="password" id="password" data-validate="required|min:8|max:72|strong" required>
+                <?php render_field_error($errors, 'password'); ?>
             </div>
             <div class="form-group">
                 <label>Confirm Password:</label>
-                <input type="password" name="confirm_password" required>
+                <input type="password" name="confirm_password" data-validate="required|match:#password" required>
+                <?php render_field_error($errors, 'confirm_password'); ?>
             </div>
             <div class="form-group">
-                <label>CAPTCHA: <?= htmlspecialchars($_SESSION['captcha_question'] ?? '') ?></label>
-                <input type="text" name="captcha_answer" required autocomplete="off">
+                <label>CAPTCHA:</label> <span class="captcha-chip"><?= htmlspecialchars($_SESSION['captcha_question'] ?? '') ?></span>
+                <input type="text" name="captcha_answer" data-validate="required|number|min:2|max:18" required autocomplete="off">
+                <?php render_field_error($errors, 'captcha_answer'); ?>
             </div>
             <button type="submit" class="btn btn-primary">Register</button>
         </form>
         <p>Already have an account? <a href="login.php">Login here</a></p>
     </div>
+    <script src="assets/js/validation.js"></script>
+</div>
+</main>
+<?php require __DIR__ . '/../src/partials/footer.php'; ?>
 </body>
 </html>

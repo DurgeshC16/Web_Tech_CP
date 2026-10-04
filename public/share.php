@@ -1,10 +1,14 @@
 <?php
 require_once __DIR__ . '/../src/config/Database.php';
 require_once __DIR__ . '/../src/config/config.php';
+require_once __DIR__ . '/../src/services/VerificationService.php';
+require_once __DIR__ . '/../src/utils/helpers.php';
 
 $token = $_GET['token'] ?? '';
 $error = '';
 $cert = null;
+$share_verdict = null;
+$share_detail  = null;
 
 if (empty($token)) {
     $error = "No share token provided.";
@@ -16,12 +20,12 @@ if (empty($token)) {
         $encoded_payload = $parts[0];
         $signature = $parts[1];
         
-        $expected_signature = hash_hmac('sha256', $encoded_payload, APP_ENCRYPTION_KEY);
+        $expected_signature = hash_hmac('sha256', $encoded_payload, SHARE_LINK_SECRET);
         
         if (!hash_equals($expected_signature, $signature)) {
             $error = "Token signature verification failed. The link is invalid or corrupted.";
         } else {
-            $payload = json_decode(base64_decode($encoded_payload), true);
+            $payload = json_decode(base64_decode(strtr($encoded_payload, '-_', '+/')), true);
             if (!$payload || !isset($payload['id']) || !isset($payload['exp'])) {
                 $error = "Invalid token payload.";
             } elseif (time() > $payload['exp']) {
@@ -29,7 +33,7 @@ if (empty($token)) {
             } else {
                 $db = Database::getInstance();
                 $stmt = $db->prepare('
-                    SELECT c.*, i.name as institution_name, s.full_name as student_name
+                    SELECT c.*, i.name as institution_name, i.public_key, s.full_name as student_name
                     FROM certificates c
                     JOIN institutions i ON c.institution_id = i.id
                     JOIN students s ON c.student_id = s.id
@@ -37,24 +41,24 @@ if (empty($token)) {
                 ');
                 $stmt->execute(['id' => $payload['id']]);
                 $cert = $stmt->fetch();
-                
+
                 if (!$cert) {
                     $error = "Certificate no longer exists.";
+                } else {
+                    // Run the real verification pipeline so a shared link
+                    // shows VALID / TAMPERED / REVOKED / SUPERSEDED / EXPIRED.
+                    $share_result = VerificationService::verify($db, $cert);
+                    $share_verdict = $share_result['verdict'];
+                    $share_detail  = $share_result['detail'];
                 }
             }
         }
     }
 }
 ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Shared Certificate - CertiVault</title>
-    <link rel="stylesheet" href="assets/css/style.css">
-</head>
-<body>
+<?php $page_title = 'Shared Certificate - CertiVault'; require __DIR__ . '/../src/partials/head.php'; ?>
+<?php require __DIR__ . '/../src/partials/header.php'; ?>
+<main id="main">
     <div class="container" style="max-width: 600px; text-align: center;">
         <?php if ($error): ?>
             <h2>Access Denied</h2>
@@ -63,18 +67,27 @@ if (empty($token)) {
             </div>
             <p>Please request a new share link from the certificate holder.</p>
         <?php else: ?>
-            <h2>Verified Shared Certificate</h2>
-            
-            <div class="card" style="margin-top: 20px; text-align: left;">
+            <h2>Shared Certificate</h2>
+
+            <?php if (!empty($share_verdict)): ?>
+                <div style="text-align:center; margin-top:20px;">
+                    <div class="verdict-seal verdict-seal-<?= strtolower($share_verdict) ?>">
+                        <?= htmlspecialchars($share_verdict) ?>
+                    </div>
+                    <p class="verdict-detail" style="text-align:center;"><?= htmlspecialchars($share_detail) ?></p>
+                </div>
+            <?php endif; ?>
+
+            <div class="card diploma" style="margin-top: 20px; text-align: left;">
                 <h3><?= htmlspecialchars($cert['title']) ?></h3>
                 <p><strong>Awarded To:</strong> <?= htmlspecialchars($cert['student_name']) ?></p>
                 <p><strong>Certificate ID:</strong> <?= htmlspecialchars($cert['certificate_id']) ?></p>
                 <p><strong>Institution:</strong> <?= htmlspecialchars($cert['institution_name']) ?></p>
                 <p><strong>Issue Date:</strong> <?= htmlspecialchars(date('F j, Y', strtotime($cert['issue_date']))) ?></p>
                 <p>
-                    <strong>Status:</strong> 
-                    <span class="status-badge status-<?= htmlspecialchars($cert['status']) ?>">
-                        <?= htmlspecialchars($cert['status']) ?>
+                    <strong>Status:</strong>
+                    <span class="status-badge status-<?= htmlspecialchars(VerificationService::effectiveStatus($cert)) ?>">
+                        <?= htmlspecialchars(VerificationService::effectiveStatus($cert)) ?>
                     </span>
                 </p>
                 
@@ -91,5 +104,7 @@ if (empty($token)) {
             </div>
         <?php endif; ?>
     </div>
+</main>
+<?php require __DIR__ . '/../src/partials/footer.php'; ?>
 </body>
 </html>
