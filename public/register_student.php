@@ -22,6 +22,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = 'Please provide a valid email address.';
     } elseif ($password !== $confirm_password) {
         $error = 'Passwords do not match.';
+    } elseif (($pw_error = validate_password_strength($password)) !== true) {
+        $error = $pw_error;
     } elseif ($enrollment !== '' && !ctype_digit($enrollment)) {
         $error = 'Enrollment number must contain digits only.';
     } else {

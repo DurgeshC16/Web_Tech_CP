@@ -10,8 +10,8 @@
 
 define('SMTP_HOST', 'smtp.gmail.com');
 define('SMTP_PORT', 587);
-define('SMTP_USERNAME', 'your-email@gmail.com');
-define('SMTP_PASSWORD', 'your-16-char-app-password');
+define('SMTP_USERNAME', trim('your-email@gmail.com'));
+define('SMTP_PASSWORD', trim('your-16-char-app-password'));
 define('SMTP_ENCRYPTION', 'tls');
 define('SMTP_FROM_EMAIL', 'your-email@gmail.com');
 define('SMTP_FROM_NAME', 'CertiVault');

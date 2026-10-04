@@ -34,8 +34,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = 'All fields are required.';
     } elseif ($password !== $confirm_password) {
         $error = 'Passwords do not match.';
-    } elseif (strlen($password) < 6) {
-        $error = 'Password must be at least 6 characters.';
+    } elseif (($pw_error = validate_password_strength($password)) !== true) {
+        $error = $pw_error;
     } elseif (!$otp) {
         $error = 'No active verification code. Please request a new one.';
     } elseif (strtotime($otp['expires_at']) < time()) {

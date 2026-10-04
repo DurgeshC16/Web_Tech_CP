@@ -126,6 +126,31 @@ function verify_captcha() {
 }
 
 /**
+ * Build a PHPMailer instance pre-configured with the application's SMTP
+ * settings.  Both create_otp() and scripts/test_smtp.php use this so
+ * the connection parameters are defined in exactly one place.
+ *
+ * @return \PHPMailer\PHPMailer\PHPMailer  Ready-to-use mailer (caller still
+ *                                         needs to set From, addAddress, etc.)
+ */
+function create_smtp_mailer() {
+    require_once __DIR__ . '/PHPMailer/Exception.php';
+    require_once __DIR__ . '/PHPMailer/SMTP.php';
+    require_once __DIR__ . '/PHPMailer/PHPMailer.php';
+
+    $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
+    $mail->isSMTP();
+    $mail->Host       = SMTP_HOST;
+    $mail->SMTPAuth   = true;
+    $mail->Username   = SMTP_USERNAME;
+    $mail->Password   = SMTP_PASSWORD;
+    $mail->SMTPSecure = SMTP_ENCRYPTION; // 'tls' or 'ssl'
+    $mail->Port       = SMTP_PORT;
+
+    return $mail;
+}
+
+/**
  * Create a fresh one-time code for a user. Any previous unused codes for the
  * same user+purpose are invalidated first. A 6-digit code is stored with a
  * 15-minute expiry.
@@ -152,18 +177,7 @@ function create_otp($db, $user_id, $purpose = 'activation') {
     $email_error = null;
     if ($user_email) {
         try {
-            require_once __DIR__ . '/PHPMailer/Exception.php';
-            require_once __DIR__ . '/PHPMailer/SMTP.php';
-            require_once __DIR__ . '/PHPMailer/PHPMailer.php';
-
-            $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
-            $mail->isSMTP();
-            $mail->Host       = SMTP_HOST;
-            $mail->SMTPAuth   = true;
-            $mail->Username   = SMTP_USERNAME;
-            $mail->Password   = SMTP_PASSWORD;
-            $mail->SMTPSecure = SMTP_ENCRYPTION; // 'tls' or 'ssl'
-            $mail->Port       = SMTP_PORT;
+            $mail = create_smtp_mailer();
 
             $mail->setFrom(SMTP_FROM_EMAIL, SMTP_FROM_NAME);
             $mail->addAddress($user_email);
@@ -196,6 +210,28 @@ function create_otp($db, $user_id, $purpose = 'activation') {
     }
 
     return $code;
+}
+
+/**
+ * Validate password strength (length range).
+ *
+ * PASSWORD_BCRYPT silently truncates input beyond 72 bytes, so anything
+ * longer provides no additional security. We enforce an 8–72 character
+ * window and return a human-readable error string on failure, or true
+ * on success.
+ *
+ * @param  string      $password  The raw password to validate.
+ * @return true|string            True when valid; error message string otherwise.
+ */
+function validate_password_strength($password) {
+    $len = strlen($password);
+    if ($len < 8) {
+        return 'Password must be at least 8 characters long.';
+    }
+    if ($len > 72) {
+        return 'Password must not exceed 72 characters (bcrypt silently truncates longer input, so extra characters add no security).';
+    }
+    return true;
 }
 
 /**

@@ -47,6 +47,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         
         if (!in_array($mime_type, $allowed_types)) {
             $error = 'Invalid file type. Only PDF, PNG, and JPG are allowed.';
+        } elseif ($file['size'] < 1024) {
+            $error = 'File appears to be empty or corrupted.';
         } elseif ($file['size'] > $max_size) {
             $error = 'File size exceeds the 5MB limit.';
         } else {
