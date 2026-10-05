@@ -27,6 +27,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $keys = CryptoService::generateRSAKeyPair();
                 $encryptedPriv = CryptoService::encryptPrivateKey($keys['private_key']);
 
+                // Round-trip test before committing approval
+                $roundTripPriv = CryptoService::decryptPrivateKey($encryptedPriv);
+                if (!CryptoService::verifyKeyPair($roundTripPriv, $keys['public_key'])) {
+                    throw new Exception('Generated key pair failed the round-trip verification.');
+                }
+
                 // Update
                 $update = $db->prepare('UPDATE institutions SET status = "approved", public_key = :pub, encrypted_private_key = :priv WHERE id = :id');
                 $update->execute([

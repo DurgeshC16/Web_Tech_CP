@@ -52,8 +52,10 @@ defined('SMTP_FROM_NAME') || define('SMTP_FROM_NAME', getenv('SMTP_FROM_NAME') ?
 // ── Error Handling ──────────────────────────────────────────────────
 // In production: display_errors = Off, log_errors = On
 $is_production = (getenv('CV_ENV') === 'production');
-ini_set('display_errors', $is_production ? '0' : '1');
-ini_set('display_startup_errors', $is_production ? '0' : '1');
+defined('CV_DEBUG') || define('CV_DEBUG', false);
+$debug = CV_DEBUG === true;
+ini_set('display_errors', $debug ? '1' : '0');
+ini_set('display_startup_errors', $debug ? '1' : '0');
 ini_set('log_errors', '1');
 ini_set('error_log', __DIR__ . '/../../private_data/php_errors.log');
 error_reporting(E_ALL);

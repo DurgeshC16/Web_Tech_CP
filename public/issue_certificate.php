@@ -119,11 +119,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $sha256_hash = CryptoService::computeCertificateHash($certData, $destination);
                 
                 // 6. Sign the hash with institution's RSA private key
-                $instStmt = $db->prepare('SELECT encrypted_private_key FROM institutions WHERE id = :id');
+                $instStmt = $db->prepare('SELECT public_key, encrypted_private_key FROM institutions WHERE id = :id');
                 $instStmt->execute(['id' => $institution_id]);
-                $encPrivKey = $instStmt->fetchColumn();
-                $privateKey = CryptoService::decryptPrivateKey($encPrivKey);
-                $digital_signature = CryptoService::signCertificateHash($sha256_hash, $privateKey);
+                $instKeys = $instStmt->fetch();
+                try {
+                    $privateKey = CryptoService::decryptPrivateKey($instKeys['encrypted_private_key'] ?? '');
+                    if (!empty($instKeys['public_key']) && !CryptoService::verifyKeyPair($privateKey, $instKeys['public_key'])) {
+                        throw new Exception('Stored private key does not match the stored public key.');
+                    }
+                    while (openssl_error_string()) {}
+                    $digital_signature = CryptoService::signCertificateHash($sha256_hash, $privateKey);
+                } catch (Exception $keyException) {
+                    error_log('[CertiVault] Institution ' . (int)$institution_id . ' signing key error: ' . $keyException->getMessage());
+                    throw new Exception('This institution\'s signing key is not available. Please contact the platform administrator.');
+                }
                 
                 // 7. Insert Certificate with hash, signature, and QR token
                 $stmt = $db->prepare('INSERT INTO certificates (certificate_id, institution_id, student_id, title, issue_date, expiry_date, file_path, status, version, qr_token, sha256_hash, digital_signature) VALUES (:cid, :iid, :sid, :title, :issue, :expiry, :path, "active", 1, :qr_token, :hash, :sig)');

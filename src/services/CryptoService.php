@@ -46,12 +46,57 @@ class CryptoService {
      * Decrypt private key for usage.
      */
     public static function decryptPrivateKey($encryptedData) {
+        if (!is_string($encryptedData) || trim($encryptedData) === '') {
+            throw new Exception('Institution private key is missing.');
+        }
         $key = substr(hash('sha256', APP_ENCRYPTION_KEY, true), 0, 32);
-        $data = base64_decode($encryptedData);
+        $data = base64_decode($encryptedData, true);
+        if ($data === false) {
+            throw new Exception('Institution private key could not be decoded.');
+        }
         $ivLength = openssl_cipher_iv_length('aes-256-cbc');
+        if (strlen($data) < $ivLength + 16) {
+            throw new Exception('Institution private key data is incomplete.');
+        }
         $iv = substr($data, 0, $ivLength);
         $encrypted = substr($data, $ivLength);
-        return openssl_decrypt($encrypted, 'aes-256-cbc', $key, 0, $iv);
+        while (openssl_error_string()) {}
+        $plaintext = openssl_decrypt($encrypted, 'aes-256-cbc', $key, 0, $iv);
+        if ($plaintext === false) {
+            throw new Exception('Institution private key could not be decrypted with the current encryption key.');
+        }
+        if (strpos($plaintext, '-----BEGIN') !== 0) {
+            throw new Exception('Institution private key is not a valid PEM.');
+        }
+        $pkey = openssl_pkey_get_private($plaintext);
+        if (!$pkey) {
+            throw new Exception('Institution private key is rejected by OpenSSL.');
+        }
+        return $plaintext;
+    }
+
+    /**
+     * Check whether a private and public PEM belong to the same key pair.
+     */
+    public static function verifyKeyPair($privatePem, $publicPem) {
+        if (!is_string($privatePem) || !is_string($publicPem) || trim($privatePem) === '' || trim($publicPem) === '') {
+            return false;
+        }
+        $private = openssl_pkey_get_private($privatePem);
+        $public = openssl_pkey_get_public($publicPem);
+        if (!$private || !$public) {
+            return false;
+        }
+        $privateDetails = openssl_pkey_get_details($private);
+        $publicDetails = openssl_pkey_get_details($public);
+        if (!$privateDetails || !$publicDetails || empty($privateDetails['key']) || empty($publicDetails['key'])) {
+            return false;
+        }
+        $normalize = function ($pem) {
+            return preg_replace('/\s+/', '', trim($pem));
+        };
+        return $normalize($privateDetails['key']) === $normalize($publicPem)
+            && $normalize($privateDetails['key']) === $normalize($publicDetails['key']);
     }
     
     /**
@@ -92,9 +137,11 @@ class CryptoService {
      * @return string            Base64-encoded signature
      */
     public static function signCertificateHash($hash, $privateKey) {
+        while (openssl_error_string()) {}
         $success = openssl_sign($hash, $signature, $privateKey, OPENSSL_ALGO_SHA256);
         if (!$success) {
-            throw new Exception("RSA signing failed: " . openssl_error_string());
+            $err = openssl_error_string() ?: 'unknown error';
+            throw new Exception("RSA signing failed: " . $err);
         }
         return base64_encode($signature);
     }
