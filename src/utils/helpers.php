@@ -15,6 +15,7 @@ if (session_status() === PHP_SESSION_NONE) {
     ini_set('session.cookie_httponly', '1');     // JS cannot read the cookie
     ini_set('session.cookie_samesite', 'Strict'); // Mitigate CSRF via cookie scope
     ini_set('session.use_strict_mode', '1');      // Reject uninitialized session IDs
+    ini_set('session.use_only_cookies', '1');     // Never propagate the ID via URLs
     // If served over HTTPS, also mark cookie as Secure
     if (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') {
         ini_set('session.cookie_secure', '1');
@@ -101,16 +102,211 @@ function send_no_store_headers() {
 }
 
 /**
- * Fully terminate the current session: clear array, expire cookie, destroy.
+ * Establish an authenticated session for a user who just proved their
+ * identity (password login, remember-me cookie, …).
+ *
+ * Rotates the session ID (deletes the old one) to defeat fixation, then
+ * records identity + fresh lifetime tracking. Call this — and only this —
+ * whenever authentication state or privileges are (re-)granted.
  */
-function destroy_session() {
+function establish_authenticated_session($user) {
+    session_regenerate_id(true);
+    $_SESSION['user_id'] = (int)$user['id'];
+    $_SESSION['role'] = $user['role'];
+    $_SESSION['login_time'] = time();
+    $_SESSION['last_activity'] = time();
+}
+
+/**
+ * Fully terminate the current session: clear array, expire cookie, destroy.
+ *
+ * Pass the DB handle (e.g. from logout.php) to also revoke the persistent
+ * "remember me" token and expire its cookie. Expiry logout via
+ * check_session_expiry() deliberately leaves remember-me alone so the next
+ * visit can re-authenticate through it.
+ */
+function destroy_session($db = null) {
+    if ($db !== null) {
+        clear_remember_token($db);
+    }
     $_SESSION = [];
     if (ini_get('session.use_cookies')) {
         $params = session_get_cookie_params();
-        setcookie(session_name(), '', time() - 42000, $params['path'], $params['domain'], $params['secure'], $params['httponly']);
+        $opts = [
+            'expires'  => time() - 42000,
+            'path'     => $params['path'] ?: '/',
+            'secure'   => (bool)$params['secure'],
+            'httponly' => true,
+            'samesite' => 'Strict',
+        ];
+        if (!empty($params['domain'])) {
+            $opts['domain'] = $params['domain'];
+        }
+        setcookie(session_name(), '', $opts);
     }
     session_destroy();
 }
+
+// ── Persistent "Remember me" login ──────────────────────────────────
+// Selector + hashed-validator pattern: the cookie holds "selector:validator".
+// Only SHA-256(validator) is stored in remember_tokens — the DB alone can
+// never mint a cookie, and no user id or password ever touches a cookie.
+
+const REMEMBER_COOKIE = 'cv_remember';
+const REMEMBER_LIFETIME = 30 * 24 * 3600; // 30 days
+
+/**
+ * Cookie flags shared by remember-me set/expire (mirrors cv_email).
+ */
+function remember_cookie_options($expires) {
+    $secure = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
+    return [
+        'expires'  => $expires,
+        'path'     => '/',
+        'secure'   => $secure,
+        'httponly' => true,
+        'samesite' => 'Strict',
+    ];
+}
+
+/**
+ * Issue a fresh remember-me token for $user_id and set the cookie.
+ */
+function create_remember_token($db, $user_id) {
+    $db->prepare('DELETE FROM remember_tokens WHERE user_id = :uid AND expires_at <= NOW()')
+       ->execute(['uid' => $user_id]);
+    $selector = bin2hex(random_bytes(12));   // 24 hex chars, DB lookup key
+    $validator = bin2hex(random_bytes(32));  // 64 hex chars, never stored raw
+    $db->prepare('INSERT INTO remember_tokens (selector, token_hash, user_id, expires_at)
+                  VALUES (:sel, :hash, :uid, DATE_ADD(NOW(), INTERVAL 30 DAY))')
+       ->execute([
+           'sel'  => $selector,
+           'hash' => hash('sha256', $validator),
+           'uid'  => $user_id,
+       ]);
+    setcookie(REMEMBER_COOKIE, $selector . ':' . $validator, remember_cookie_options(time() + REMEMBER_LIFETIME));
+}
+
+/**
+ * Validate the remember-me cookie. On success the token is rotated
+ * (single-use) and the user row is returned; otherwise null.
+ */
+function consume_remember_token($db) {
+    $raw = $_COOKIE[REMEMBER_COOKIE] ?? '';
+    if (!is_string($raw) || !preg_match('/^[0-9a-f]{24}:[0-9a-f]{64}$/', $raw)) {
+        return null;
+    }
+    [$selector, $validator] = explode(':', $raw, 2);
+    $stmt = $db->prepare('SELECT selector, token_hash, user_id, expires_at FROM remember_tokens WHERE selector = :sel LIMIT 1');
+    $stmt->execute(['sel' => $selector]);
+    $row = $stmt->fetch();
+    if (!$row) {
+        setcookie(REMEMBER_COOKIE, '', remember_cookie_options(time() - 3600));
+        return null;
+    }
+    if (strtotime($row['expires_at']) < time()
+        || !hash_equals($row['token_hash'], hash('sha256', $validator))) {
+        // Expired, or validator mismatch (possible theft): revoke every
+        // persistent token for that user and drop the cookie.
+        $db->prepare('DELETE FROM remember_tokens WHERE user_id = :uid')
+           ->execute(['uid' => $row['user_id']]);
+        setcookie(REMEMBER_COOKIE, '', remember_cookie_options(time() - 3600));
+        return null;
+    }
+    $stmt = $db->prepare('SELECT id, role, is_verified FROM users WHERE id = :id LIMIT 1');
+    $stmt->execute(['id' => $row['user_id']]);
+    $user = $stmt->fetch();
+    if (!$user || (int)$user['is_verified'] !== 1) {
+        $db->prepare('DELETE FROM remember_tokens WHERE selector = :sel')
+           ->execute(['sel' => $selector]);
+        setcookie(REMEMBER_COOKIE, '', remember_cookie_options(time() - 3600));
+        return null;
+    }
+    // Rotate: the presented token is single-use.
+    $db->prepare('DELETE FROM remember_tokens WHERE selector = :sel')
+       ->execute(['sel' => $selector]);
+    create_remember_token($db, $user['id']);
+    return $user;
+}
+
+/**
+ * Revoke the presented remember-me token (if any) and expire the cookie.
+ */
+function clear_remember_token($db) {
+    $raw = $_COOKIE[REMEMBER_COOKIE] ?? '';
+    if (is_string($raw) && preg_match('/^[0-9a-f]{24}:[0-9a-f]{64}$/', $raw)) {
+        [$selector] = explode(':', $raw, 2);
+        $db->prepare('DELETE FROM remember_tokens WHERE selector = :sel')
+           ->execute(['sel' => $selector]);
+    }
+    setcookie(REMEMBER_COOKIE, '', remember_cookie_options(time() - 3600));
+}
+
+/**
+ * Revoke ALL persistent tokens for a user (password change/reset).
+ */
+function revoke_user_remember_tokens($db, $user_id) {
+    $db->prepare('DELETE FROM remember_tokens WHERE user_id = :uid')
+       ->execute(['uid' => $user_id]);
+}
+
+// ── Login rate limiting (per email + IP) ─────────────────────────────
+// 5 failed attempts within 15 minutes lock that email+IP pair for the
+// remainder of the window. Backed by the login_attempts table; this is in
+// addition to the per-account users.failed_login_attempts backstop.
+
+const LOGIN_MAX_ATTEMPTS = 5;
+const LOGIN_LOCKOUT_SECONDS = 900; // 15 minutes
+
+function login_client_ip() {
+    return $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+}
+
+/**
+ * Seconds remaining on the email+IP lockout, or 0 when not locked.
+ */
+function login_lockout_remaining($db, $email, $ip) {
+    $key = mb_strtolower(trim((string)$email));
+    $stmt = $db->prepare('SELECT attempted_at FROM login_attempts
+                          WHERE email = :email AND ip = :ip
+                            AND attempted_at > DATE_SUB(NOW(), INTERVAL 15 MINUTE)
+                          ORDER BY attempted_at ASC');
+    $stmt->execute(['email' => $key, 'ip' => $ip]);
+    $times = $stmt->fetchAll(PDO::FETCH_COLUMN);
+    if (count($times) < LOGIN_MAX_ATTEMPTS) {
+        return 0;
+    }
+    $remaining = LOGIN_LOCKOUT_SECONDS - (time() - strtotime($times[0]));
+    return $remaining > 0 ? $remaining : 0;
+}
+
+/**
+ * Record one failed login for the email+IP pair (email stored lowercase).
+ */
+function record_failed_login_attempt($db, $email, $ip) {
+    $key = mb_strtolower(trim((string)$email));
+    $db->prepare('INSERT INTO login_attempts (email, ip) VALUES (:email, :ip)')
+       ->execute(['email' => $key, 'ip' => $ip]);
+    // Opportunistic prune so the table cannot grow unbounded.
+    $db->prepare('DELETE FROM login_attempts WHERE attempted_at < DATE_SUB(NOW(), INTERVAL 1 DAY)')
+       ->execute();
+}
+
+/**
+ * Forget failures for the pair (called on successful login).
+ */
+function clear_login_attempts($db, $email, $ip) {
+    $key = mb_strtolower(trim((string)$email));
+    $db->prepare('DELETE FROM login_attempts WHERE email = :email AND ip = :ip')
+       ->execute(['email' => $key, 'ip' => $ip]);
+}
+
+/**
+ * Control-flow exception: the issue_certificate student gate throws this
+ * when the student account is new or not yet activated. The catch block
+ * turns it into a plain $error (no rollback needed, no files created yet).
+ */
+class ActivationGate extends Exception {}
 
 /**
  * Read the theme preference cookie. Defaults to 'light'; anything
@@ -182,6 +378,95 @@ function require_approved_institution() {
     }
 }
 
+// ── Certificate access control (IDOR defense) ───────────────────────
+// Every ownership decision goes through can_access_certificate() so the
+// rule lives in exactly one place. Denials always render HTTP 403 (never
+// 404/500), and missing vs. forbidden share one message so the response
+// is not an existence oracle.
+
+/**
+ * Render a consistent 403 page and stop. Same message for missing and
+ * forbidden targets so attackers cannot probe for certificate IDs.
+ */
+function deny_access_403($message = 'Certificate not found or access denied.') {
+    http_response_code(403);
+    $page_title = '403 Forbidden - CertiVault';
+    require __DIR__ . '/../partials/head.php';
+    require __DIR__ . '/../partials/header.php';
+    echo '<main id="main"><div class="container shell-narrow"><h2>403 — Forbidden</h2><p>'
+        . htmlspecialchars($message)
+        . '</p></div></main>';
+    require __DIR__ . '/../partials/footer.php';
+    echo '</body></html>';
+    exit();
+}
+
+/**
+ * Pure ownership check: does $owner_id own $cert for $role?
+ *
+ * @param array  $cert     Certificate row with institution_id + student_id.
+ * @param string $role     'admin' (owns via institution_id) or 'student' (via student_id).
+ * @param int    $owner_id Institution id (admin) or student id (student).
+ */
+function can_access_certificate($cert, $role, $owner_id) {
+    if (!is_array($cert) || !$owner_id) {
+        return false;
+    }
+    if ($role === 'admin') {
+        return (int)($cert['institution_id'] ?? 0) === (int)$owner_id;
+    }
+    if ($role === 'student') {
+        return (int)($cert['student_id'] ?? 0) === (int)$owner_id;
+    }
+    return false;
+}
+
+/**
+ * Institution id for the logged-in admin, or 0 when none.
+ */
+function current_institution_id($db) {
+    $stmt = $db->prepare('SELECT id FROM institutions WHERE user_id = :user_id LIMIT 1');
+    $stmt->execute(['user_id' => $_SESSION['user_id']]);
+    return (int)$stmt->fetchColumn();
+}
+
+/**
+ * Student id for the logged-in student, or 0 when none.
+ */
+function current_student_id($db) {
+    $stmt = $db->prepare('SELECT id FROM students WHERE user_id = :user_id LIMIT 1');
+    $stmt->execute(['user_id' => $_SESSION['user_id']]);
+    return (int)$stmt->fetchColumn();
+}
+
+/**
+ * Fetch certificate $id scoped to its owner, or deny with 403.
+ * Use for numeric `?id=` targets on admin/student pages.
+ *
+ * @param PDO    $db       Database connection.
+ * @param int    $id       certificates.id from the request.
+ * @param string $role     'admin' or 'student'.
+ * @param int    $owner_id Institution id or student id.
+ * @param string $select   Extra columns, e.g. 'c.*, s.full_name AS student_name'.
+ * @param string $join     Extra JOINs for $select.
+ * @return array           The certificate row (ownership guaranteed).
+ */
+function require_owned_certificate($db, $id, $role, $owner_id, $select = 'c.*', $join = '') {
+    $id = (int)$id;
+    $owner_id = (int)$owner_id;
+    $owner_col = $role === 'admin' ? 'c.institution_id' : 'c.student_id';
+    if ($id <= 0 || $owner_id <= 0 || ($role !== 'admin' && $role !== 'student')) {
+        deny_access_403();
+    }
+    $stmt = $db->prepare("SELECT $select FROM certificates c $join WHERE c.id = :id AND $owner_col = :owner LIMIT 1");
+    $stmt->execute(['id' => $id, 'owner' => $owner_id]);
+    $cert = $stmt->fetch();
+    if (!$cert || !can_access_certificate($cert, $role, $owner_id)) {
+        deny_access_403();
+    }
+    return $cert;
+}
+
 /**
  * Generate a new arithmetic CAPTCHA and store the expected answer
  * in the session. Call once per page render (GET or after a POST).
@@ -194,22 +479,107 @@ function generate_captcha() {
 }
 
 /**
- * Verify the submitted CAPTCHA answer. The session value is unset after
- * one attempt (pass or fail) so it cannot be replayed.
- *
- * To swap in Google reCAPTCHA later, you only need to change:
- *   1) Config: add your reCAPTCHA site key + secret key constants here,
- *   2) Client: in each form add <script src="https://www.google.com/recaptcha/api.js" async defer></script>
- *      and <div class="g-recaptcha" data-sitekey="YOUR_SITE_KEY"></div>,
- *   3) Server: replace this function body with a POST of the secret key and
- *      $_POST['g-recaptcha-response'] to https://www.google.com/recaptcha/api/siteverify,
- *      returning true only when the JSON response has "success": true.
+ * Verify the submitted arithmetic CAPTCHA answer. The session value is
+ * unset after one attempt (pass or fail) so it cannot be replayed.
+ * Only used when reCAPTCHA is NOT configured (offline fallback).
  */
 function verify_captcha() {
     $expected = $_SESSION['captcha_answer'] ?? null;
     unset($_SESSION['captcha_answer'], $_SESSION['captcha_question']);
     $submitted = $_POST['captcha_answer'] ?? null;
     return $expected !== null && $submitted !== null && ctype_digit(trim((string)$submitted)) && (int)$submitted === $expected;
+}
+
+/**
+ * reCAPTCHA v2 is active only when BOTH keys are configured (environment
+ * or config.local.php). With no keys the forms use the offline
+ * arithmetic CAPTCHA instead.
+ */
+function recaptcha_enabled() {
+    return defined('RECAPTCHA_SITE_KEY') && defined('RECAPTCHA_SECRET_KEY')
+        && RECAPTCHA_SITE_KEY !== '' && RECAPTCHA_SECRET_KEY !== '';
+}
+
+/**
+ * Verify a reCAPTCHA v2 token with Google. Fail-closed: empty tokens,
+ * transport errors, and bad payloads all deny. (To go back offline,
+ * remove the keys so the arithmetic fallback takes over — someone able
+ * to block egress must not be able to silently downgrade the check.)
+ */
+function verify_recaptcha() {
+    $token = $_POST['g-recaptcha-response'] ?? '';
+    if (!is_string($token) || $token === '' || !recaptcha_enabled()) {
+        return false;
+    }
+    $body = http_build_query([
+        'secret'   => RECAPTCHA_SECRET_KEY,
+        'response' => $token,
+        'remoteip' => login_client_ip(),
+    ]);
+    $ctx = stream_context_create(['http' => [
+        'method'  => 'POST',
+        'header'  => 'Content-Type: application/x-www-form-urlencoded',
+        'content' => $body,
+        'timeout' => 8,
+    ]]);
+    $json = @file_get_contents('https://www.google.com/recaptcha/api/siteverify', false, $ctx);
+    if ($json === false) {
+        error_log('CertiVault reCAPTCHA: siteverify endpoint unreachable.');
+        return false;
+    }
+    $data = json_decode($json, true);
+    return is_array($data) && ($data['success'] ?? false) === true;
+}
+
+/**
+ * Mode-aware CAPTCHA gate for the four public forms (login, both
+ * registrations, forgot password). Returns true on pass; on failure it
+ * records a per-field error in $errors and returns false. The caller
+ * decides the top-level $error message, as with every other validator.
+ */
+function validate_captcha(&$errors) {
+    if (recaptcha_enabled()) {
+        if (verify_recaptcha()) {
+            return true;
+        }
+        $errors['captcha'] = 'CAPTCHA verification failed. Please complete the checkbox and try again.';
+        return false;
+    }
+    $answer = trim($_POST['captcha_answer'] ?? '');
+    if (($e = v_range($answer, 2, 18, 'CAPTCHA answer')) !== true) {
+        $errors['captcha_answer'] = $e;
+        return false;
+    }
+    if (!verify_captcha()) {
+        $errors['captcha_answer'] = 'Incorrect CAPTCHA answer. Please try again.';
+        return false;
+    }
+    return true;
+}
+
+/**
+ * Render the CAPTCHA field for the active mode. In fallback mode this
+ * also mints a fresh arithmetic question (replacing the old standalone
+ * generate_captcha() call at page render).
+ */
+function captcha_field_html($errors) {
+    if (recaptcha_enabled()) {
+        $h = '<script src="https://www.google.com/recaptcha/api.js" async defer></script>';
+        $h .= '<div class="g-recaptcha" data-sitekey="'
+            . htmlspecialchars(RECAPTCHA_SITE_KEY, ENT_QUOTES, 'UTF-8') . '"></div>';
+        if (!empty($errors['captcha'])) {
+            $h .= '<div class="field-error" role="alert">' . htmlspecialchars($errors['captcha']) . '</div>';
+        }
+        return $h;
+    }
+    generate_captcha();
+    $h = '<label>CAPTCHA:</label> <span class="captcha-chip">'
+        . htmlspecialchars($_SESSION['captcha_question'] ?? '') . '</span>';
+    $h .= '<input type="text" name="captcha_answer" data-validate="required|number|range:2,18" required autocomplete="off">';
+    if (!empty($errors['captcha_answer'])) {
+        $h .= '<div class="field-error" role="alert">' . htmlspecialchars($errors['captcha_answer']) . '</div>';
+    }
+    return $h;
 }
 
 /**
@@ -257,6 +627,12 @@ function mask_email($email) {
     }
     return $masked_local . '@' . $domain;
 }
+
+/**
+ * OTP lifetime in seconds (10 minutes). Single source of truth for the
+ * DB expiry, the email wording, and the reset-session windows.
+ */
+const OTP_LIFETIME = 600;
 
 /**
  * HMAC a 6-digit OTP code using the application pepper.
@@ -314,7 +690,7 @@ function create_otp($db, $user_id, $purpose = 'activation', $activate_url = null
     // ── Generate and store the HMAC-hashed code ────────────────────
     $code = str_pad((string)random_int(0, 999999), 6, '0', STR_PAD_LEFT);
     $hashed = hash_otp($code);
-    $expires = date('Y-m-d H:i:s', time() + 900); // 15 minutes
+    $expires = date('Y-m-d H:i:s', time() + OTP_LIFETIME); // 10 minutes
     $stmt = $db->prepare(
         'INSERT INTO otp_codes (user_id, otp_code, purpose, expires_at) VALUES (:uid, :code, :p, :exp)'
     );
@@ -356,7 +732,7 @@ function create_otp($db, $user_id, $purpose = 'activation', $activate_url = null
             . '<h2 style="color:#333;margin-bottom:10px;">CertiVault Verification Code</h2>'
             . '<p style="color:#555;font-size:16px;">Use the code below to verify your account:</p>'
             . '<div style="font-size:36px;font-weight:bold;letter-spacing:8px;color:#2563eb;margin:24px 0;">' . htmlspecialchars($code) . '</div>'
-            . '<p style="color:#888;font-size:14px;">This code expires in <strong>15 minutes</strong>.</p>'
+            . '<p style="color:#888;font-size:14px;">This code expires in <strong>10 minutes</strong>.</p>'
             . $link_html
             . '<hr style="border:none;border-top:1px solid #eee;margin:24px 0;">'
             . '<p style="color:#aaa;font-size:12px;">If you didn\'t request this, please ignore this email.</p>'
@@ -364,7 +740,7 @@ function create_otp($db, $user_id, $purpose = 'activation', $activate_url = null
 
         // Plain-text alternative
         $mail->AltBody = "Your CertiVault verification code is: $code\n\n"
-            . "This code expires in 15 minutes.\n"
+            . "This code expires in 10 minutes.\n"
             . $link_text . "\n"
             . "If you didn't request this, please ignore this email.";
 

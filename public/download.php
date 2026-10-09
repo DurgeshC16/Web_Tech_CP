@@ -6,18 +6,10 @@ require_role('student');
 $cert_id = (int)($_GET['id'] ?? 0);
 $db = Database::getInstance();
 
-// Verify ownership
-$stmt = $db->prepare('SELECT id FROM students WHERE user_id = :user_id LIMIT 1');
-$stmt->execute(['user_id' => $_SESSION['user_id']]);
-$student_id = $stmt->fetchColumn();
-
-$stmt = $db->prepare('SELECT file_path FROM certificates WHERE id = :id AND student_id = :student_id');
-$stmt->execute(['id' => $cert_id, 'student_id' => $student_id]);
-$cert = $stmt->fetch();
-
-if (!$cert) {
-    show_error_page('Access Denied', 'You do not have permission to download this file.');
-}
+// Ownership enforced centrally: any miss (no row, wrong owner, bad id)
+// ends in a uniform 403, never an existence oracle.
+$student_id = current_student_id($db);
+$cert = require_owned_certificate($db, $cert_id, 'student', $student_id, 'c.file_path, c.student_id');
 
 $filepath = __DIR__ . '/../private_data/uploads/' . $cert['file_path'];
 

@@ -28,6 +28,14 @@ defined('OTP_PEPPER') || define('OTP_PEPPER', getenv('CV_OTP_PEPPER') ?: 'certiv
 // not compromise the key that encrypts institution private keys.
 defined('SHARE_LINK_SECRET') || define('SHARE_LINK_SECRET', getenv('CV_SHARE_SECRET') ?: 'certivault-share-secret-dev-only!!');
 
+// ── Google reCAPTCHA v2 ("I'm not a robot" checkbox) ─────────────────
+// Empty by default: with no keys the forms fall back to the offline
+// arithmetic CAPTCHA. Set both (env vars or config.local.php) to switch
+// all four public forms to reCAPTCHA. Deliberately NOT in the production
+// secret guard — empty simply means "offline fallback mode".
+defined('RECAPTCHA_SITE_KEY') || define('RECAPTCHA_SITE_KEY', getenv('CV_RECAPTCHA_SITE_KEY') ?: '');
+defined('RECAPTCHA_SECRET_KEY') || define('RECAPTCHA_SECRET_KEY', getenv('CV_RECAPTCHA_SECRET_KEY') ?: '');
+
 // ── Local overrides ─────────────────────────────────────────────────
 // XAMPP/Apache on Windows does NOT reliably pass OS environment variables
 // to PHP, so getenv() below can silently come back empty. For local dev you

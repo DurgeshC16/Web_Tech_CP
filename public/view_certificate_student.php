@@ -9,23 +9,17 @@ $cert_id = (int)($_GET['id'] ?? 0);
 $share_link = '';
 
 // Get student_id
-$stmt = $db->prepare('SELECT id FROM students WHERE user_id = :user_id LIMIT 1');
-$stmt->execute(['user_id' => $_SESSION['user_id']]);
-$student_id = $stmt->fetchColumn();
+$student_id = current_student_id($db);
 
-// Fetch certificate details, ensure they own it
-$stmt = $db->prepare('
-    SELECT c.*, i.name as institution_name
-    FROM certificates c
-    JOIN institutions i ON c.institution_id = i.id
-    WHERE c.id = :id AND c.student_id = :student_id
-');
-$stmt->execute(['id' => $cert_id, 'student_id' => $student_id]);
-$cert = $stmt->fetch();
-
-if (!$cert) {
-    show_error_page('Not Found', 'Certificate not found or access denied.');
-}
+// Fetch certificate details — ownership enforced centrally (uniform 403).
+$cert = require_owned_certificate(
+    $db,
+    $cert_id,
+    'student',
+    $student_id,
+    'c.*, i.name as institution_name',
+    'JOIN institutions i ON c.institution_id = i.id'
+);
 
 // Generate Share Link Logic
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['generate_share'])) {

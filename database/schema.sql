@@ -91,3 +91,25 @@ CREATE TABLE verification_logs (
 );
 CREATE INDEX idx_vlogs_ip_time ON verification_logs(verifier_ip, verified_at);
 CREATE INDEX idx_vlogs_cert_found ON verification_logs(certificate_id_found);
+
+-- Persistent "Remember me" logins (see database/migrations/005_remember_me_tokens.sql).
+-- Cookie holds "selector:validator"; only SHA-256(validator) is stored.
+CREATE TABLE remember_tokens (
+    selector VARCHAR(24) NOT NULL PRIMARY KEY,
+    token_hash VARCHAR(64) NOT NULL,
+    user_id INT NOT NULL,
+    expires_at DATETIME NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_remember_tokens_user_id ON remember_tokens(user_id);
+CREATE INDEX idx_remember_tokens_expires_at ON remember_tokens(expires_at);
+
+-- Login rate limiting per email + IP (see database/migrations/006_login_rate_limit.sql).
+CREATE TABLE login_attempts (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    email VARCHAR(255) NOT NULL,
+    ip VARCHAR(45) NOT NULL,
+    attempted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_login_attempts_email_ip_time ON login_attempts(email, ip, attempted_at);

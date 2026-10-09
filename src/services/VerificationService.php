@@ -2,8 +2,11 @@
 // src/services/VerificationService.php
 // ─────────────────────────────────────────────────────────────────────
 // Shared certificate verification pipeline:
-//   existence → hash integrity → RSA signature → revoked/superseded →
+//   existence → revoked/superseded → hash integrity → RSA signature →
 //   expiry → VALID
+// Status is checked first because it is server-authoritative (it lives in
+// the database, not in the file): a revoked certificate reports REVOKED
+// even if its file was also altered, and likewise for SUPERSEDED.
 // Used by public/verify.php and public/share.php so both pages always
 // produce the same verdict for the same certificate.
 // ─────────────────────────────────────────────────────────────────────
@@ -46,14 +49,41 @@ class VerificationService {
     /**
      * Run the verification cascade on an already-fetched row.
      *
-     * Order matters: a certificate that is BOTH revoked and expired is
-     * reported REVOKED; a certificate that is BOTH superseded and
-     * expired is reported SUPERSEDED.
+     * Order matters: revoked/superseded are server-side status, so they
+     * are evaluated before file integrity — a revoked certificate reports
+     * REVOKED (not TAMPERED) even if its file was altered afterwards, and
+     * a superseded one reports SUPERSEDED. After that, integrity and
+     * signature failures report TAMPERED, then expiry, then VALID.
      *
      * @return array{verdict:string, detail:string, superseded_by:?array}
      */
     public static function verify($db, $cert) {
-        // Step 1 – Integrity: recompute SHA-256 hash and compare
+        // Step 1 – Revocation (server-authoritative: wins over everything
+        // below, including tampering and expiry)
+        if ($cert['status'] === 'revoked') {
+            return [
+                'verdict' => 'REVOKED',
+                'detail'  => 'This certificate has been revoked by the issuing institution.',
+                'superseded_by' => null,
+            ];
+        }
+
+        // Step 2 – Supersession (server-authoritative, same reason)
+        if ($cert['status'] === 'superseded') {
+            $superseded_by = null;
+            if (!empty($cert['superseded_by_id'])) {
+                $sbStmt = $db->prepare('SELECT certificate_id, qr_token FROM certificates WHERE id = :id');
+                $sbStmt->execute(['id' => $cert['superseded_by_id']]);
+                $superseded_by = $sbStmt->fetch() ?: null;
+            }
+            return [
+                'verdict' => 'SUPERSEDED',
+                'detail'  => 'This certificate has been superseded by a newer corrected version.',
+                'superseded_by' => $superseded_by,
+            ];
+        }
+
+        // Step 3 – Integrity: recompute SHA-256 hash and compare
         $filePath = __DIR__ . '/../../private_data/uploads/' . $cert['file_path'];
         $hashOK   = false;
 
@@ -78,7 +108,7 @@ class VerificationService {
             ];
         }
 
-        // Step 2 – Authenticity: verify RSA signature
+        // Step 4 – Authenticity: verify RSA signature
         $sigOK = false;
         if (!empty($cert['digital_signature']) && !empty($cert['public_key'])) {
             $sigOK = CryptoService::verifyCertificateSignature(
@@ -96,31 +126,8 @@ class VerificationService {
             ];
         }
 
-        // Step 3 – Revocation (before expiry: revoked wins)
-        if ($cert['status'] === 'revoked') {
-            return [
-                'verdict' => 'REVOKED',
-                'detail'  => 'This certificate has been revoked by the issuing institution.',
-                'superseded_by' => null,
-            ];
-        }
-
-        // Step 4 – Supersession (before expiry: superseded wins)
-        if ($cert['status'] === 'superseded') {
-            $superseded_by = null;
-            if (!empty($cert['superseded_by_id'])) {
-                $sbStmt = $db->prepare('SELECT certificate_id, qr_token FROM certificates WHERE id = :id');
-                $sbStmt->execute(['id' => $cert['superseded_by_id']]);
-                $superseded_by = $sbStmt->fetch() ?: null;
-            }
-            return [
-                'verdict' => 'SUPERSEDED',
-                'detail'  => 'This certificate has been superseded by a newer corrected version.',
-                'superseded_by' => $superseded_by,
-            ];
-        }
-
-        // Step 5 – Expiry (explicit status, then the date)
+        // Step 5 – Expiry: explicit status first, then the date.
+        // (Revoked/superseded win over expired by construction.)
         if (($cert['status'] ?? '') === 'expired') {
             return [
                 'verdict' => 'EXPIRED',

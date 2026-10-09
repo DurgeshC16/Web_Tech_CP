@@ -184,18 +184,63 @@ function v_date_range($issue, $expiry) {
 }
 
 /**
+ * True when the request body was discarded because it exceeded
+ * post_max_size (PHP then leaves $_POST and $_FILES empty, so without
+ * this check the request dies later with a misleading CSRF 403).
+ */
+function is_post_overflow() {
+    if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
+        return false;
+    }
+    return empty($_POST) && empty($_FILES) && (int)($_SERVER['CONTENT_LENGTH'] ?? 0) > 0;
+}
+
+/**
  * Uploaded certificate file: PDF/PNG/JPG extension + matching MIME,
- * size between 1 KB and 5 MB.
+ * size between 100 bytes and 5 MB.
+ *
+ * Every $_FILES['error'] code maps to a user-friendly message so the
+ * real cause (php.ini limit, partial upload, missing tmp dir, …) is
+ * never masked as a generic "file is required".
  */
 function v_upload($file) {
-    if (!$file || !isset($file['error']) || $file['error'] !== UPLOAD_ERR_OK) {
+    if (!$file || !isset($file['error'])) {
         return 'A certificate file is required.';
     }
-    $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+    switch ($file['error']) {
+        case UPLOAD_ERR_OK:
+            break;
+        case UPLOAD_ERR_INI_SIZE:
+            return 'The file exceeds the server upload limit (upload_max_filesize in php.ini). Please use a smaller file (max 5 MB).';
+        case UPLOAD_ERR_FORM_SIZE:
+            return 'The file exceeds the form size limit (MAX_FILE_SIZE). Please use a smaller file (max 5 MB).';
+        case UPLOAD_ERR_PARTIAL:
+            return 'The file was only partially uploaded. Please try again.';
+        case UPLOAD_ERR_NO_FILE:
+            return 'A certificate file is required.';
+        case UPLOAD_ERR_NO_TMP_DIR:
+            return 'Server misconfiguration: temporary upload folder is missing. Please contact the administrator.';
+        case UPLOAD_ERR_CANT_WRITE:
+            return 'The server failed to write the uploaded file. Please try again or contact the administrator.';
+        case UPLOAD_ERR_EXTENSION:
+            return 'The upload was blocked by a server extension. Please try a different PDF/PNG/JPG file.';
+        default:
+            return 'An unknown upload error occurred. Please try again.';
+    }
+    if (empty($file['tmp_name']) || !is_uploaded_file($file['tmp_name'])) {
+        return 'The file upload failed (temporary file missing). Please try again.';
+    }
+    $ext = strtolower(pathinfo($file['name'] ?? '', PATHINFO_EXTENSION));
     if (!in_array($ext, ['pdf', 'png', 'jpg', 'jpeg'], true)) {
         return 'Only PDF, PNG, and JPG files are allowed.';
     }
+    if (!function_exists('finfo_open')) {
+        return 'Server misconfiguration: fileinfo extension is disabled. Please contact the administrator.';
+    }
     $finfo = finfo_open(FILEINFO_MIME_TYPE);
+    if ($finfo === false) {
+        return 'The server could not verify the file type. Please try again later.';
+    }
     $mime = finfo_file($finfo, $file['tmp_name']);
     finfo_close($finfo);
     $mimeMap = [
@@ -207,8 +252,8 @@ function v_upload($file) {
     if (!in_array($mime, $mimeMap[$ext], true)) {
         return 'File content does not match an allowed type (PDF, PNG, JPG).';
     }
-    if ($file['size'] < 1024) {
-        return 'File appears to be empty or corrupted (minimum 1 KB).';
+    if (($file['size'] ?? 0) < 100) {
+        return 'File appears to be empty or corrupted (minimum 100 bytes).';
     }
     if ($file['size'] > 5 * 1024 * 1024) {
         return 'File size exceeds the 5MB limit.';

@@ -26,9 +26,14 @@ if (empty($token)) {
             $error = "Token signature verification failed. The link is invalid or corrupted.";
         } else {
             $payload = json_decode(base64_decode(strtr($encoded_payload, '-_', '+/')), true);
-            if (!$payload || !isset($payload['id']) || !isset($payload['exp'])) {
+            // Strict shape: the app only ever mints integer ids + integer exps
+            // (accept digit-strings too — PDO may hand back string ids).
+            // The HMAC already authenticates the payload; this is defense in depth.
+            $share_id = filter_var($payload['id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+            $share_exp = filter_var($payload['exp'] ?? null, FILTER_VALIDATE_INT);
+            if (!$payload || $share_id === false || $share_exp === false) {
                 $error = "Invalid token payload.";
-            } elseif (time() > $payload['exp']) {
+            } elseif (time() > $share_exp) {
                 $error = "This share link has expired.";
             } else {
                 $db = Database::getInstance();
@@ -39,7 +44,7 @@ if (empty($token)) {
                     JOIN students s ON c.student_id = s.id
                     WHERE c.id = :id
                 ');
-                $stmt->execute(['id' => $payload['id']]);
+                $stmt->execute(['id' => $share_id]);
                 $cert = $stmt->fetch();
 
                 if (!$cert) {

@@ -17,34 +17,32 @@ $issue_date = '';
 $expiry_date = '';
 
 // Get Institution ID
-$stmt = $db->prepare('SELECT id FROM institutions WHERE user_id = :user_id LIMIT 1');
-$stmt->execute(['user_id' => $_SESSION['user_id']]);
-$institution_id = $stmt->fetchColumn();
+$institution_id = current_institution_id($db);
 
 if (!$institution_id) {
     show_error_page('Error', 'Institution profile not found.');
 }
 
-// Fetch the old certificate, ensure ownership
-$stmt = $db->prepare('
-    SELECT c.*, s.full_name as student_name, u.email as student_email
-    FROM certificates c
-    JOIN students s ON c.student_id = s.id
-    JOIN users u ON s.user_id = u.id
-    WHERE c.id = :id AND c.institution_id = :inst_id
-');
-$stmt->execute(['id' => $old_cert_id, 'inst_id' => $institution_id]);
-$old_cert = $stmt->fetch();
-
-if (!$old_cert) {
-    show_error_page('Not Found', 'Certificate not found or access denied.');
-}
+// Fetch the old certificate — ownership enforced centrally (uniform 403).
+$old_cert = require_owned_certificate(
+    $db,
+    $old_cert_id,
+    'admin',
+    $institution_id,
+    'c.*, s.full_name as student_name, u.email as student_email',
+    'JOIN students s ON c.student_id = s.id JOIN users u ON s.user_id = u.id'
+);
 
 if ($old_cert['status'] !== 'active' && $old_cert['status'] !== 'expired') {
     $error = "Only active or expired certificates can be superseded (current status: {$old_cert['status']}).";
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error)) {
+    // post_max_size overflow empties $_POST+$_FILES (CSRF token included),
+    // so detect it FIRST — otherwise the user sees a misleading 403.
+    if (is_post_overflow()) {
+        $error = 'The uploaded file is too large and was rejected by the server (post_max_size exceeded). Please use a file under 5 MB.';
+    } else {
     validate_csrf_token($_POST['csrf_token'] ?? '');
     
     $title = sanitize_input($_POST['title'] ?? '');
@@ -88,10 +86,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error)) {
                 $new_cert_id = sprintf("CV-%s-%06d", $year, $num);
                 $new_version = $old_cert['version'] + 1;
                 
-                // 2. Save File
-                $ext = pathinfo($file['name'], PATHINFO_EXTENSION);
-                $filename = $new_cert_id . '_' . time() . '.' . $ext;
+                // 2. Save File (unguessable name, validated lowercase ext, outside web root)
+                $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+                $filename = $new_cert_id . '_' . bin2hex(random_bytes(16)) . '.' . $ext;
                 $upload_dir = __DIR__ . '/../private_data/uploads/';
+                if (!is_dir($upload_dir) && !mkdir($upload_dir, 0755, true) && !is_dir($upload_dir)) {
+                    throw new Exception('Upload directory is not available. Please contact the administrator.');
+                }
                 $destination = $upload_dir . $filename;
                 
                 if (!move_uploaded_file($file['tmp_name'], $destination)) {
@@ -99,9 +100,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error)) {
                 }
                 
                 // 3. Generate QR Token and QR Code
+                if (defined('QR_CACHE_DIR') && (!is_dir(QR_CACHE_DIR) || !is_writable(QR_CACHE_DIR))) {
+                    throw new Exception('QR cache directory is not writable. Please contact the administrator.');
+                }
                 $qr_token = rtrim(strtr(base64_encode(random_bytes(32)), '+/', '-_'), '=');
                 $verify_url = BASE_URL . "/verify.php?token=" . $qr_token;
-                $qr_path = __DIR__ . "/qrcodes/" . $qr_token . ".png";
+                $qr_dir = __DIR__ . "/qrcodes/";
+                if (!is_dir($qr_dir) && !mkdir($qr_dir, 0755, true) && !is_dir($qr_dir)) {
+                    throw new Exception('QR directory is not available. Please contact the administrator.');
+                }
+                $qr_path = $qr_dir . $qr_token . ".png";
                 QRService::generateQRCode($verify_url, $qr_path);
                 
                 // 4. Compute hash
@@ -157,14 +165,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error)) {
                 $success = "Certificate superseded! New Certificate ID: " . $new_cert_id . " (v" . $new_version . ")";
                 $success_qr_token = $qr_token;
             } catch (Exception $e) {
-                $db->rollBack();
+                if ($db->inTransaction()) { $db->rollBack(); }
                 $error = 'Error superseding certificate: ' . $e->getMessage();
                 // Remove orphaned files left behind by a failed supersede attempt
-                if ($destination && is_file($destination)) { @unlink($destination); }
-                if ($qr_path && is_file($qr_path)) { @unlink($qr_path); }
+                if (!empty($destination) && is_file($destination)) { @unlink($destination); }
+                if (!empty($qr_path) && is_file($qr_path)) { @unlink($qr_path); }
             }
         }
-    }
+    } // end overflow-guard else
+} // end POST
 ?>
 <?php $page_title = 'Supersede Certificate - CertiVault'; require __DIR__ . '/../src/partials/head.php'; ?>
 <?php require __DIR__ . '/../src/partials/header.php'; ?>

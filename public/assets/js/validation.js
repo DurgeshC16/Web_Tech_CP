@@ -4,7 +4,7 @@
  *   data-validate="required|email"
  *   data-validate="required|min:8|max:72|strong"
  *   data-validate="required|match:#password"
- *   data-validate="number|min:5|max:20"
+ *   data-validate="required|number|range:2,18"
  *   data-validate="otp"  data-validate="certid"  data-validate="personname"
  *   data-validate="upload"  data-validate="daterange"  data-validate="after:#issue_date"
  * Client rules mirror the server-side validators.php exactly; the server
@@ -15,7 +15,7 @@
 
     var FILE_OK_EXT = ['pdf', 'png', 'jpg', 'jpeg'];
     var FILE_OK_MIME = ['application/pdf', 'image/png', 'image/jpeg'];
-    var FILE_MIN = 1024;             // 1 KB
+    var FILE_MIN = 100;              // 100 bytes (mirrors v_upload())
     var FILE_MAX = 5 * 1024 * 1024;  // 5 MB
 
     // ── Rule implementations (mirror src/utils/validators.php) ────────
@@ -81,7 +81,7 @@
         var ext = (f.name.split('.').pop() || '').toLowerCase();
         if (FILE_OK_EXT.indexOf(ext) === -1) return 'Only PDF, PNG, and JPG files are allowed.';
         if (f.type && FILE_OK_MIME.indexOf(f.type) === -1) return 'File content does not match an allowed type (PDF, PNG, JPG).';
-        if (f.size < FILE_MIN) return 'File appears to be empty or corrupted (minimum 1 KB).';
+        if (f.size < FILE_MIN) return 'File appears to be empty or corrupted (minimum 100 bytes).';
         if (f.size > FILE_MAX) return 'File size exceeds the 5MB limit.';
         return true;
     }

@@ -50,6 +50,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $db->prepare('UPDATE users SET password_hash = :hash, failed_login_attempts = 0, locked_until = NULL WHERE id = :id')
                ->execute(['hash' => $hash, 'id' => $reset_user_id]);
 
+            // Credential changed: kill all persistent logins.
+            revoke_user_remember_tokens($db, $reset_user_id);
+
             // Invalidate all remaining OTPs for this user
             $db->prepare('UPDATE otp_codes SET used = 1 WHERE user_id = :uid AND used = 0')
                ->execute(['uid' => $reset_user_id]);

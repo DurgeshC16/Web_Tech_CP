@@ -21,6 +21,11 @@ if (!$institution_id) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // post_max_size overflow empties $_POST+$_FILES (CSRF token included),
+    // so detect it FIRST — otherwise the user sees a misleading 403.
+    if (is_post_overflow()) {
+        $error = 'The uploaded file is too large and was rejected by the server (post_max_size exceeded). Please use a file under 5 MB.';
+    } else {
     validate_csrf_token($_POST['csrf_token'] ?? '');
     
     $student_email = sanitize_input($_POST['student_email'] ?? '');
@@ -58,22 +63,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             try {
                 $db->beginTransaction();
                 
-                // 1. Resolve Student
-                $stmt = $db->prepare('SELECT s.id FROM users u JOIN students s ON u.id = s.user_id WHERE u.email = :email LIMIT 1');
+                // 1. Resolve Student — verified accounts only. Unverified
+                //    accounts cannot receive certificates until activation.
+                $stmt = $db->prepare('SELECT s.id, u.id AS user_id, u.is_verified FROM users u JOIN students s ON u.id = s.user_id WHERE u.email = :email LIMIT 1');
                 $stmt->execute(['email' => $student_email]);
-                $student_id = $stmt->fetchColumn();
-                
-                if (!$student_id) {
-                    // Create inline
-                    $temp_password = password_hash(bin2hex(random_bytes(8)), PASSWORD_BCRYPT);
-                    $stmt = $db->prepare('INSERT INTO users (email, password_hash, role) VALUES (:email, :hash, "student")');
-                    $stmt->execute(['email' => $student_email, 'hash' => $temp_password]);
-                    $new_user_id = $db->lastInsertId();
-                    
-                    $stmt = $db->prepare('INSERT INTO students (user_id, full_name) VALUES (:user_id, :full_name)');
-                    $stmt->execute(['user_id' => $new_user_id, 'full_name' => $student_name]);
-                    $student_id = $db->lastInsertId();
-                    $new_student_user_id = $new_user_id; // remember for activation email/OTP after commit
+                $student_row = $stmt->fetch();
+
+                if ($student_row && (int)$student_row['is_verified'] === 1) {
+                    $student_id = $student_row['id'];
+                } else {
+                    if (!$student_row) {
+                        // Create inline (unverified) account
+                        $temp_password = password_hash(bin2hex(random_bytes(8)), PASSWORD_BCRYPT);
+                        $stmt = $db->prepare('INSERT INTO users (email, password_hash, role) VALUES (:email, :hash, "student")');
+                        $stmt->execute(['email' => $student_email, 'hash' => $temp_password]);
+                        $new_user_id = $db->lastInsertId();
+
+                        $stmt = $db->prepare('INSERT INTO students (user_id, full_name) VALUES (:user_id, :full_name)');
+                        $stmt->execute(['user_id' => $new_user_id, 'full_name' => $student_name]);
+                        $pending_user_id = $new_user_id;
+                    } else {
+                        $pending_user_id = $student_row['user_id'];
+                    }
+                    $db->commit(); // persist the pending account; issuance stops here
+                    $activate_url = BASE_URL . '/activate_account.php?user_id=' . $pending_user_id;
+                    $otp_result = create_otp($db, $pending_user_id, 'activation', $activate_url);
+                    if ($otp_result === 'sent') {
+                        throw new ActivationGate('This student has not activated their account yet. An activation code was sent to ' . mask_email($student_email) . ' — issue the certificate after the student activates.');
+                    } elseif ($otp_result === 'cooldown') {
+                        throw new ActivationGate('This student has not activated their account yet. An activation code was sent recently — ask the student to check their email, then issue the certificate after activation.');
+                    } elseif ($otp_result === 'limit') {
+                        throw new ActivationGate('This student has not activated their account yet, and too many activation codes were requested. Please try again later, after the student activates.');
+                    } else {
+                        throw new ActivationGate("This student has not activated their account yet, and we couldn't send the activation email right now. Please try again in a minute.");
+                    }
                 }
                 
                 // 2. Generate Certificate ID
@@ -89,10 +112,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 $cert_id = sprintf("CV-%s-%06d", $year, $num);
                 
-                // 3. Save File
-                $ext = pathinfo($file['name'], PATHINFO_EXTENSION);
-                $filename = $cert_id . '_' . time() . '.' . $ext;
+                // 3. Save File (unguessable name, validated lowercase ext, outside web root)
+                $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+                $filename = $cert_id . '_' . bin2hex(random_bytes(16)) . '.' . $ext;
                 $upload_dir = __DIR__ . '/../private_data/uploads/';
+                if (!is_dir($upload_dir) && !mkdir($upload_dir, 0755, true) && !is_dir($upload_dir)) {
+                    throw new Exception('Upload directory is not available. Please contact the administrator.');
+                }
                 $destination = $upload_dir . $filename;
                 
                 if (!move_uploaded_file($file['tmp_name'], $destination)) {
@@ -102,9 +128,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // 4. Generate QR Token and QR Code
                 require_once __DIR__ . '/../src/services/QRService.php';
                 require_once __DIR__ . '/../src/services/CryptoService.php';
+                if (defined('QR_CACHE_DIR') && (!is_dir(QR_CACHE_DIR) || !is_writable(QR_CACHE_DIR))) {
+                    throw new Exception('QR cache directory is not writable. Please contact the administrator.');
+                }
                 $qr_token = rtrim(strtr(base64_encode(random_bytes(32)), '+/', '-_'), '=');
                 $verify_url = BASE_URL . "/verify.php?token=" . $qr_token;
-                $qr_path = __DIR__ . "/qrcodes/" . $qr_token . ".png";
+                $qr_dir = __DIR__ . "/qrcodes/";
+                if (!is_dir($qr_dir) && !mkdir($qr_dir, 0755, true) && !is_dir($qr_dir)) {
+                    throw new Exception('QR directory is not available. Please contact the administrator.');
+                }
+                $qr_path = $qr_dir . $qr_token . ".png";
                 QRService::generateQRCode($verify_url, $qr_path);
                 
                 // 5. Compute SHA-256 hash of canonical certificate data
@@ -152,28 +185,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $db->commit();
                 $success = "Certificate successfully issued! Certificate ID: " . $cert_id;
                 $success_qr_token = $qr_token;
-
-                // For a brand-new inline student account, send an activation
-                // OTP. The student sets their real password and activates via
-                // activate_account.php — no orphaned accounts.
-                if (!empty($new_student_user_id)) {
-                    $activate_url = BASE_URL . '/activate_account.php?user_id=' . $new_student_user_id;
-                    $otp_result = create_otp($db, $new_student_user_id, 'activation', $activate_url);
-                    if ($otp_result === 'sent') {
-                        $activation_msg = 'Activation email sent to ' . htmlspecialchars(mask_email($student_email)) . '.';
-                    } else {
-                        $activation_msg = "We couldn't send the activation email right now. The student can request a new code from the login page.";
-                    }
-                }
+            } catch (ActivationGate $e) {
+                // Student gate: account already committed, nothing to roll
+                // back and no files created yet — just report.
+                $error = $e->getMessage();
             } catch (Exception $e) {
-                $db->rollBack();
+                if ($db->inTransaction()) { $db->rollBack(); }
                 $error = 'Error issuing certificate: ' . $e->getMessage();
                 // Remove orphaned files left behind by a failed issue attempt
-                if ($destination && is_file($destination)) { @unlink($destination); }
-                if ($qr_path && is_file($qr_path)) { @unlink($qr_path); }
+                if (!empty($destination) && is_file($destination)) { @unlink($destination); }
+                if (!empty($qr_path) && is_file($qr_path)) { @unlink($qr_path); }
             }
         }
-    }
+    } // end overflow-guard else
+} // end POST
 ?>
 <?php $page_title = 'Issue Certificate - CertiVault'; require __DIR__ . '/../src/partials/head.php'; ?>
 <?php require __DIR__ . '/../src/partials/header.php'; ?>
@@ -193,9 +218,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <?php if ($success): ?>
             <div class="alert alert-success">
                 <strong>Success!</strong> <?= htmlspecialchars($success) ?>
-                <?php if (!empty($activation_msg)): ?>
-                    <p><?= $activation_msg ?></p>
-                <?php endif; ?>
             </div>
             
             <div class="seal-frame">

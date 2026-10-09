@@ -9,6 +9,29 @@ $show_resend = false;
 $resend_email = '';
 $email = '';
 
+if (empty($_SESSION['user_id']) && !empty($_COOKIE[REMEMBER_COOKIE])) {
+    // ── Remember-me auto-login (selector + hashed validator) ──────
+    $db = Database::getInstance();
+    $rm_user = consume_remember_token($db);
+    if ($rm_user !== null) {
+        $allowed = true;
+        if ($rm_user['role'] === 'admin') {
+            $instStmt = $db->prepare('SELECT status FROM institutions WHERE user_id = :user_id LIMIT 1');
+            $instStmt->execute(['user_id' => $rm_user['id']]);
+            $inst = $instStmt->fetch();
+            if (!$inst || $inst['status'] !== 'approved') {
+                $allowed = false;
+            }
+        }
+        if ($allowed) {
+            establish_authenticated_session($rm_user);
+            redirect_to_dashboard($rm_user['role']);
+        }
+        // Privilege lost since the token was issued: revoke persistence.
+        revoke_user_remember_tokens($db, $rm_user['id']);
+    }
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['activated'])) {
     $success = 'Account activated successfully! You can now login.';
 }
@@ -55,12 +78,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $password = $_POST['password'] ?? '';
     $errors = [];
 
-    $captcha = trim($_POST['captcha_answer'] ?? '');
-    if (($e = v_range($captcha, 2, 18, 'CAPTCHA answer')) !== true) {
-        $errors['captcha_answer'] = $e;
+    // Mode-aware CAPTCHA: reCAPTCHA v2 when keys are configured,
+    // offline arithmetic fallback otherwise.
+    if (!validate_captcha($errors)) {
         $error = 'Please correct the highlighted fields below.';
-    } elseif (!verify_captcha()) {
-        $error = 'Incorrect CAPTCHA answer. Please try again.';
     } else {
         if (($e = v_required($email, 'Email')) !== true) { $errors['email'] = $e; }
         elseif (($e = v_email($email)) !== true) { $errors['email'] = $e; }
@@ -68,6 +89,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if (empty($errors)) {
         $db = Database::getInstance();
+        $client_ip = login_client_ip();
+        if (($lock_remaining = login_lockout_remaining($db, $email, $client_ip)) > 0) {
+            $lock_mins = (int)ceil($lock_remaining / 60);
+            $error = 'Too many failed login attempts for this email address. Please try again in '
+                . $lock_mins . ' minute' . ($lock_mins === 1 ? '' : 's') . '.';
+        } else {
         $stmt = $db->prepare('SELECT id, password_hash, role, is_verified, failed_login_attempts, locked_until FROM users WHERE email = :email LIMIT 1');
         $stmt->execute(['email' => $email]);
         $user = $stmt->fetch();
@@ -97,16 +124,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             if ($user) {
-                // Successful login: reset brute-force counter
+                // Successful login: reset brute-force counters (per-account
+                // backstop + per email+IP window) and rotate the session.
                 $db->prepare('UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = :id')
                    ->execute(['id' => $user['id']]);
+                clear_login_attempts($db, $email, $client_ip);
 
-                // Prevent session fixation + start fresh lifetime tracking
-                session_regenerate_id(true);
-                $_SESSION['user_id'] = $user['id'];
-                $_SESSION['role'] = $user['role'];
-                $_SESSION['login_time'] = time();
-                $_SESSION['last_activity'] = time();
+                // Prevent session fixation + start fresh lifetime tracking.
+                // This same helper must be used on any role/privilege change.
+                establish_authenticated_session($user);
+
+                // Persistent login (selector + hashed token in DB — never
+                // the user id or password in the cookie).
+                if (!empty($_POST['remember_me'])) {
+                    create_remember_token($db, $user['id']);
+                } else {
+                    clear_remember_token($db);
+                }
 
                 // Remember-my-email cookie (email only, never a token)
                 $secure = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
@@ -133,6 +167,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $error = 'Invalid email or password.';
 
+            // Email+IP window for this failure (generic message: no oracle).
+            record_failed_login_attempt($db, $email, $client_ip);
+
             // Track failed attempts against an existing account; lock after 5
             if ($user) {
                 $attempts = (int)$user['failed_login_attempts'] + 1;
@@ -147,11 +184,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
         }
+        } // end rate-limit else
         } // end empty($errors)
     }
 }
 ?>
-<?php generate_captcha(); ?>
 <?php $page_title = 'Login - CertiVault'; require __DIR__ . '/../src/partials/head.php'; ?>
 <?php require __DIR__ . '/../src/partials/header.php'; ?>
 <main id="main">
@@ -192,14 +229,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <label><input type="checkbox" name="remember_email" value="1" style="width:auto;" <?= $remembered_email !== '' ? 'checked' : '' ?>> Remember my email</label>
             </div>
             <div class="form-group">
+                <label><input type="checkbox" name="remember_me" value="1" style="width:auto;"> Keep me signed in on this device (30 days)</label>
+            </div>
+            <div class="form-group">
                 <label>Password:</label>
                 <input type="password" name="password" data-validate="required" required>
                 <?php render_field_error($errors, 'password'); ?>
             </div>
             <div class="form-group">
-                <label>CAPTCHA:</label> <span class="captcha-chip"><?= htmlspecialchars($_SESSION['captcha_question'] ?? '') ?></span>
-                <input type="text" name="captcha_answer" data-validate="required|number|min:2|max:18" required autocomplete="off">
-                <?php render_field_error($errors, 'captcha_answer'); ?>
+                <?= captcha_field_html($errors) ?>
             </div>
             <button type="submit" class="btn btn-primary">Login</button>
         </form>

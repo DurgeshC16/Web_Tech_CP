@@ -12,27 +12,21 @@ $success = '';
 $reason = '';
 
 // Get Institution ID
-$stmt = $db->prepare('SELECT id FROM institutions WHERE user_id = :user_id LIMIT 1');
-$stmt->execute(['user_id' => $_SESSION['user_id']]);
-$institution_id = $stmt->fetchColumn();
+$institution_id = current_institution_id($db);
 
 if (!$institution_id) {
     show_error_page('Error', 'Institution profile not found.');
 }
 
-// Fetch certificate, ensure ownership and it's revocable
-$stmt = $db->prepare('
-    SELECT c.*, s.full_name as student_name
-    FROM certificates c
-    JOIN students s ON c.student_id = s.id
-    WHERE c.id = :id AND c.institution_id = :inst_id
-');
-$stmt->execute(['id' => $cert_db_id, 'inst_id' => $institution_id]);
-$cert = $stmt->fetch();
-
-if (!$cert) {
-    show_error_page('Not Found', 'Certificate not found or access denied.');
-}
+// Fetch certificate — ownership enforced centrally (uniform 403).
+$cert = require_owned_certificate(
+    $db,
+    $cert_db_id,
+    'admin',
+    $institution_id,
+    'c.*, s.full_name as student_name',
+    'JOIN students s ON c.student_id = s.id'
+);
 
 if (!in_array($cert['status'], ['active', 'expired'])) {
     $error = "This certificate cannot be revoked (current status: {$cert['status']}).";

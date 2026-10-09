@@ -32,24 +32,85 @@ class CryptoService {
     }
     
     /**
-     * Encrypt private key for storage at rest using AES-256-CBC.
-     * NOTE: In production, the encryption key would come from a KMS, not a config constant.
+     * Encrypt private key for storage at rest using AES-256-GCM (AEAD:
+     * confidentiality + authenticity in one primitive).
+     *
+     * The key is derived from APP_ENCRYPTION_KEY, which must come from the
+     * environment or src/config/config.local.php — never from version control
+     * (see config.php + the production secret guard).
+     *
+     * Format: 'GCM1.' . base64(iv[12] . tag[16] . ciphertext).
      */
     public static function encryptPrivateKey($privateKey) {
         $key = substr(hash('sha256', APP_ENCRYPTION_KEY, true), 0, 32);
-        $iv = openssl_random_pseudo_bytes(openssl_cipher_iv_length('aes-256-cbc'));
-        $encrypted = openssl_encrypt($privateKey, 'aes-256-cbc', $key, 0, $iv);
-        return base64_encode($iv . $encrypted);
+        $iv = random_bytes(12); // 96-bit nonce recommended for GCM
+        $tag = '';
+        $encrypted = openssl_encrypt($privateKey, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag);
+        if ($encrypted === false) {
+            throw new Exception('Institution private key could not be encrypted.');
+        }
+        return 'GCM1.' . base64_encode($iv . $tag . $encrypted);
     }
-    
+
     /**
-     * Decrypt private key for usage.
+     * Derive the 32-byte data key from the configured application secret.
+     * The derivation is frozen: changing it would orphan every stored key.
+     */
+    private static function dataKey() {
+        return substr(hash('sha256', APP_ENCRYPTION_KEY, true), 0, 32);
+    }
+
+    /**
+     * Decrypt private key for usage. Accepts current GCM1 blobs and legacy
+     * pre-GCM AES-256-CBC blobs (raw base64 of iv[16] . base64-ciphertext),
+     * so keys issued before the GCM upgrade keep working.
      */
     public static function decryptPrivateKey($encryptedData) {
         if (!is_string($encryptedData) || trim($encryptedData) === '') {
             throw new Exception('Institution private key is missing.');
         }
-        $key = substr(hash('sha256', APP_ENCRYPTION_KEY, true), 0, 32);
+        $key = self::dataKey();
+        if (strpos($encryptedData, 'GCM1.') === 0) {
+            $plaintext = self::decryptGcm(substr($encryptedData, 5), $key);
+        } else {
+            $plaintext = self::decryptLegacyCbc($encryptedData, $key);
+        }
+        if (strpos($plaintext, '-----BEGIN') !== 0) {
+            throw new Exception('Institution private key is not a valid PEM.');
+        }
+        $pkey = openssl_pkey_get_private($plaintext);
+        if (!$pkey) {
+            throw new Exception('Institution private key is rejected by OpenSSL.');
+        }
+        return $plaintext;
+    }
+
+    /**
+     * Decrypt a 'GCM1' blob. Any failure (bad base64, short payload, wrong
+     * key, tampered bytes) throws — GCM authentication is fail-closed.
+     */
+    private static function decryptGcm($b64, $key) {
+        $data = base64_decode($b64, true);
+        if ($data === false || strlen($data) < 12 + 16 + 16) {
+            throw new Exception('Institution private key data is incomplete.');
+        }
+        $iv = substr($data, 0, 12);
+        $tag = substr($data, 12, 16);
+        $ciphertext = substr($data, 28);
+        while (openssl_error_string()) {}
+        $plaintext = openssl_decrypt($ciphertext, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag);
+        if ($plaintext === false) {
+            throw new Exception('Institution private key could not be decrypted with the current encryption key.');
+        }
+        return $plaintext;
+    }
+
+    /**
+     * Decrypt a legacy AES-256-CBC blob: base64(iv[16] . base64(ciphertext)).
+     * CBC carries no integrity tag, so the PEM/OpenSSL checks in the caller
+     * are the authenticity backstop for these old rows. New rows are GCM.
+     */
+    private static function decryptLegacyCbc($encryptedData, $key) {
         $data = base64_decode($encryptedData, true);
         if ($data === false) {
             throw new Exception('Institution private key could not be decoded.');
@@ -64,13 +125,6 @@ class CryptoService {
         $plaintext = openssl_decrypt($encrypted, 'aes-256-cbc', $key, 0, $iv);
         if ($plaintext === false) {
             throw new Exception('Institution private key could not be decrypted with the current encryption key.');
-        }
-        if (strpos($plaintext, '-----BEGIN') !== 0) {
-            throw new Exception('Institution private key is not a valid PEM.');
-        }
-        $pkey = openssl_pkey_get_private($plaintext);
-        if (!$pkey) {
-            throw new Exception('Institution private key is rejected by OpenSSL.');
         }
         return $plaintext;
     }

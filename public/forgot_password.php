@@ -13,12 +13,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $email = sanitize_input($_POST['email'] ?? '');
     $errors = [];
 
-    $captcha = trim($_POST['captcha_answer'] ?? '');
-    if (($e = v_range($captcha, 2, 18, 'CAPTCHA answer')) !== true) {
-        $errors['captcha_answer'] = $e;
+    // Mode-aware CAPTCHA: reCAPTCHA v2 when keys are configured,
+    // offline arithmetic fallback otherwise.
+    if (!validate_captcha($errors)) {
         $error = 'Please correct the highlighted fields below.';
-    } elseif (!verify_captcha()) {
-        $error = 'Incorrect CAPTCHA answer. Please try again.';
     } else {
         if (($e = v_required($email, 'Email')) !== true) { $errors['email'] = $e; }
         elseif (($e = v_email($email)) !== true) { $errors['email'] = $e; }
@@ -39,7 +37,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($otp_result === 'sent') {
                 // Store the target user in the session (not in the URL)
                 $_SESSION['password_reset_user_id'] = $user['id'];
-                $_SESSION['password_reset_expires'] = time() + 900; // 15 minutes
+                $_SESSION['password_reset_expires'] = time() + OTP_LIFETIME; // 10 minutes, matches the OTP
                 redirect('reset_password.php');
             } elseif ($otp_result === 'cooldown') {
                 $info = "If an account exists for that email, we've sent a verification code. Please wait at least 60 seconds before requesting again.";
@@ -53,7 +51,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 ?>
-<?php generate_captcha(); ?>
 <?php $page_title = 'Forgot Password - CertiVault'; require __DIR__ . '/../src/partials/head.php'; ?>
 <?php require __DIR__ . '/../src/partials/header.php'; ?>
 <main id="main">
@@ -84,9 +81,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <?php render_field_error($errors, 'email'); ?>
             </div>
             <div class="form-group">
-                <label>CAPTCHA:</label> <span class="captcha-chip"><?= htmlspecialchars($_SESSION['captcha_question'] ?? '') ?></span>
-                <input type="text" name="captcha_answer" data-validate="required|number|min:2|max:18" required autocomplete="off">
-                <?php render_field_error($errors, 'captcha_answer'); ?>
+                <?= captcha_field_html($errors) ?>
             </div>
             <button type="submit" class="btn btn-primary">Send Reset Code</button>
         </form>

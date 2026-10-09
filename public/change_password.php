@@ -2,12 +2,9 @@
 require_once __DIR__ . '/../src/config/Database.php';
 require_once __DIR__ . '/../src/utils/helpers.php';
 
-// Any logged-in role can access this page
-if (!isset($_SESSION['user_id']) || !isset($_SESSION['role'])) {
-    redirect('login.php');
-}
-check_session_expiry();
-send_no_store_headers();
+// Any logged-in role can access this page (same guard as everywhere else:
+// require_role enforces login + idle/absolute timeout + no-store headers).
+require_role(['admin', 'student', 'super_admin']);
 if ($_SESSION['role'] === 'admin') {
     require_approved_institution();
 }
@@ -91,6 +88,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // Apply the password change
                     $db->prepare('UPDATE users SET password_hash = :hash WHERE id = :id')
                        ->execute(['hash' => $new_hash, 'id' => $_SESSION['user_id']]);
+
+                    // Credential changed: kill all persistent logins.
+                    revoke_user_remember_tokens($db, $_SESSION['user_id']);
 
                     // Invalidate all remaining OTPs for this user
                     $db->prepare('UPDATE otp_codes SET used = 1 WHERE user_id = :uid AND used = 0')

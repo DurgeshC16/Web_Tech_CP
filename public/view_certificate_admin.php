@@ -9,26 +9,30 @@ $db = Database::getInstance();
 $cert_id_param = $_GET['id'] ?? '';
 
 // Get Institution ID for the logged-in user
-$stmt = $db->prepare('SELECT id FROM institutions WHERE user_id = :user_id LIMIT 1');
-$stmt->execute(['user_id' => $_SESSION['user_id']]);
-$institution_id = $stmt->fetchColumn();
+$institution_id = current_institution_id($db);
 
 if (!$institution_id) {
     show_error_page('Error', 'Institution profile not found.');
 }
 
-// Fetch certificate details, ensuring ownership.
+// Fetch certificate details — ownership enforced centrally (uniform 403).
 // Use two separate prepared statements — never interpolate column names.
 if (is_numeric($cert_id_param)) {
-    $stmt = $db->prepare('SELECT c.*, s.full_name as student_name FROM certificates c JOIN students s ON c.student_id = s.id WHERE c.id = :id AND c.institution_id = :inst_id');
+    $cert = require_owned_certificate(
+        $db,
+        $cert_id_param,
+        'admin',
+        $institution_id,
+        'c.*, s.full_name as student_name',
+        'JOIN students s ON c.student_id = s.id'
+    );
 } else {
     $stmt = $db->prepare('SELECT c.*, s.full_name as student_name FROM certificates c JOIN students s ON c.student_id = s.id WHERE c.certificate_id = :id AND c.institution_id = :inst_id');
-}
-$stmt->execute(['id' => $cert_id_param, 'inst_id' => $institution_id]);
-$cert = $stmt->fetch();
-
-if (!$cert) {
-    show_error_page('Not Found', 'Certificate not found or access denied.');
+    $stmt->execute(['id' => $cert_id_param, 'inst_id' => $institution_id]);
+    $cert = $stmt->fetch();
+    if (!$cert || !can_access_certificate($cert, 'admin', $institution_id)) {
+        deny_access_403();
+    }
 }
 
 // Fetch specific verification history for this certificate (paginated)

@@ -2,7 +2,7 @@
 // src/config/config.local.php — LOCAL dev overrides ONLY.
 //
 // XAMPP/Apache on Windows does not reliably pass OS environment variables to
-// PHP, so this file lets you set real SMTP credentials directly. Copy it to
+// PHP, so this file lets you set real secrets directly. Copy it to
 // src/config/config.local.php and fill in the real values.
 //
 // NEVER commit config.local.php with real credentials (it is gitignored).
@@ -15,3 +15,14 @@ define('SMTP_PASSWORD', trim('your-16-char-app-password'));
 define('SMTP_ENCRYPTION', 'tls');
 define('SMTP_FROM_EMAIL', 'your-email@gmail.com');
 define('SMTP_FROM_NAME', 'CertiVault');
+
+// Server-side data key for institution RSA private keys at rest (any long
+// random string; changing it orphans previously encrypted keys).
+// define('APP_ENCRYPTION_KEY', 'paste-a-long-random-string-here');
+// define('OTP_PEPPER', 'paste-another-long-random-string-here');
+// define('SHARE_LINK_SECRET', 'paste-yet-another-long-random-string-here');
+
+// Google reCAPTCHA v2 keys (get them at https://www.google.com/recaptcha).
+// Leave both commented out to keep the offline arithmetic CAPTCHA.
+// define('RECAPTCHA_SITE_KEY', 'your-recaptcha-site-key');
+// define('RECAPTCHA_SECRET_KEY', 'your-recaptcha-secret-key');
