@@ -157,6 +157,26 @@ function v_otp($value) {
 }
 
 /**
+ * Compare rule for two dates: $later must be strictly after $earlier
+ * (e.g. expiry date vs issue date). Both must parse; unparseable input
+ * fails closed with a field-appropriate message.
+ */
+function v_date_after($later, $earlier, $label) {
+    $later_ts = strtotime((string)$later);
+    $earlier_ts = strtotime((string)$earlier);
+    if ($later_ts === false) {
+        return $label . ' is not a valid date.';
+    }
+    if ($earlier_ts === false) {
+        return 'The start date is not a valid date.';
+    }
+    if ($later_ts <= $earlier_ts) {
+        return $label . ' must be after the issue date.';
+    }
+    return true;
+}
+
+/**
  * Issue date: valid date, not in the future, not before 1950.
  * Expiry (when provided) must be after the issue date.
  */

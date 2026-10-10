@@ -5,6 +5,18 @@
 // The defaults here are for local development ONLY.
 // ─────────────────────────────────────────────────────────────────────
 
+// ── Local overrides (loaded FIRST so they win everywhere below) ─────
+// XAMPP/Apache on Windows does NOT reliably pass OS environment variables
+// to PHP, so getenv() below can silently come back empty. For local dev you
+// can instead copy src/config/config.local.php.example to config.local.php
+// and fill in real values there — it defines the same constants directly and
+// wins over the getenv() fallbacks below. config.local.php is gitignored;
+// never commit real credentials.
+$local_config = __DIR__ . '/config.local.php';
+if (file_exists($local_config)) {
+    require_once $local_config;
+}
+
 // ── Database ────────────────────────────────────────────────────────
 define('DB_HOST', getenv('CV_DB_HOST') ?: 'localhost');
 define('DB_USER', getenv('CV_DB_USER') ?: 'root');
@@ -12,7 +24,39 @@ define('DB_PASS', getenv('CV_DB_PASS') ?: '');
 define('DB_NAME', getenv('CV_DB_NAME') ?: 'certivault');
 
 // ── Application ─────────────────────────────────────────────────────
-define('BASE_URL', getenv('CV_BASE_URL') ?: 'http://localhost:8081/certivault/public');
+// BASE_URL feeds QR-code verify URLs, share links, and activation emails.
+// An explicit CV_BASE_URL always wins (use it behind proxies or when the
+// public hostname differs). Otherwise it is derived per-request as
+// scheme + host + port + path up to /public, so the app works on any
+// host/port/mount point with zero configuration.
+function certivault_default_base_url() {
+    // CLI (scripts, cron): no request to derive from — dev fallback.
+    if (php_sapi_name() === 'cli' || empty($_SERVER['HTTP_HOST'])) {
+        return 'http://localhost:8081/certivault/public';
+    }
+    $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+        || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https') // TLS-terminating proxy
+        || (($_SERVER['SERVER_PORT'] ?? '') == '443');
+    $scheme = $https ? 'https' : 'http';
+    // HTTP_HOST carries the non-default port (e.g. 127.0.0.1:8081).
+    // Validate its shape: it is request-supplied and ends up in emails/QRs.
+    $host = $_SERVER['HTTP_HOST'];
+    if (!preg_match('/^[A-Za-z0-9.\-]+(?::\d+)?$/', $host)) {
+        $host = 'localhost';
+    }
+    // Path up to and including /public, wherever the repo is mounted
+    // (e.g. /certivault/public). With docroot=public there is no /public
+    // in SCRIPT_NAME — then the docroot itself is the base path.
+    $script = str_replace('\\', '/', $_SERVER['SCRIPT_NAME'] ?? '');
+    $pos = strpos($script, '/public');
+    $base_path = ($pos !== false)
+        ? substr($script, 0, $pos + strlen('/public'))
+        : rtrim(dirname($script), '/');
+    return $scheme . '://' . $host . $base_path;
+}
+define('BASE_URL', getenv('CV_BASE_URL')
+    ?: (defined('CV_BASE_URL') ? CV_BASE_URL : null)
+    ?: certivault_default_base_url());
 
 // Server-side encryption key for RSA private keys at rest.
 // IMPORTANT: In production, use a proper KMS or at minimum a strong
@@ -36,19 +80,9 @@ defined('SHARE_LINK_SECRET') || define('SHARE_LINK_SECRET', getenv('CV_SHARE_SEC
 defined('RECAPTCHA_SITE_KEY') || define('RECAPTCHA_SITE_KEY', getenv('CV_RECAPTCHA_SITE_KEY') ?: '');
 defined('RECAPTCHA_SECRET_KEY') || define('RECAPTCHA_SECRET_KEY', getenv('CV_RECAPTCHA_SECRET_KEY') ?: '');
 
-// ── Local overrides ─────────────────────────────────────────────────
-// XAMPP/Apache on Windows does NOT reliably pass OS environment variables
-// to PHP, so getenv() below can silently come back empty. For local dev you
-// can instead copy src/config/config.local.php.example to config.local.php
-// and fill in real values there — it defines the same constants directly and
-// wins over the getenv() fallbacks below. config.local.php is gitignored;
-// never commit real credentials.
-$local_config = __DIR__ . '/config.local.php';
-if (file_exists($local_config)) {
-    require_once $local_config;
-}
-
 // ── SMTP (email delivery) ───────────────────────────────────────────
+// (Local overrides already loaded above; the defined() guards let
+// config.local.php values win.)
 defined('SMTP_HOST')     || define('SMTP_HOST', getenv('SMTP_HOST') ?: 'smtp.gmail.com');
 defined('SMTP_PORT')     || define('SMTP_PORT', (int)(getenv('SMTP_PORT') ?: 587));
 defined('SMTP_USERNAME') || define('SMTP_USERNAME', trim(getenv('SMTP_USERNAME') ?: ''));

@@ -102,6 +102,39 @@ function send_no_store_headers() {
 }
 
 /**
+ * Send the application-wide security headers. Called from head.php (so
+ * every rendered page gets them) and directly by responses that never
+ * include head.php (file downloads, the verify.php 429 page).
+ *
+ * CSP notes: 'unsafe-inline' stays ONLY because pages currently require
+ * it — inline <script> helpers (issue/supersede/view_certificate),
+ * inline on* handlers, and 30+ style="..." attributes. Dropping it
+ * needs a nonce refactor (tracked follow-up), so the policy instead
+ * allowlists exactly the external hosts the app uses: Google Fonts
+ * always, plus google.com/gstatic.com for reCAPTCHA when its keys are
+ * configured (tighter when the offline fallback is active).
+ */
+function send_security_headers() {
+    header('X-Content-Type-Options: nosniff');
+    header('X-Frame-Options: DENY');
+    header('Referrer-Policy: strict-origin-when-cross-origin');
+    header('Permissions-Policy: camera=(self), microphone=(), geolocation=()');
+    $extra = recaptcha_enabled() ? ' https://www.google.com https://www.gstatic.com' : '';
+    $frame = $extra !== '' ? $extra : " 'none'";
+    $csp = "default-src 'self'; base-uri 'self'; form-action 'self'; "
+        . "object-src 'none'; frame-ancestors 'self'; img-src 'self'; "
+        . 'font-src \'self\' https://fonts.gstatic.com; '
+        . 'style-src \'self\' \'unsafe-inline\' https://fonts.googleapis.com' . $extra . '; '
+        . 'script-src \'self\' \'unsafe-inline\'' . $extra . '; '
+        . 'frame-src' . $frame . '; '
+        . 'connect-src \'self\'' . $extra;
+    header('Content-Security-Policy: ' . $csp);
+    if (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') {
+        header('Strict-Transport-Security: max-age=31536000');
+    }
+}
+
+/**
  * Establish an authenticated session for a user who just proved their
  * identity (password login, remember-me cookie, …).
  *

@@ -22,6 +22,14 @@ define('SMTP_FROM_NAME', 'CertiVault');
 // define('OTP_PEPPER', 'paste-another-long-random-string-here');
 // define('SHARE_LINK_SECRET', 'paste-yet-another-long-random-string-here');
 
+// Public base URL (no trailing slash). OPTIONAL: when unset, config.php
+// derives scheme + host + port + path-up-to-/public from each request.
+// Set it only to force a value (proxies, non-standard mounts), e.g.:
+//   XAMPP on port 80 with http://localhost/certivault/public:
+//     define('CV_BASE_URL', 'http://localhost/certivault/public');
+//   PHP built-in server with docroot=public (php -S localhost:8081 -t public):
+//     nothing to set — requests to /verify.php resolve to http://localhost:8081
+
 // Google reCAPTCHA v2 keys (get them at https://www.google.com/recaptcha).
 // Leave both commented out to keep the offline arithmetic CAPTCHA.
 // define('RECAPTCHA_SITE_KEY', 'your-recaptcha-site-key');

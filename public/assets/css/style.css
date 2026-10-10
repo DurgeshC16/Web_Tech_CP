@@ -727,7 +727,7 @@ textarea:focus-visible,
 }
 
 /* ==========================================================================
-   Phase 6 — Layout, components, responsive framework, dark theme
+   Phase 6 ï¿½ Layout, components, responsive framework, dark theme
    ========================================================================== */
 
 :root {
@@ -877,7 +877,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 body { display: block !important; padding: 0 20px; }
 
 /* ==========================================================================
-   Phase 7 — Page-level components
+   Phase 7 ï¿½ Page-level components
    ========================================================================== */
 
 /* -- Auth pages ---------------------------------------------------- */
@@ -959,4 +959,39 @@ body { display: block !important; padding: 0 20px; }
 /* -- Force-full-width-on-phones for main auth column tweaks -------- */
 @media (max-width: 479px) {
     .auth-card { padding: var(--sp-4); }
+}
+
+/* -- Responsive hardening (audit-driven) ---------------------------- */
+/* Images must never force horizontal overflow. */
+img { max-width: 100%; height: auto; }
+
+/* Text controls meet the 44px tap target at every width (+2px, invisible). */
+.form-group input,
+.form-group select,
+.form-group textarea,
+.filter-form select { min-height: 44px; }
+
+/* Toasts must fit a 360px viewport (16px margins both sides). */
+.toast { max-width: min(360px, calc(100vw - 32px)); }
+
+/* Share-link copy row: let the input shrink and wrap on narrow screens. */
+.copy-field { flex-wrap: wrap; }
+.copy-field input { min-width: 0; }
+
+/* Detail split panels stack below tablet instead of clipping. */
+@media (max-width: 767px) {
+    .split-main,
+    .split-side { min-width: 0; flex: 1 1 100%; }
+}
+
+/* Touch devices: 44px minimum on every remaining small control.
+   Text links inside sentences keep their inline sizing (WCAG inline
+   exception); everything pressable reaches 44px here. */
+@media (pointer: coarse) {
+    .btn-sm,
+    .chip,
+    .pagination a,
+    .nav-toggle { min-height: 44px; }
+    .pw-toggle { min-height: 44px; padding: 8px 4px; }
+    input[type="checkbox"] { width: 22px; height: 22px; }
 }

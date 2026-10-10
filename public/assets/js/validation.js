@@ -137,7 +137,8 @@
                     break;
                 case 'range':
                     var parts = arg.split(',');
-                    if (!isNaN(v) && (v + 0) >= +parts[0] && (v + 0) <= +parts[1]) result = true;
+                    var num = Number(v);
+                    if (v.trim() !== '' && !isNaN(num) && num >= +parts[0] && num <= +parts[1]) result = true;
                     else result = 'Must be between ' + parts[0] + ' and ' + parts[1] + '.';
                     break;
                 case 'match':

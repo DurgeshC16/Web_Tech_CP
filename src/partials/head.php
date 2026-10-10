@@ -1,6 +1,8 @@
 <?php
 // src/partials/head.php — shared <head> for every page.
 // Caller sets $page_title (string) before including.
+// Requires helpers.php (session, csrf, security headers) to already be loaded.
+send_security_headers();
 $page_title = $page_title ?? 'CertiVault';
 ?>
 <!DOCTYPE html>

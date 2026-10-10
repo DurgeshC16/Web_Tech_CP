@@ -33,10 +33,44 @@ Each case lists steps + expected result, and whether it has been verified by cod
 22. **INVALID** — unknown ID, or malformed ID/token → INVALID, no DB hit for malformed. *verified*
 23. **Share-link expiry** — use an old share token → "This share link has expired." *manual*
 
-## Responsive check (four widths, both themes)
-24. **375 / 768 / 1366 / 1920** on index, login, verify, student_dashboard, admin_dashboard, view_certificate_admin, audit_logs: no horizontal scroll, header collapses to hamburger <768, tables stack with data-labels on phones, stat grid 2→4 cols, no clipped text, cards don't overlap, theme toggle readable. *manual (not executed headlessly)*
+## Responsive check (four widths, touch emulation)
+24. **360 / 768 / 1024 / 1280** on index, login, verify, register_student, register_institution, forgot_password, share, student_dashboard, admin_dashboard, view_certificate_admin, view_certificate_student, audit_logs, super_admin, change_password, issue_certificate, revoke_certificate, supersede_certificate — headless Chromium with touch on, asserting per page-width: no document scroll past the viewport, no element clipped outside it, every button-like control ≥44px tall, every table inside `.table-wrap` (scrolls internally or stacked with `data-labels` ≤639px), `.form-row` single-column <768px. *verified 76/76 (plus a client-side `range` validator fix this run exposed: `(v + 0)` concatenated strings so every CAPTCHA failed — now `Number(v)`).* Text links inside sentences keep inline sizing (WCAG inline exception).
 
 Legend: *verified* = reproduced against the running app during development; *verified by code reading* = traced in source; *manual* = execute in browser.
+
+## Automated CLI tests (`tests/`, no framework)
+Prerequisites: MariaDB/MySQL running (`CV_DB_HOST`/`CV_DB_USER`/`CV_DB_PASS`
+env or the localhost/root defaults). On Windows XAMPP the suite relaunches
+itself with `OPENSSL_CONF` set so RSA key generation works.
+
+```
+php tests/run_all.php            # all four suites + summary (exit 1 on failure)
+php tests/test_validators.php    # single suite (each file runs standalone)
+```
+
+- `test_validators.php` (34): `v_required`, `v_range`, `v_compare`,
+  `v_email`, `v_number`, `v_certificate_id`, `v_person_name`,
+  `v_password_strong`, `v_date_range` — accept + reject cases each.
+- `test_crypto.php` (8): RSA keygen, GCM encrypt/decrypt round trip,
+  sign + verify, verify failure after a 1-byte hash change and with a
+  wrong public key.
+- `test_upload_validation.php` (12): `v_upload()` against mocked
+  `$_FILES` for every error code. `is_uploaded_file()` is false under
+  CLI by design, so the `UPLOAD_ERR_OK` happy path is asserted at its
+  guard message here and covered live by the multipart matrix below.
+- `test_pipeline_checks.php` (7): issues a certificate in an isolated
+  `certivault_test` database (auto-created, schema imported; override
+  with `CV_TEST_DB`) and asserts VALID → TAMPERED → REVOKED
+  (incl. revoked-wins-over-tampered) → EXPIRED → INVALID, then
+  removes its fixtures. The dev database is never touched.
+
+## Live upload matrix (multipart, admin session)
+- [ ] Small PDF (~300 B, `application/pdf`) → issued. *verified e2e*
+- [ ] 4 MB PNG (`image/png`) → issued. *verified e2e*
+- [ ] 6 MB PDF → "form size limit (MAX_FILE_SIZE)… max 5 MB". *verified e2e*
+- [ ] EXE bytes named `.pdf` → "content does not match". *verified e2e*
+- [ ] Empty file → rejected. *verified e2e*
+- [ ] Download serves `CV-YYYY-NNNNNN.<ext>` with `nosniff`. *verified e2e*
 
 ## Validator checklist (server is source of truth, client is UX only)
 Server: `src/utils/validators.php`. Client: `public/assets/js/validation.js` via `data-validate`. For each row, run once with JS on (expect inline error, no submit) and once with JS disabled (expect the same server-side field error after submit — proving the server never trusts the client).

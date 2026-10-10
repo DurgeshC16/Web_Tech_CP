@@ -61,6 +61,7 @@ if ($query_type !== null) {
         $rate_limited = true;
         error_log("[CertiVault] Rate limit exceeded for IP $ip on verify.php — returned 429.");
         http_response_code(429);
+        send_security_headers(); // this exit path never reaches head.php
         die('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Too Many Requests</title><link rel="stylesheet" href="assets/css/style.css"></head><body><div class="container" style="max-width:500px;text-align:center;margin-top:60px;"><h2>429 — Too Many Requests</h2><p>You have made too many verification lookups. Please wait a few minutes and try again.</p><a href="verify.php" class="btn">Back to Verification</a></div></body></html>');
     }
 }
@@ -132,6 +133,87 @@ if ($query_type !== null) {
             </div>
             <button type="submit" class="btn btn-primary" style="width:100%;">Verify</button>
         </form>
+
+        <!-- ── QR camera scan (progressive enhancement; manual entry above always works) ── -->
+        <div style="text-align:center; margin-top:16px;">
+            <button type="button" class="btn btn-secondary" id="scanQrBtn">Scan QR with camera</button>
+        </div>
+        <div id="qrScanner" style="display:none; margin-top:16px;">
+            <div id="qrReader" style="max-width:400px; margin:0 auto;"></div>
+            <p class="field-error" id="qrError" role="alert" style="display:none;"></p>
+            <div style="text-align:center; margin-top:8px;">
+                <button type="button" class="btn btn-ghost btn-sm" id="qrStopBtn">Stop camera</button>
+            </div>
+        </div>
+        <script src="assets/js/html5-qrcode.min.js"></script>
+        <script>
+        (function () {
+            var btn = document.getElementById('scanQrBtn');
+            var wrap = document.getElementById('qrScanner');
+            var err = document.getElementById('qrError');
+            var stopBtn = document.getElementById('qrStopBtn');
+            var scanner = null;
+            var running = false;
+
+            function showError(msg) { err.textContent = msg; err.style.display = 'block'; }
+            function hideError() { err.textContent = ''; err.style.display = 'none'; }
+
+            // Accept what our QR codes encode (a verify.php URL) or a bare token.
+            function tokenFromText(text) {
+                text = (text || '').trim();
+                var m = text.match(/[?&]token=([A-Za-z0-9_\-]+)/);
+                if (m) return m[1];
+                if (/^[A-Za-z0-9_\-]{43}$/.test(text)) return text;
+                return null;
+            }
+
+            function stop() {
+                btn.disabled = false;
+                if (scanner && running) {
+                    running = false;
+                    scanner.stop().then(function () { scanner.clear(); wrap.style.display = 'none'; })
+                        .catch(function () { wrap.style.display = 'none'; });
+                } else {
+                    wrap.style.display = 'none';
+                }
+            }
+
+            // Camera permission is requested only here, on explicit click.
+            btn.addEventListener('click', function () {
+                if (typeof Html5Qrcode === 'undefined') {
+                    showError('Scanner unavailable right now — please type the Certificate ID instead.');
+                    return;
+                }
+                hideError();
+                wrap.style.display = 'block';
+                btn.disabled = true;
+                scanner = new Html5Qrcode('qrReader');
+                scanner.start(
+                    { facingMode: 'environment' },
+                    { fps: 10, qrbox: { width: 250, height: 250 } },
+                    function (decodedText) {
+                        var token = tokenFromText(decodedText);
+                        if (token) {
+                            stop();
+                            window.location.href = 'verify.php?token=' + encodeURIComponent(token);
+                        } else {
+                            showError('That QR code is not a CertiVault code — try again or type the Certificate ID.');
+                        }
+                    },
+                    function () { /* per-frame misses are normal; stay silent */ }
+                ).then(function () { running = true; })
+                .catch(function (e) {
+                    running = false;
+                    var name = (e && e.name) || '';
+                    if (name === 'NotAllowedError') showError('Camera permission was denied. Allow camera access, or type the Certificate ID instead.');
+                    else if (name === 'NotFoundError' || name === 'OverconstrainedError') showError('No camera was found on this device — please type the Certificate ID instead.');
+                    else if (name === 'NotReadableError') showError('The camera is busy in another app — close it and try again.');
+                    else showError('Could not start the camera (' + ((e && e.message) ? e.message : 'unknown error') + '). You can still type the Certificate ID.');
+                });
+            });
+            stopBtn.addEventListener('click', stop);
+        })();
+        </script>
 
         <?php else: ?>
         <!-- ── Verdict Display ───────────────────────────────────── -->

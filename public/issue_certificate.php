@@ -33,6 +33,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $title = sanitize_input($_POST['title'] ?? '');
     $issue_date = sanitize_input($_POST['issue_date'] ?? '');
     $expiry_date = sanitize_input($_POST['expiry_date'] ?? '');
+    $validity_years = sanitize_input($_POST['validity_years'] ?? '');
     $errors = [];
 
     // File details
@@ -48,9 +49,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (($e = v_required($issue_date, 'Issue Date')) !== true) {
         $errors['issue_date'] = $e;
     } else {
-        $dr = v_date_range($issue_date, $expiry_date ?: null);
+        // Issue leg first…
+        $dr = v_date_range($issue_date, null);
         if ($dr !== true) {
-            $errors[strpos($dr, 'Expiry') === 0 ? 'expiry_date' : 'issue_date'] = $dr;
+            $errors['issue_date'] = $dr;
+        }
+    }
+    // Optional validity window: whole years, 1–50 (Number + Range rules).
+    if ($validity_years !== '') {
+        if (($e = v_number($validity_years)) !== true) { $errors['validity_years'] = $e; }
+        elseif (($e = v_range($validity_years, 1, 50, 'Validity')) !== true) { $errors['validity_years'] = $e; }
+    }
+    // Auto-fill: validity years complete an empty expiry date. An
+    // explicitly entered expiry date always wins over the computed one.
+    if (empty($errors['issue_date']) && empty($errors['validity_years']) && $validity_years !== '' && $expiry_date === '') {
+        $expiry_date = date('Y-m-d', strtotime($issue_date . ' +' . (int)$validity_years . ' years'));
+    }
+    // …then the compare rule: expiry must be after issue.
+    if ($expiry_date !== '' && empty($errors['issue_date'])) {
+        $da = v_date_after($expiry_date, $issue_date, 'Expiry date');
+        if ($da !== true) {
+            $errors['expiry_date'] = $da;
         }
     }
     if (($file_e = v_upload($file)) !== true) { $errors['certificate_file'] = $file_e; }
@@ -119,6 +138,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (!is_dir($upload_dir) && !mkdir($upload_dir, 0755, true) && !is_dir($upload_dir)) {
                     throw new Exception('Upload directory is not available. Please contact the administrator.');
                 }
+                if (!is_writable($upload_dir)) {
+                    throw new Exception('Upload directory is not writable. Please contact the administrator.');
+                }
                 $destination = $upload_dir . $filename;
                 
                 if (!move_uploaded_file($file['tmp_name'], $destination)) {
@@ -136,6 +158,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $qr_dir = __DIR__ . "/qrcodes/";
                 if (!is_dir($qr_dir) && !mkdir($qr_dir, 0755, true) && !is_dir($qr_dir)) {
                     throw new Exception('QR directory is not available. Please contact the administrator.');
+                }
+                if (!is_writable($qr_dir)) {
+                    throw new Exception('QR directory is not writable. Please contact the administrator.');
                 }
                 $qr_path = $qr_dir . $qr_token . ".png";
                 QRService::generateQRCode($verify_url, $qr_path);
@@ -265,7 +290,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
             </div>
             <div class="form-group">
+                <label>Validity (years, optional — auto-fills an empty expiry date):</label>
+                <input type="number" name="validity_years" id="validity_years" min="1" max="50" step="1" inputmode="numeric" value="<?= htmlspecialchars($validity_years ?? '') ?>" data-validate="number|range:1,50">
+                <?php render_field_error($errors, 'validity_years'); ?>
+            </div>
+            <div class="form-group">
                 <label>Certificate File (PDF, PNG, JPG - Max 5MB):</label>
+                <input type="hidden" name="MAX_FILE_SIZE" value="5242880">
                 <input type="file" name="certificate_file" id="certificate_file" accept=".pdf, .png, .jpg, .jpeg" data-validate="upload" required>
                 <small class="file-name-display" id="file_name_display"></small>
                 <?php render_field_error($errors, 'certificate_file'); ?>
@@ -276,6 +307,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 var el = document.getElementById('file_name_display');
                 if (f) { el.textContent = f.name + ' — ' + (f.size / 1024).toFixed(1) + ' KB'; } else { el.textContent = ''; }
             });
+            // UX mirror of the server-side validity auto-fill: when a validity
+            // is entered and expiry is empty, suggest issue_date + N years.
+            // The server recomputes authoritatively on submit.
+            (function () {
+                var y = document.getElementById('validity_years');
+                var i = document.getElementById('issue_date');
+                var e = document.querySelector('[name="expiry_date"]');
+                if (!y || !i || !e) return;
+                y.addEventListener('change', function () {
+                    var n = parseInt(y.value, 10);
+                    if (!e.value && i.value && !isNaN(n) && n >= 1 && n <= 50) {
+                        var d = new Date(i.value + 'T00:00:00');
+                        if (!isNaN(d.getTime())) {
+                            d.setFullYear(d.getFullYear() + n);
+                            e.value = d.toISOString().slice(0, 10);
+                        }
+                    }
+                });
+            })();
             </script>
 
             <button type="submit" class="btn btn-primary">Issue Certificate</button>

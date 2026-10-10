@@ -57,9 +57,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error)) {
     if (($e = v_required($issue_date, 'Issue Date')) !== true) {
         $errors['issue_date'] = $e;
     } else {
-        $dr = v_date_range($issue_date, $expiry_date ?: null);
+        // Issue leg first…
+        $dr = v_date_range($issue_date, null);
         if ($dr !== true) {
-            $errors[strpos($dr, 'Expiry') === 0 ? 'expiry_date' : 'issue_date'] = $dr;
+            $errors['issue_date'] = $dr;
+        } elseif ($expiry_date !== '') {
+            // …then the compare rule: expiry must be after issue.
+            $da = v_date_after($expiry_date, $issue_date, 'Expiry date');
+            if ($da !== true) {
+                $errors['expiry_date'] = $da;
+            }
         }
     }
     if (($file_e = v_upload($file)) !== true) { $errors['certificate_file'] = $file_e; }
@@ -93,6 +100,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error)) {
                 if (!is_dir($upload_dir) && !mkdir($upload_dir, 0755, true) && !is_dir($upload_dir)) {
                     throw new Exception('Upload directory is not available. Please contact the administrator.');
                 }
+                if (!is_writable($upload_dir)) {
+                    throw new Exception('Upload directory is not writable. Please contact the administrator.');
+                }
                 $destination = $upload_dir . $filename;
                 
                 if (!move_uploaded_file($file['tmp_name'], $destination)) {
@@ -108,6 +118,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error)) {
                 $qr_dir = __DIR__ . "/qrcodes/";
                 if (!is_dir($qr_dir) && !mkdir($qr_dir, 0755, true) && !is_dir($qr_dir)) {
                     throw new Exception('QR directory is not available. Please contact the administrator.');
+                }
+                if (!is_writable($qr_dir)) {
+                    throw new Exception('QR directory is not writable. Please contact the administrator.');
                 }
                 $qr_path = $qr_dir . $qr_token . ".png";
                 QRService::generateQRCode($verify_url, $qr_path);
@@ -236,6 +249,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error)) {
             </div>
             <div class="form-group">
                 <label>Updated Certificate File (PDF, PNG, JPG - Max 5MB):</label>
+                <input type="hidden" name="MAX_FILE_SIZE" value="5242880">
                 <input type="file" name="certificate_file" id="certificate_file" accept=".pdf, .png, .jpg, .jpeg" data-validate="upload" required>
                 <small class="file-name-display" id="file_name_display"></small>
                 <?php render_field_error($errors, 'certificate_file'); ?>
