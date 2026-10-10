@@ -58,7 +58,7 @@ php tests/test_validators.php    # single suite (each file runs standalone)
   `$_FILES` for every error code. `is_uploaded_file()` is false under
   CLI by design, so the `UPLOAD_ERR_OK` happy path is asserted at its
   guard message here and covered live by the multipart matrix below.
-- `test_pipeline_checks.php` (7): issues a certificate in an isolated
+- `test_certflow.php` (7): issues a certificate in an isolated
   `certivault_test` database (auto-created, schema imported; override
   with `CV_TEST_DB`) and asserts VALID → TAMPERED → REVOKED
   (incl. revoked-wins-over-tampered) → EXPIRED → INVALID, then

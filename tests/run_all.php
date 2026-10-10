@@ -14,7 +14,7 @@ $files = [
     'test_validators.php',
     'test_crypto.php',
     'test_upload_validation.php',
-    'test_pipeline_checks.php',
+    'test_certflow.php',
 ];
 
 $failed = [];

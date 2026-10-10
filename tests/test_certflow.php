@@ -1,8 +1,8 @@
 <?php
-// tests/test_pipeline_checks.php � end-to-end verification pipeline
+// tests/test_certflow.php Ã¹ end-to-end verification pipeline
 // against the isolated test database: issue a certificate, then assert
 // each verdict (VALID -> TAMPERED -> REVOKED, plus EXPIRED and INVALID).
-// Run: php tests/test_pipeline_checks.php
+// Run: php tests/test_certflow.php
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../src/services/VerificationService.php';
 
@@ -76,7 +76,7 @@ $check('revoked (bytes intact)', $qr, 'REVOKED');
 file_put_contents($filepath, $original . 'TAMPERED'); // tamper again: revoked still wins
 $check('revoked + tampered', $qr, 'REVOKED');
 
-file_put_contents($filepath, $original); // restore bytes FIRST � the hash covers file content
+file_put_contents($filepath, $original); // restore bytes FIRST Ã¹ the hash covers file content
 $pastData = $certData;
 $pastData['expiry_date'] = '2020-01-01';
 $pastHash = CryptoService::computeCertificateHash($pastData, $filepath);
@@ -93,4 +93,4 @@ $db->prepare('DELETE FROM certificates WHERE certificate_id = :c')->execute(['c'
 $db->prepare('DELETE FROM users WHERE email IN (:a, :s)')->execute(['a' => $admin_email, 's' => $student_email]);
 t_check('fixture file removed', !file_exists($filepath));
 
-exit(t_summary('test_pipeline_checks') ? 0 : 1);
+exit(t_summary('test_certflow') ? 0 : 1);
