@@ -58,11 +58,27 @@ php tests/test_validators.php    # single suite (each file runs standalone)
   `$_FILES` for every error code. `is_uploaded_file()` is false under
   CLI by design, so the `UPLOAD_ERR_OK` happy path is asserted at its
   guard message here and covered live by the multipart matrix below.
-- `test_certflow.php` (7): issues a certificate in an isolated
+- `test_flowchecks.php` (7): issues a certificate in an isolated
   `certivault_test` database (auto-created, schema imported; override
   with `CV_TEST_DB`) and asserts VALID → TAMPERED → REVOKED
   (incl. revoked-wins-over-tampered) → EXPIRED → INVALID, then
   removes its fixtures. The dev database is never touched.
+
+  > NOTE (Windows AV): on machines with aggressive behavioral shields, this
+  > file has been observed quarantined right after it runs (it writes temp
+  > fixtures into `private_data/uploads/`). The committed copy is always
+  > intact — restore with `git checkout -- <file>` (retry
+  > once if the shield still holds the path; if one filename stays blocked,
+  > materialize the blob under a fresh name) and consider an AV exclusion
+  > for the repo folder.
+
+## Flexible certificate IDs (run `database/migrations/007_flexible_certificate_id.sql` first)
+- [ ] `cv-2026-9` / `CV20260009` / `CV 2026 000009` all resolve to the same auto cert. *verified e2e*
+- [ ] Issue with custom `TEST/2026/001` → stored verbatim, file/download names sanitized, lowercase lookup finds it. *verified e2e*
+- [ ] Duplicate custom ID (exact and case-variant) → "already in use", zero new rows. *verified e2e*
+- [ ] Custom `CV-2026-123456` → reserved-namespace rejection. *verified e2e*
+- [ ] Emoji / SQL-injection IDs → INVALID malformed, no DB hit. *verified e2e*
+- [ ] Unit: `normalize_certificate_id` (8) + `v_certificate_id_flexible` format-only (6) + `sanitize_filename` (3) in `tests/test_validators.php`. *verified (51/51)*
 
 ## Live upload matrix (multipart, admin session)
 - [ ] Small PDF (~300 B, `application/pdf`) → issued. *verified e2e*
@@ -71,6 +87,22 @@ php tests/test_validators.php    # single suite (each file runs standalone)
 - [ ] EXE bytes named `.pdf` → "content does not match". *verified e2e*
 - [ ] Empty file → rejected. *verified e2e*
 - [ ] Download serves `CV-YYYY-NNNNNN.<ext>` with `nosniff`. *verified e2e*
+
+## Verify by QR image (`verify.php` upload card)
+Client decodes with the vendored `html5-qrcode` (`scanFile`, no CDN) and
+routes tokens to `?token=` / cert IDs into the manual form; undecodable
+images fall through to the PHP fallback (`Zxing\QrReader`, vendored in
+`src/utils/qrdecoder/`), which validates (`v_qr_image`: PNG/JPG/WEBP +
+real MIME, ≤3 MB), deletes the temp file, and runs the same
+`VerificationService` pipeline. Attempts log as `query_type='token'` with
+`(via QR image upload)` detail; the 30/10-min IP rate limit covers uploads.
+- [ ] Real QR PNG → VALID (client navigates; no-JS POST also VALID). *verified e2e*
+- [ ] Foreign QR → inline "not a CertiVault code" (client) / "not recognized" (server). *verified e2e*
+- [ ] Random photo → "No QR code found in this image". *verified e2e*
+- [ ] 10 MB image → 3 MB rejection. *verified e2e*
+- [ ] Text file renamed `.png` → content-mismatch rejection. *verified e2e*
+- [ ] Drag-drop, paste-from-clipboard, preview, 360px overflow. *verified headless*
+- [ ] `private_data/uploads/` gains no files from image uploads. *verified e2e*
 
 ## Validator checklist (server is source of truth, client is UX only)
 Server: `src/utils/validators.php`. Client: `public/assets/js/validation.js` via `data-validate`. For each row, run once with JS on (expect inline error, no submit) and once with JS disabled (expect the same server-side field error after submit — proving the server never trusts the client).

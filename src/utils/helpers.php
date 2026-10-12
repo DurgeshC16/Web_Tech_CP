@@ -122,7 +122,7 @@ function send_security_headers() {
     $extra = recaptcha_enabled() ? ' https://www.google.com https://www.gstatic.com' : '';
     $frame = $extra !== '' ? $extra : " 'none'";
     $csp = "default-src 'self'; base-uri 'self'; form-action 'self'; "
-        . "object-src 'none'; frame-ancestors 'self'; img-src 'self'; "
+        . "object-src 'none'; frame-ancestors 'self'; img-src 'self' blob:; "
         . 'font-src \'self\' https://fonts.gstatic.com; '
         . 'style-src \'self\' \'unsafe-inline\' https://fonts.googleapis.com' . $extra . '; '
         . 'script-src \'self\' \'unsafe-inline\'' . $extra . '; '
@@ -498,6 +498,56 @@ function require_owned_certificate($db, $id, $role, $owner_id, $select = 'c.*', 
         deny_access_403();
     }
     return $cert;
+}
+
+/**
+ * Normalize a certificate ID typed by a human: trim, uppercase, collapse
+ * whitespace, and treat ' ', '_', '/' and '.' as '-' where unambiguous.
+ * If the result is CV + 4 digits + a digit block (separators optional),
+ * rebuild it as CV-YYYY-NNNNNN, left-padding the last block — so
+ * "cv-2026-1", "CV 2026 000001" and "CV20260001" all become CV-2026-000001.
+ * Anything else (custom IDs, garbage) returns null: look those up raw.
+ */
+function normalize_certificate_id($input) {
+    $s = trim((string)$input);
+    if ($s === '') {
+        return null;
+    }
+    $s = preg_replace('/[\s_\/\.]+/', '-', $s);
+    $s = strtoupper($s);
+    $s = preg_replace('/-{2,}/', '-', $s);
+    $s = trim($s, '-');
+    if (preg_match('/^CV-?(\d{4})-?(\d+)$/', $s, $m)) {
+        return sprintf('CV-%s-%06d', $m[1], (int)$m[2]);
+    }
+    return null;
+}
+
+/**
+ * Make any string safe for use inside a download/storage filename:
+ * keep letters, digits, dot, dash and underscore; everything else
+ * becomes '_'. Never returns empty.
+ */
+function sanitize_filename($name) {
+    $s = preg_replace('/[^A-Za-z0-9._-]+/', '_', (string)$name);
+    $s = trim($s, '._');
+    if ($s === '') {
+        $s = 'file';
+    }
+    return substr($s, 0, 80);
+}
+
+/**
+ * Make free text safe for the latin1 audit columns: 4-byte UTF-8
+ * characters (e.g. emoji) hard-fail the INSERT under strict mode plus a
+ * utf8mb4 connection (SQLSTATE 22007/1366), while shorter multibyte text
+ * converts with substitution. Replaced with '?' so logging itself can
+ * never fatal a request. (Long-term fix: migrate the schema to utf8mb4.)
+ */
+function log_safe_text($s) {
+    $s = (string)$s;
+    $scrubbed = preg_replace('/[\x{10000}-\x{10FFFF}]/u', '?', $s);
+    return $scrubbed === null ? '' : $scrubbed;
 }
 
 /**

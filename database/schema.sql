@@ -50,7 +50,8 @@ INSERT INTO users (email, password_hash, role, is_verified) VALUES
 
 CREATE TABLE certificates (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    certificate_id VARCHAR(20) NOT NULL UNIQUE,
+    certificate_id VARCHAR(64) NOT NULL UNIQUE,
+    certificate_id_norm VARCHAR(64) GENERATED ALWAYS AS (LOWER(certificate_id)) STORED,
     institution_id INT NOT NULL,
     student_id INT NOT NULL,
     title VARCHAR(255) NOT NULL,
@@ -78,12 +79,13 @@ CREATE TABLE certificates (
 CREATE INDEX idx_certificates_student_id ON certificates(student_id);
 CREATE INDEX idx_certificates_institution_id ON certificates(institution_id);
 CREATE UNIQUE INDEX uniq_certificates_qr_token ON certificates(qr_token);
+CREATE UNIQUE INDEX uniq_certificates_cid_norm ON certificates(certificate_id_norm);
 
 CREATE TABLE verification_logs (
     id INT AUTO_INCREMENT PRIMARY KEY,
     query_type ENUM('token', 'certificate_id') NOT NULL,
     query_value VARCHAR(255) NOT NULL,
-    certificate_id_found VARCHAR(20) NULL,
+    certificate_id_found VARCHAR(64) NULL,
     result ENUM('VALID', 'TAMPERED', 'EXPIRED', 'REVOKED', 'INVALID', 'SUPERSEDED') NOT NULL,
     detail VARCHAR(255) NULL,
     verifier_ip VARCHAR(45) NOT NULL,

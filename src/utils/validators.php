@@ -132,6 +132,48 @@ function v_certificate_id($value) {
 }
 
 /**
+ * Flexible custom certificate ID for issuance: 3–40 chars of letters,
+ * digits, spaces and - _ / .  Uniqueness is checked case-insensitively
+ * (pass $db; $ignore_id skips one row when editing). Two extra guards:
+ * the CV-YYYY-N+ namespace stays reserved for auto-generated IDs, and a
+ * value that normalizes (see normalize_certificate_id()) to a DIFFERENT
+ * existing ID is rejected, since lookups would resolve to that row.
+ */
+function v_certificate_id_flexible($value, $db = null, $ignore_id = null) {
+    $value = trim((string)$value);
+    $len = strlen($value);
+    if ($len < 3 || $len > 40) {
+        return 'Certificate ID must be between 3 and 40 characters.';
+    }
+    if (!preg_match('/^[A-Za-z0-9\-_\/. ]+$/', $value)) {
+        return 'Certificate ID may only contain letters, digits, spaces, and - _ / .';
+    }
+    if (preg_match('/^CV-\d{4}-\d+$/i', $value)) {
+        return 'That ID format is reserved for system-generated certificates (CV-YYYY-NNNNNN). Please choose another.';
+    }
+    if ($db !== null) {
+        $norm = normalize_certificate_id($value);
+        $sql = 'SELECT COUNT(*) FROM certificates WHERE (LOWER(certificate_id) = LOWER(:v)';
+        $params = ['v' => $value];
+        if ($norm !== null && strcasecmp($norm, $value) !== 0) {
+            $sql .= ' OR LOWER(certificate_id) = LOWER(:norm)';
+            $params['norm'] = $norm;
+        }
+        $sql .= ')';
+        if ($ignore_id !== null) {
+            $sql .= ' AND id != :ignore';
+            $params['ignore'] = (int)$ignore_id;
+        }
+        $stmt = $db->prepare($sql);
+        $stmt->execute($params);
+        if ((int)$stmt->fetchColumn() > 0) {
+            return 'That certificate ID is already in use. Please choose another.';
+        }
+    }
+    return true;
+}
+
+/**
  * Person name: letters, spaces, and . ' - ; 2–100 chars.
  */
 function v_person_name($value) {
@@ -277,6 +319,69 @@ function v_upload($file) {
     }
     if ($file['size'] > 5 * 1024 * 1024) {
         return 'File size exceeds the 5MB limit.';
+    }
+    return true;
+}
+
+/**
+ * QR image upload for verify-by-image: PNG/JPG/WEBP with matching real
+ * MIME, 100 bytes – 3 MB. The image is NEVER stored — it is decoded
+ * from the PHP temp file, which the caller deletes immediately.
+ */
+function v_qr_image($file) {
+    if (!$file || !isset($file['error'])) {
+        return 'Please choose a QR image to upload.';
+    }
+    switch ($file['error']) {
+        case UPLOAD_ERR_OK:
+            break;
+        case UPLOAD_ERR_INI_SIZE:
+            return 'The image exceeds the server upload limit (upload_max_filesize in php.ini). Please use a smaller image.';
+        case UPLOAD_ERR_FORM_SIZE:
+            return 'The image exceeds the 3 MB limit. Please use a smaller image.';
+        case UPLOAD_ERR_PARTIAL:
+            return 'The image was only partially uploaded. Please try again.';
+        case UPLOAD_ERR_NO_FILE:
+            return 'Please choose a QR image to upload.';
+        case UPLOAD_ERR_NO_TMP_DIR:
+            return 'Server misconfiguration: temporary upload folder is missing. Please contact the administrator.';
+        case UPLOAD_ERR_CANT_WRITE:
+            return 'The server failed to write the uploaded image. Please try again or contact the administrator.';
+        case UPLOAD_ERR_EXTENSION:
+            return 'The upload was blocked by a server extension. Please try a different image.';
+        default:
+            return 'An unknown upload error occurred. Please try again.';
+    }
+    if (empty($file['tmp_name']) || !is_uploaded_file($file['tmp_name'])) {
+        return 'The image upload failed (temporary file missing). Please try again.';
+    }
+    $ext = strtolower(pathinfo($file['name'] ?? '', PATHINFO_EXTENSION));
+    if (!in_array($ext, ['png', 'jpg', 'jpeg', 'webp'], true)) {
+        return 'Only PNG, JPG, and WEBP images are allowed.';
+    }
+    if (!function_exists('finfo_open')) {
+        return 'Server misconfiguration: fileinfo extension is disabled. Please contact the administrator.';
+    }
+    $finfo = finfo_open(FILEINFO_MIME_TYPE);
+    if ($finfo === false) {
+        return 'The server could not verify the image type. Please try again later.';
+    }
+    $mime = finfo_file($finfo, $file['tmp_name']);
+    finfo_close($finfo);
+    $mimeMap = [
+        'png'  => ['image/png'],
+        'jpg'  => ['image/jpeg'],
+        'jpeg' => ['image/jpeg'],
+        'webp' => ['image/webp'],
+    ];
+    if (!in_array($mime, $mimeMap[$ext], true)) {
+        return 'File content does not match an allowed image type (PNG, JPG, WEBP).';
+    }
+    if (($file['size'] ?? 0) < 100) {
+        return 'Image appears to be empty or corrupted (minimum 100 bytes).';
+    }
+    if ($file['size'] > 3 * 1024 * 1024) {
+        return 'Image size exceeds the 3 MB limit.';
     }
     return true;
 }

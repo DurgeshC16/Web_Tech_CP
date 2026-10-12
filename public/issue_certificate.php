@@ -46,6 +46,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     elseif (($e = v_person_name($student_name)) !== true) { $errors['student_name'] = $e; }
     if (($e = v_required($title, 'Certificate Title')) !== true) { $errors['title'] = $e; }
     elseif (($e = v_length($title, 3, 200, 'Certificate Title')) !== true) { $errors['title'] = $e; }
+    // Optional custom ID (blank = auto CV-YYYY-NNNNNN). Needs $db for the
+    // case-insensitive uniqueness check.
+    $custom_id = sanitize_input($_POST['custom_id'] ?? '');
+    if ($custom_id !== '' && ($e = v_certificate_id_flexible($custom_id, $db)) !== true) {
+        $errors['custom_id'] = $e;
+    }
     if (($e = v_required($issue_date, 'Issue Date')) !== true) {
         $errors['issue_date'] = $e;
     } else {
@@ -118,22 +124,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 }
                 
-                // 2. Generate Certificate ID
-                $year = date('Y');
-                $stmt = $db->prepare("SELECT certificate_id FROM certificates WHERE certificate_id LIKE :prefix ORDER BY id DESC LIMIT 1 FOR UPDATE");
-                $stmt->execute(['prefix' => "CV-$year-%"]);
-                $lastId = $stmt->fetchColumn();
-                if ($lastId) {
-                    $parts = explode('-', $lastId);
-                    $num = (int)end($parts) + 1;
+                // 2. Certificate ID: custom when given, else auto CV-YYYY-NNNNNN
+                if ($custom_id !== '') {
+                    // Re-checked here (validated up front): closes the gap
+                    // between validation and INSERT; the UNIQUE index plus
+                    // the PDOException handler below are the final backstop.
+                    if (($e = v_certificate_id_flexible($custom_id, $db)) !== true) {
+                        throw new Exception($e);
+                    }
+                    $cert_id = $custom_id;
                 } else {
-                    $num = 1;
+                    $year = date('Y');
+                    $stmt = $db->prepare("SELECT certificate_id FROM certificates WHERE certificate_id LIKE :prefix ORDER BY id DESC LIMIT 1 FOR UPDATE");
+                    $stmt->execute(['prefix' => "CV-$year-%"]);
+                    $lastId = $stmt->fetchColumn();
+                    if ($lastId) {
+                        $parts = explode('-', $lastId);
+                        $num = (int)end($parts) + 1;
+                    } else {
+                        $num = 1;
+                    }
+                    $cert_id = sprintf("CV-%s-%06d", $year, $num);
                 }
-                $cert_id = sprintf("CV-%s-%06d", $year, $num);
                 
                 // 3. Save File (unguessable name, validated lowercase ext, outside web root)
                 $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
-                $filename = $cert_id . '_' . bin2hex(random_bytes(16)) . '.' . $ext;
+                $filename = sanitize_filename($cert_id) . '_' . bin2hex(random_bytes(16)) . '.' . $ext;
                 $upload_dir = __DIR__ . '/../private_data/uploads/';
                 if (!is_dir($upload_dir) && !mkdir($upload_dir, 0755, true) && !is_dir($upload_dir)) {
                     throw new Exception('Upload directory is not available. Please contact the administrator.');
@@ -214,6 +230,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Student gate: account already committed, nothing to roll
                 // back and no files created yet — just report.
                 $error = $e->getMessage();
+            } catch (PDOException $e) {
+                if ($db->inTransaction()) { $db->rollBack(); }
+                // Race backstop: the UNIQUE indexes reject a duplicate ID
+                // that slipped past validation (SQLSTATE 23000).
+                $error = ($e->getCode() === '23000')
+                    ? 'That certificate ID is already in use. Please choose another.'
+                    : 'Error issuing certificate: ' . $e->getMessage();
+                error_log('[CertiVault] Issue certificate DB error: ' . $e->getMessage());
+                if (!empty($destination) && is_file($destination)) { @unlink($destination); }
+                if (!empty($qr_path) && is_file($qr_path)) { @unlink($qr_path); }
             } catch (Exception $e) {
                 if ($db->inTransaction()) { $db->rollBack(); }
                 $error = 'Error issuing certificate: ' . $e->getMessage();
@@ -276,6 +302,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <label>Certificate Title (e.g., Bachelor of Science in Computer Science):</label>
                 <input type="text" name="title" value="<?= htmlspecialchars($title ?? '') ?>" data-validate="required|min:3|max:200" required>
                 <?php render_field_error($errors, 'title'); ?>
+            </div>
+            <div class="form-group">
+                <label>Custom certificate ID (optional — blank auto-generates CV-YYYY-NNNNNN):</label>
+                <input type="text" name="custom_id" value="<?= htmlspecialchars($custom_id ?? '') ?>" data-validate="certid" maxlength="40" placeholder="e.g. DEPT/2024/001">
+                <small>3–40 chars: letters, digits, spaces and - _ / . Must be unique; CV-YYYY-N… is reserved.</small>
+                <?php render_field_error($errors, 'custom_id'); ?>
             </div>
             <div class="form-row">
             <div class="form-group">

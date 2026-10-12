@@ -27,9 +27,9 @@ if (is_numeric($cert_id_param)) {
         'JOIN students s ON c.student_id = s.id'
     );
 } else {
-    $stmt = $db->prepare('SELECT c.*, s.full_name as student_name FROM certificates c JOIN students s ON c.student_id = s.id WHERE c.certificate_id = :id AND c.institution_id = :inst_id');
-    $stmt->execute(['id' => $cert_id_param, 'inst_id' => $institution_id]);
-    $cert = $stmt->fetch();
+    // Lenient ID lookup (normalized CV form first, then raw
+    // case-insensitive), still scoped to this institution.
+    $cert = VerificationService::findByFlexibleCertificateId($db, $cert_id_param);
     if (!$cert || !can_access_certificate($cert, 'admin', $institution_id)) {
         deny_access_403();
     }

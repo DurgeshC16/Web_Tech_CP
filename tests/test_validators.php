@@ -4,6 +4,7 @@
 // Run: php tests/test_validators.php
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../src/utils/validators.php';
+require_once __DIR__ . '/../src/utils/helpers.php'; // normalize_certificate_id(), sanitize_filename()
 
 // ── v_required ──
 t_check('required: text ok', v_required('hello', 'Name') === true);
@@ -56,5 +57,28 @@ t_check('daterange: future issue rejected', v_date_range('2999-01-01', null) !==
 t_check('daterange: pre-1950 rejected', v_date_range('1940-01-01', null) !== true);
 t_check('daterange: expiry after issue ok', v_date_range('2024-05-01', '2026-05-01') === true);
 t_check('daterange: expiry before issue rejected', v_date_range('2024-05-01', '2024-04-01') !== true);
+
+// ── normalize_certificate_id ──
+t_check('normalize: cv-2026-1', normalize_certificate_id('cv-2026-1') === 'CV-2026-000001');
+t_check('normalize: CV20260001', normalize_certificate_id('CV20260001') === 'CV-2026-000001');
+t_check('normalize: CV 2026 000001', normalize_certificate_id('CV 2026 000001') === 'CV-2026-000001');
+t_check('normalize: CV.2026/000001', normalize_certificate_id('CV.2026/000001') === 'CV-2026-000001');
+t_check('normalize: exact passthrough', normalize_certificate_id('CV-2026-000001') === 'CV-2026-000001');
+t_check('normalize: custom ID => null', normalize_certificate_id('DEPT/2024/001') === null);
+t_check('normalize: garbage => null', normalize_certificate_id("'; DROP--") === null);
+t_check('normalize: empty => null', normalize_certificate_id('   ') === null);
+
+// ── v_certificate_id_flexible (format-only, no DB) ──
+t_check('flex: custom ok', v_certificate_id_flexible('DEPT/2024/001') === true);
+t_check('flex: short rejected', v_certificate_id_flexible('AB') !== true);
+t_check('flex: emoji rejected', v_certificate_id_flexible("🎓cert") !== true);
+t_check('flex: SQL chars rejected', v_certificate_id_flexible("' OR '1'='1") !== true);
+t_check('flex: reserved CV pattern rejected', v_certificate_id_flexible('CV-2026-000099') !== true);
+t_check('flex: strict auto still valid shape', v_certificate_id('CV-2026-000001') === true);
+
+// ── sanitize_filename ──
+t_check('filename: slashes stripped', sanitize_filename('DEPT/2024/001') === 'DEPT_2024_001');
+t_check('filename: traversal stripped', sanitize_filename('../../etc/passwd') === 'etc_passwd');
+t_check('filename: empty fallback', sanitize_filename('///') === 'file');
 
 exit(t_summary('test_validators') ? 0 : 1);

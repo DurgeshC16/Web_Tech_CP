@@ -24,10 +24,45 @@ class VerificationService {
     }
 
     /**
-     * Fetch a certificate row by its public certificate_id, or null.
+     * Fetch a certificate row by its public certificate_id, or null when not found.
      */
     public static function findByCertificateId($db, $certificate_id) {
         return self::findOne($db, 'c.certificate_id', $certificate_id);
+    }
+
+    /**
+     * Lenient lookup for human-typed IDs: try the normalized CV form
+     * first (normalize_certificate_id), then the raw trimmed value
+     * case-insensitively. Returns null for empty/overlong input without
+     * touching the database. Always prepared statements.
+     */
+    public static function findByFlexibleCertificateId($db, $input) {
+        $raw = trim((string)$input);
+        if ($raw === '' || strlen($raw) > 64) {
+            return null;
+        }
+        $norm = function_exists('normalize_certificate_id')
+            ? normalize_certificate_id($raw)
+            : null;
+        if ($norm !== null) {
+            $cert = self::findOne($db, 'c.certificate_id', $norm);
+            if ($cert) {
+                return $cert;
+            }
+        }
+        $sql = '
+            SELECT c.*, i.name AS institution_name, i.public_key,
+                   s.full_name AS student_name
+            FROM certificates c
+            JOIN institutions i ON c.institution_id = i.id
+            JOIN students     s ON c.student_id     = s.id
+            WHERE LOWER(c.certificate_id) = LOWER(:val)
+            LIMIT 1
+        ';
+        $stmt = $db->prepare($sql);
+        $stmt->execute(['val' => $raw]);
+        $cert = $stmt->fetch();
+        return $cert ?: null;
     }
 
     private static function findOne($db, $column, $value) {

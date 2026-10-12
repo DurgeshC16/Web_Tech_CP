@@ -42,7 +42,13 @@
         return /^\d{6}$/.test(v.trim()) ? true : 'Verification code must be exactly 6 digits.';
     }
     function ruleCertId(v) {
-        return /^CV-\d{4}-\d{6}$/.test(v.trim()) ? true : 'Certificate ID must match the format CV-YYYY-NNNNNN.';
+        v = v.trim();
+        // Flexible rule (mirrors v_certificate_id_flexible without the DB
+        // uniqueness check — the server is authoritative). The strict
+        // CV-YYYY-NNNNNN shape is only a hint (placeholder text); loose
+        // forms like "cv-2026-1" are normalized server-side.
+        if (v.length < 3 || v.length > 40) return 'Certificate ID must be between 3 and 40 characters.';
+        return /^[A-Za-z0-9\-_\/. ]+$/.test(v) ? true : 'Certificate ID may only contain letters, digits, spaces, and - _ / .';
     }
     function rulePersonName(v) {
         if (v.length < 2 || v.length > 100) return 'Name must be between 2 and 100 characters.';

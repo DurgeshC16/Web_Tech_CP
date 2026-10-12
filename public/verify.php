@@ -6,6 +6,7 @@ require_once __DIR__ . '/../src/services/CryptoService.php';
 require_once __DIR__ . '/../src/services/VerificationService.php';
 require_once __DIR__ . '/../src/utils/validators.php';
 require_once __DIR__ . '/../src/utils/helpers.php';
+require_once __DIR__ . '/../src/utils/qrdecoder/autoload.php';
 
 $db = Database::getInstance();
 
@@ -29,19 +30,76 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['certificate_id'])) {
     $query_value = trim($_POST['certificate_id']);
 }
 
+// (c) No-JS fallback: QR image upload. The image is validated, decoded
+// from the PHP temp file (never stored — temp deleted immediately), and
+// the extracted identifier flows through the SAME pipeline below, so an
+// uploaded image alone is never "valid": only VerificationService decides.
+$via_qr_upload = false;
+if ($_SERVER['REQUEST_METHOD'] === 'POST'
+    && isset($_FILES['qr_image'])
+    && ($_FILES['qr_image']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE) {
+    validate_csrf_token($_POST['csrf_token'] ?? '');
+    $via_qr_upload = true;
+    $img_check = v_qr_image($_FILES['qr_image']);
+    if ($img_check !== true) {
+        $query_type  = 'token';
+        $query_value = '(qr image: invalid upload)';
+        $verdict     = 'INVALID';
+        $detail      = $img_check;
+    } else {
+        $tmp = $_FILES['qr_image']['tmp_name'];
+        try {
+            $qr_reader = new Zxing\QrReader($tmp);
+            $decoded = trim((string)$qr_reader->text());
+        } catch (Throwable $e) {
+            error_log('[CertiVault] QR image decode failed: ' . get_class($e));
+            $decoded = '';
+        }
+        @unlink($tmp); // never stored on the server
+        if ($decoded === '') {
+            $query_type  = 'token';
+            $query_value = '(qr image: no code)';
+            $verdict     = 'INVALID';
+            $detail      = 'No QR code found in this image. Please upload a clear photo of the QR code.';
+        } elseif (preg_match('/[?&]token=([A-Za-z0-9_\-]+)/', $decoded, $m)) {
+            $query_type  = 'token';
+            $query_value = $m[1];
+        } elseif (preg_match('/^[A-Za-z0-9_\-]{43}$/', $decoded)) {
+            $query_type  = 'token';
+            $query_value = $decoded;
+        } elseif (($norm_id = normalize_certificate_id($decoded)) !== null) {
+            $query_type  = 'certificate_id';
+            $query_value = $norm_id;
+        } elseif (v_certificate_id_flexible($decoded) === true) {
+            // Format-only check (no DB): custom IDs, looked up flexibly below.
+            $query_type  = 'certificate_id';
+            $query_value = trim($decoded);
+        } else {
+            $query_type  = 'token';
+            $query_value = '(qr image: unrecognized)';
+            $verdict     = 'INVALID';
+            $detail      = 'QR code not recognized. No certificate matches the code in this image.';
+        }
+    }
+}
+
 // ── Pre-flight format check ────────────────────────────────────────────
-// Reject malformed identifiers BEFORE hitting the database.
-if ($query_type !== null) {
+// Reject malformed identifiers BEFORE hitting the database. Certificate
+// IDs accept the flexible set (letters, digits, spaces, - _ / .; the
+// lookup normalizes CV-style input); anything else is malformed.
+if ($query_type !== null && $verdict === null) {
     $well_formed = true;
     if ($query_type === 'token') {
         $well_formed = (bool)preg_match('/^[A-Za-z0-9_-]{43}$/', $query_value);
     } else {
-        $well_formed = (v_certificate_id($query_value) === true);
+        $t = trim((string)$query_value);
+        $well_formed = $t !== '' && strlen($t) <= 64
+            && (bool)preg_match('/^[A-Za-z0-9\-_\/. ]+$/', $t);
     }
     if (!$well_formed) {
         $verdict = 'INVALID';
         $detail  = 'The provided identifier is malformed. Expected format: '
-            . ($query_type === 'token' ? 'a 43-character QR token.' : 'CV-YYYY-NNNNNN.');
+            . ($query_type === 'token' ? 'a 43-character QR token.' : 'a certificate ID (letters, digits, spaces and - _ / ., max 64 chars).');
     }
 }
 
@@ -70,11 +128,13 @@ if ($query_type !== null) {
 if ($query_type !== null && $verdict === null) {
     $cert = $query_type === 'token'
         ? VerificationService::findByToken($db, $query_value)
-        : VerificationService::findByCertificateId($db, $query_value);
+        : VerificationService::findByFlexibleCertificateId($db, $query_value);
 
     if (!$cert) {
         $verdict = 'INVALID';
-        $detail  = 'No certificate found matching the provided identifier.';
+        $detail  = $via_qr_upload
+            ? 'QR code not recognized. No certificate matches the code in this image.'
+            : 'No certificate found matching the provided identifier.';
     } else {
         $result = VerificationService::verify($db, $cert);
         $verdict       = $result['verdict'];
@@ -93,12 +153,12 @@ if ($query_type !== null) {
             (:qt, :qv, :cid, :res, :det, :ip)
     ');
     $logStmt->execute([
-        'qt'  => $query_type,
+        'qt'  => $via_qr_upload ? 'token' : $query_type,
         // Truncate to 255 so long/hostile input cannot overflow the column
-        'qv'  => mb_substr((string)$query_value, 0, 255),
+        'qv'  => mb_substr(log_safe_text((string)$query_value), 0, 255),
         'cid' => $cert ? $cert['certificate_id'] : null,
         'res' => $verdict,
-        'det' => $detail,
+        'det' => log_safe_text($detail . ($via_qr_upload ? ' (via QR image upload)' : '')),
         'ip'  => $ip,
     ]);
 
@@ -130,6 +190,7 @@ if ($query_type !== null) {
             <div class="form-group">
                 <label for="certificate_id">Certificate ID</label>
                 <input type="text" id="certificate_id" name="certificate_id" placeholder="CV-YYYY-NNNNNN" data-validate="required|certid" required>
+                <small>Tip: "cv-2026-1" or "CV 2026 000001" work too — IDs are matched leniently.</small>
             </div>
             <button type="submit" class="btn btn-primary" style="width:100%;">Verify</button>
         </form>
@@ -212,6 +273,120 @@ if ($query_type !== null) {
                 });
             });
             stopBtn.addEventListener('click', stop);
+        })();
+        </script>
+
+        <!-- ── QR image upload: client decode first, server fallback without JS ── -->
+        <div class="card" style="margin-top:16px;">
+            <h3 style="text-align:center;">Or upload a QR image</h3>
+            <p style="text-align:center; color:var(--muted); font-size:0.9em;">PNG, JPG or WEBP, max 3 MB. You can also drag &amp; drop or paste an image.</p>
+            <form id="qrUploadForm" method="POST" action="" enctype="multipart/form-data">
+                <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
+                <input type="hidden" name="MAX_FILE_SIZE" value="3145728">
+                <div id="qrDrop" style="border:2px dashed var(--border); border-radius:8px; padding:20px; text-align:center; cursor:pointer;">
+                    <label for="qr_image" style="cursor:pointer; font-weight:600;">Choose an image
+                        <input type="file" id="qr_image" name="qr_image" accept=".png,.jpg,.jpeg,.webp" style="display:none;">
+                    </label>
+                    <div style="color:var(--muted); font-size:0.85em; margin-top:6px;">…or drop / paste it here</div>
+                </div>
+                <div style="text-align:center;">
+                    <img id="qrPreview" alt="Uploaded QR preview" style="display:none; max-width:220px; margin:12px auto 0; border:1px solid var(--border); border-radius:6px;">
+                </div>
+                <p class="field-error" id="qrUploadError" role="alert" style="display:none;"></p>
+                <button type="submit" class="btn btn-primary" style="width:100%; margin-top:12px;">Verify QR image</button>
+            </form>
+            <div id="qrFileReader" style="display:none;"></div>
+        </div>
+        <script>
+        (function () {
+            var form = document.getElementById('qrUploadForm');
+            var input = document.getElementById('qr_image');
+            var drop = document.getElementById('qrDrop');
+            var err = document.getElementById('qrUploadError');
+            var preview = document.getElementById('qrPreview');
+            var QR_MAX = 3 * 1024 * 1024;
+            var QR_EXT = ['png', 'jpg', 'jpeg', 'webp'];
+            var QR_MIME = ['image/png', 'image/jpeg', 'image/webp'];
+            var pending = null;
+
+            function showError(msg) { err.textContent = msg; err.style.display = 'block'; }
+            function hideError() { err.textContent = ''; err.style.display = 'none'; }
+
+            function checkFile(f) {
+                if (!f) return 'Please choose a QR image first.';
+                var ext = (f.name.split('.').pop() || '').toLowerCase();
+                if (QR_EXT.indexOf(ext) === -1) return 'Only PNG, JPG, and WEBP images are allowed.';
+                if (f.type && QR_MIME.indexOf(f.type) === -1) return 'That file is not a PNG, JPG, or WEBP image.';
+                if (f.size > QR_MAX) return 'Image exceeds the 3 MB limit — please use a smaller one.';
+                if (f.size < 100) return 'That file looks empty — please choose a real image.';
+                return true;
+            }
+
+            function takeFile(f) {
+                hideError();
+                var ok = checkFile(f);
+                if (ok !== true) { pending = null; preview.style.display = 'none'; showError(ok); return; }
+                pending = f;
+                // Mirror into the real input so the no-JS server fallback gets it.
+                try {
+                    var dt = new DataTransfer();
+                    dt.items.add(f);
+                    input.files = dt.files;
+                } catch (e) { /* older browsers: native submit still works from picker */ }
+                if (preview.src) URL.revokeObjectURL(preview.src);
+                preview.src = URL.createObjectURL(f);
+                preview.style.display = 'block';
+            }
+
+            input.addEventListener('change', function () { if (input.files[0]) takeFile(input.files[0]); });
+            ['dragenter', 'dragover'].forEach(function (ev) {
+                drop.addEventListener(ev, function (e) { e.preventDefault(); drop.style.borderColor = 'var(--seal)'; });
+            });
+            ['dragleave', 'drop'].forEach(function (ev) {
+                drop.addEventListener(ev, function (e) { e.preventDefault(); drop.style.borderColor = 'var(--border)'; });
+            });
+            drop.addEventListener('drop', function (e) {
+                var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+                if (f) takeFile(f);
+            });
+            document.addEventListener('paste', function (e) {
+                var items = (e.clipboardData && e.clipboardData.files) || [];
+                for (var i = 0; i < items.length; i++) {
+                    if (items[i].type.indexOf('image/') === 0) { takeFile(items[i]); break; }
+                }
+            });
+
+            function routeText(text) {
+                text = (text || '').trim();
+                var m = text.match(/[?&]token=([A-Za-z0-9_\-]+)/);
+                if (m) { window.location.href = 'verify.php?token=' + encodeURIComponent(m[1]); return; }
+                if (/^[A-Za-z0-9_\-]{43}$/.test(text)) { window.location.href = 'verify.php?token=' + encodeURIComponent(text); return; }
+                if (/^CV-\d{4}-\d{6}$/.test(text)) {
+                    var idInput = document.getElementById('certificate_id');
+                    if (idInput && idInput.form) { idInput.value = text; idInput.form.submit(); return; }
+                }
+                showError('That QR code is not a CertiVault code — try another image or type the Certificate ID.');
+            }
+
+            form.addEventListener('submit', function (e) {
+                var f = (input.files && input.files[0]) || pending;
+                if (!f) { e.preventDefault(); showError('Please choose a QR image first.'); return; }
+                var ok = checkFile(f);
+                if (ok !== true) { e.preventDefault(); showError(ok); return; }
+                // No decode library (or very old browser): let the form post
+                // to the server-side fallback, which decodes with PHP.
+                if (typeof Html5Qrcode === 'undefined') return;
+                e.preventDefault();
+                hideError();
+                try {
+                    new Html5Qrcode('qrFileReader').scanFile(f, false).then(routeText, function () {
+                        // Client could not decode it — hand to the server fallback.
+                        form.submit();
+                    });
+                } catch (ex) {
+                    form.submit();
+                }
+            });
         })();
         </script>
 

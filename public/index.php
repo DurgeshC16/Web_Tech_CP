@@ -70,6 +70,7 @@ $page_title = 'CertiVault — Verifiable digital certificates';
                 <div class="form-group">
                     <label for="certificate_id">Certificate ID</label>
                     <input type="text" id="certificate_id" name="certificate_id" placeholder="CV-YYYY-NNNNNN" data-validate="required|certid" required>
+                    <small>Tip: "cv-2026-1" or "CV 2026 000001" work too — IDs are matched leniently.</small>
                 </div>
                 <button type="submit" class="btn btn-primary">Verify</button>
             </form>

@@ -20,9 +20,10 @@ if (file_exists($filepath)) {
     finfo_close($finfo);
 
     // Download name is the public certificate ID + the validated stored
-    // extension (never the random storage name).
+    // extension (never the random storage name), sanitized so custom IDs
+    // with slashes/spaces cannot break out of a filename.
     $ext = strtolower(pathinfo($cert['file_path'], PATHINFO_EXTENSION));
-    $download_name = $cert['certificate_id'] . '.' . $ext;
+    $download_name = sanitize_filename($cert['certificate_id']) . '.' . $ext;
 
     send_security_headers();
     header('Content-Description: File Transfer');

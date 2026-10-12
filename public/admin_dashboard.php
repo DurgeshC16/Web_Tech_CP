@@ -38,8 +38,10 @@ $status_filter = $_GET['status'] ?? '';
 $where = 'WHERE c.institution_id = :inst_id';
 $params = ['inst_id' => $institution_id];
 if ($search !== '') {
-    $where .= ' AND (c.title LIKE :q OR c.certificate_id LIKE :q OR s.full_name LIKE :q)';
-    $params['q'] = '%' . $search . '%';
+    // Escape LIKE wildcards so IDs containing % or _ match literally.
+    $q_esc = addcslashes($search, '%_\\');
+    $where .= ' AND (c.title LIKE :q ESCAPE \'\\\' OR c.certificate_id LIKE :q ESCAPE \'\\\' OR s.full_name LIKE :q ESCAPE \'\\\')';
+    $params['q'] = '%' . $q_esc . '%';
 }
 if (in_array($status_filter, ['active', 'revoked', 'superseded', 'expired'], true)) {
     $where .= ' AND c.status = :st';
