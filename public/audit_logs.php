@@ -62,6 +62,33 @@ $stmt->bindValue('offset', $offset, PDO::PARAM_INT);
 $stmt->execute();
 $logs = $stmt->fetchAll();
 
+// ── Transparency summary: outcome mix for this institution ──────────
+// One aggregate query over the same scoped rows; the "top failure
+// reasons" show WHY verdicts failed (truncated detail strings).
+$stats_stmt = $db->prepare("
+    SELECT v.result, COUNT(*) AS cnt,
+           MAX(CASE WHEN v.result IN ('VALID') THEN 0 ELSE 1 END) AS order_key
+    FROM verification_logs v
+    LEFT JOIN certificates c ON v.certificate_id_found = c.certificate_id
+    WHERE $where_sql
+    GROUP BY v.result
+    ORDER BY cnt DESC
+");
+$stats_stmt->execute($params);
+$result_counts = $stats_stmt->fetchAll();
+
+$reasons_stmt = $db->prepare("
+    SELECT v.detail, COUNT(*) AS cnt
+    FROM verification_logs v
+    LEFT JOIN certificates c ON v.certificate_id_found = c.certificate_id
+    WHERE $where_sql AND v.result IN ('TAMPERED', 'EXPIRED', 'REVOKED', 'SUPERSEDED')
+    GROUP BY v.detail
+    ORDER BY cnt DESC
+    LIMIT 5
+");
+$reasons_stmt->execute($params);
+$failure_reasons = $reasons_stmt->fetchAll();
+
 ?>
 <?php $page_title = 'Audit Logs - CertiVault'; require __DIR__ . '/../src/partials/head.php'; ?>
 <?php require __DIR__ . '/../src/partials/header.php'; ?>
@@ -79,6 +106,34 @@ $logs = $stmt->fetchAll();
                 <a href="?result=<?= $v ?>" class="chip chip-<?= strtolower($v) ?> <?= $filter_result === $v ? 'active' : '' ?>"><?= $v ?></a>
             <?php endforeach; ?>
         </div>
+
+        <div class="card" style="margin-bottom:18px;">
+            <h3 style="margin-top:0;">Transparency summary</h3>
+            <p style="margin-bottom:6px;">Outcome mix across all logged verification attempts for your certificates:</p>
+            <div class="chip-row" style="margin-bottom:10px;">
+                <?php if (count($result_counts) === 0): ?>
+                    <span class="chip">No verification attempts yet</span>
+                <?php else: ?>
+                    <?php foreach ($result_counts as $rc): ?>
+                        <span class="chip chip-<?= strtolower(htmlspecialchars($rc['result'])) ?>">
+                            <?= htmlspecialchars($rc['result']) ?>: <?= (int)$rc['cnt'] ?>
+                        </span>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+            </div>
+            <?php if (count($failure_reasons) > 0): ?>
+                <p style="margin-bottom:6px;">Most frequent non-VALID verdict reasons:</p>
+                <ul style="margin:0 0 0 20px;">
+                    <?php foreach ($failure_reasons as $fr): ?>
+                        <li style="margin-top:4px;">
+                            <strong><?= htmlspecialchars((string)$fr['cnt']) ?>&times;</strong>
+                            <?= htmlspecialchars(mb_substr((string)($fr['detail'] ?? '—'), 0, 140)) ?>
+                        </li>
+                    <?php endforeach; ?>
+                </ul>
+            <?php endif; ?>
+        </div>
+
 
         <div class="filter-bar">
             <form method="GET" action="" class="filter-form">

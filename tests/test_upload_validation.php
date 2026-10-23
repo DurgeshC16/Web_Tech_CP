@@ -620,4 +620,90 @@ for ($gaS = 0; $gaS <= 100; $gaS += 5) {
 }
 t_check('gauge: x sweeps monotonically with score', $gaMonotonic);
 
+// ══════════════════════════════════════════════════════════════════════
+// Phase 3 — StatusApiService (public read-only status API core) and
+// transparency guardrails. No outbound requests, no schema changes.
+// ══════════════════════════════════════════════════════════════════════
+require_once __DIR__ . '/../src/services/StatusApiService.php';
+$api_db = test_db();
+
+$api_db->beginTransaction();
+$api_file = null;
+try {
+    $apiTag = (string)time();
+    $api_db->prepare('INSERT INTO users (email, password_hash, role, is_verified)
+                      VALUES (:e, "x", "institution", 1)')->execute(['e' => "api_$apiTag@example.test"]);
+    $apiUid = (int)$api_db->lastInsertId();
+    $api_db->prepare('INSERT INTO students (user_id, full_name) VALUES (:u, "API Student")')->execute(['u' => $apiUid]);
+    $apiSid = (int)$api_db->lastInsertId();
+    $apiPair = CryptoService::generateRSAKeyPair();
+    $api_db->prepare('INSERT INTO institutions (user_id, name, status, public_key, encrypted_private_key)
+                      VALUES (:u, "API Status Uni", "approved", :pk, "")')
+        ->execute(['u' => $apiUid, 'pk' => $apiPair['public_key']]);
+    $apiIid = (int)$api_db->lastInsertId();
+
+    $api_file = __DIR__ . '/../private_data/uploads/api_fixture_' . $apiTag . '.pdf';
+    file_put_contents($api_file, "%PDF-1.4\nAPI fixture $apiTag\n" . str_repeat('a', 60));
+    $apiData = [
+        'certificate_id' => 'CV-2026-820001',
+        'institution_id' => $apiIid,
+        'student_id'     => $apiSid,
+        'title'          => 'API Score',
+        'issue_date'     => '2026-02-02',
+        'expiry_date'    => null,
+    ];
+    $apiHash = CryptoService::computeCertificateHash($apiData, $api_file);
+    $apiSig  = CryptoService::signCertificateHash($apiHash, $apiPair['private_key']);
+    $api_db->prepare('INSERT INTO certificates
+        (certificate_id, institution_id, student_id, title, issue_date, file_path, status, sha256_hash, digital_signature, version)
+        VALUES ("CV-2026-820001", :iid, :sid, "API Score", "2026-02-02", :fp, "active", :h, :sig, 1)')
+        ->execute(['iid' => $apiIid, 'sid' => $apiSid, 'fp' => basename($api_file), 'h' => $apiHash, 'sig' => $apiSig]);
+
+    // Rate-limit test IPs are TEST-NET documentation ranges only.
+    $clientIp = '203.0.113.77';
+
+    // Happy path: canonical verdict + public-only payload.
+    [$ap200, $ap200Body] = StatusApiService::resolve($api_db, 'CV-2026-820001', $clientIp);
+    t_check('api: valid id resolves 200', $ap200 === 200);
+    t_check('api: verdict equals engine verdict', ($ap200Body['verdict'] ?? '') === 'VALID');
+    t_check('api: trust score included (=100)', ($ap200Body['trust_score']['score'] ?? -1) === 100);
+    t_check('api: public cert fields only', ($ap200Body['certificate']['certificate_id'] ?? '') === 'CV-2026-820001'
+        && ($ap200Body['certificate']['awarded_to'] ?? '') === 'API Student'
+        && ($ap200Body['certificate']['issued_by'] ?? '') === 'API Status Uni');
+    t_check('api: NO private material in payload', !$apiTag
+        || (!isset($ap200Body['digital_signature']) && !isset($ap200Body['public_key'])
+            && !isset($ap200Body['file_path']) && !isset($ap200Body['qr_token'])));
+
+    // NOT_FOUND paths stay consistent and never 500.
+    [$ap404a, $ap404aBody] = StatusApiService::resolve($api_db, 'no-such-cert-404', $clientIp);
+    t_check('api: unknown id => 404 NOT_FOUND', $ap404a === 404 && ($ap404aBody['verdict'] ?? '') === 'NOT_FOUND');
+    [$ap404b, $ap404bBody] = StatusApiService::resolve($api_db, '', $clientIp);
+    t_check('api: empty id => 404 NOT_FOUND', $ap404b === 404);
+    [$ap404c, $ap404cBody] = StatusApiService::resolve($api_db, str_repeat('é', 70), $clientIp);
+    t_check('api: malformed id => 404 NOT_FOUND', $ap404c === 404);
+
+    // Audit logging incl. NOT_FOUND mapping to the ENUM.
+    StatusApiService::logRequest($api_db, 'no-such-cert-404', null, 'INVALID', 404, $clientIp);
+    $apLogStmt = $api_db->prepare("SELECT COUNT(*) FROM verification_logs
+        WHERE verifier_ip = :ip AND detail LIKE 'API status request (HTTP 404)%'");
+    $apLogStmt->execute(['ip' => $clientIp]);
+    t_check('api: NOT_FOUND request audit-logged', (int)$apLogStmt->fetchColumn() >= 1);
+
+    // Rate limit: >30 requests/IP/10-min (marker rows simulate traffic).
+    $apRateStmt = $api_db->prepare('INSERT INTO verification_logs
+        (query_type, query_value, certificate_id_found, result, detail, verifier_ip)
+        VALUES ("certificate_id", "(api smoke)", "CV-2026-820001", "VALID", "API status request (HTTP 200)", :ip)');
+    for ($api_i = 0; $api_i <= StatusApiService::RATE_LIMIT; $api_i++) {
+        $apRateStmt->execute(['ip' => '192.0.2.99']);
+    }
+    [$ap429, $ap429Body] = StatusApiService::resolve($api_db, 'CV-2026-820001', '192.0.2.99');
+    t_check('api: rate limit exceeded => 429', $ap429 === 429 && ($ap429Body['error'] ?? '') === 'rate_limited');
+    // Different IP is unaffected.
+    [$apOther, $apOtherBody] = StatusApiService::resolve($api_db, 'CV-2026-820001', '198.51.100.20');
+    t_check('api: other IP unaffected by rate limit', $apOther === 200);
+} finally {
+    $api_db->rollBack();
+    if ($api_file) @unlink($api_file);
+}
+
 exit(t_summary('test_upload_validation') ? 0 : 1);

@@ -291,6 +291,31 @@ contact the named source. For hosted Open Badges sources, `EXT_ALLOWED_HOSTS`
 must list exactly the CDN host(s) you trust. To enable a real hosted
 source, set `EXT_OB_URL_TEMPLATE` and keep `EXT_SOURCE_ENABLED` true.
 
+## Smart Verify, trust score, report & status API (Phases 1–3)
+- **Smart Verify** (`verify.php`, ON by default, `CV_SMART_VERIFY=0` to
+  disable): one panel accepts ANY of — certificate ID in any format, QR
+  token, full self-verification URL, QR-image upload, or the certificate
+  FILE itself (PDF/PNG/JPG ≤5 MB) — plus a privacy toggle that hashes the
+  file in the browser (`crypto.subtle`) so bytes never leave the device.
+  File matching falls back to the QR-stamped copy's hash and to QR/text
+  decoding; temp files are deleted in `finally` and never stored.
+- **Trust score** (`TrustScoreService`): a 0–100 rule-based score derived
+  from the EXISTING checks only (exists 20 / hash 30 / signature 30 /
+  not-expired 10 / not-revoked 10). A failed critical check (hash /
+  signature / exists) caps the score at 40; the score can never contradict
+  the verdict. Served beside the seal with a gauge, per-check checklist
+  and the disclaimer: "CertiVault confirms the record passes technical
+  checks; it does not verify the real-world achievement."
+- **Verification report** (`report.php`, dompdf via Composer `vendor/`):
+  one PDF per verification - verdict, trust score + checks, certificate
+  fields, SHA-256, and a QR back to the live verify page. Contains ONLY
+  public verify-page facts (no tokens, keys, internal paths). Rate
+  limited to 5 downloads / 10 min / IP and audit-logged.
+- **Status API** (`api_status.php?certificate_id=…` or `?id=…`): public
+  read-only JSON (verdict, detail, public cert fields, trust score).
+  Rate limited, audit-logged, off-switch `CV_API_ENABLED=0`. Response
+  never includes tokens, keys, signatures or file paths.
+
 ## Demo credentials
 After running `php scripts/seed_demo_data.php` you can log in with:
 

@@ -120,6 +120,12 @@ defined('EXT_RATE_LIMIT')       || define('EXT_RATE_LIMIT', (int)(getenv('CV_EXT
 defined('SMART_VERIFY_ENABLED')     || define('SMART_VERIFY_ENABLED', (getenv('CV_SMART_VERIFY') ?: '1') !== '0');
 defined('SMART_EXTERNAL_LINKS')     || define('SMART_EXTERNAL_LINKS', (getenv('CV_SMART_EXTERNAL_LINKS') ?: '1') !== '0');
 
+// ── Public status API (api_status.php; read-only, ON by default) ────
+// GET api_status.php?certificate_id=… → JSON verdict + trust score.
+// Read-only, rate-limited, audit-logged; disable per install with
+// CV_API_ENABLED=0 (e.g. behind a firewall that exposes something else).
+defined('API_ENABLED')              || define('API_ENABLED', (getenv('CV_API_ENABLED') ?: '1') !== '0');
+
 // ── Error Handling ──────────────────────────────────────────────────
 // In production: display_errors = Off, log_errors = On
 $is_production = (getenv('CV_ENV') === 'production');
