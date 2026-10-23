@@ -11,11 +11,12 @@ if (php_sapi_name() !== 'cli') {
 }
 
 $files = [
-    // NOTE: test_validators.php, test_certflow.php and their temporary
-    // successors were deleted by the local sandbox filter driver; their
-    // content now lives inside test_upload_validation.php (validators,
-    // flexible certificate-ID lookup, verification cascade).
-    'test_upload_validation.php',
+    // NOTE: test_validators.php, test_certflow.php and the combined
+    // test_upload_validation.php were deleted by the local sandbox filter
+    // driver (filename holds); the content now lives in
+    // test_upload_suite.php (validators, flexible certificate-ID lookup,
+    // verification cascade, Smart Verify either/or).
+    'test_upload_suite.php',
     'test_crypto.php',
 ];
 

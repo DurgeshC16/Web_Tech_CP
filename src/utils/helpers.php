@@ -667,7 +667,7 @@ function captcha_field_html($errors) {
 
 /**
  * Build a PHPMailer instance pre-configured with the application's SMTP
- * settings.  Both create_otp() and scripts/test_smtp.php use this so
+ * settings.  Both create_otp() and scripts/smtp_diagnostic.php use this so
  * the connection parameters are defined in exactly one place.
  *
  * @return \PHPMailer\PHPMailer\PHPMailer  Ready-to-use mailer (caller still

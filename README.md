@@ -71,7 +71,7 @@ If you'd rather use real environment variables (e.g. on Linux/hosted servers), s
 **Working SMTP credentials are required.** OTP codes are delivered exclusively
 by email — they are never displayed on screen. Without valid SMTP configuration,
 users will not be able to receive verification codes and complete account
-activation. Use `php scripts/test_smtp.php someone@example.com` to verify
+activation. Use `php scripts/smtp_diagnostic.php someone@example.com` to verify
 your SMTP setup before running the application.
 
 ## Email setup (Gmail App Password)
@@ -89,7 +89,7 @@ your SMTP setup before running the application.
    - `SMTP_FROM_EMAIL` — the same Gmail address
    (`SMTP_HOST`/`SMTP_PORT`/`SMTP_ENCRYPTION` ship as
    `smtp.gmail.com`/`587`/`tls` and need no change.)
-3. Verify: `php scripts/test_smtp.php you@gmail.com` — it also prints
+3. Verify: `php scripts/smtp_diagnostic.php you@gmail.com` — it also prints
    which source every SMTP value came from (local file, env var or default);
    the password is never shown.
 4. Restart Apache if it was already running.
@@ -107,7 +107,7 @@ The SMTP diagnostic prints PASS/FAIL for every stage of the email path
 (config, OpenSSL, connection, TLS + authentication, test send):
 
 ```
-php scripts/test_smtp.php someone@example.com
+php scripts/smtp_diagnostic.php someone@example.com
 ```
 
 Common causes, matched to the stage that fails:
@@ -141,7 +141,7 @@ Google rejects regular Gmail passwords on SMTP. You must use an **App Password**
    define('SMTP_FROM_EMAIL', 'yourname@gmail.com');
    ```
 6. Restart Apache (or your PHP built-in server) and re-run
-   `php scripts/test_smtp.php <your-email>` — stage 4 must now PASS.
+   `php scripts/smtp_diagnostic.php <your-email>` — stage 4 must now PASS.
 
 Other Gmail gotchas:
 
@@ -194,7 +194,7 @@ Set it explicitly only to *force* a value (reverse proxy, public hostname
 differs from the request host): via the `CV_BASE_URL` environment variable,
 or in `src/config/config.local.php` with `define('CV_BASE_URL',
 'http://localhost/certivault/public');` (no trailing slash). CLI scripts
-(`seed_demo_data.php`, etc.) have no request to derive from and fall back to
+(`seed_demo.php`, etc.) have no request to derive from and fall back to
 `http://localhost:8081/certivault/public` unless `CV_BASE_URL` is set.
 
 After that, register an institution, have the super admin approve it, and you can issue certificates.
@@ -350,7 +350,7 @@ source, set `EXT_OB_URL_TEMPLATE` and keep `EXT_SOURCE_ENABLED` true.
   never includes tokens, keys, signatures or file paths.
 
 ## Demo credentials
-After running `php scripts/seed_demo_data.php` you can log in with:
+After running `php scripts/seed_demo.php` you can log in with:
 
 - Institution (`admin`): `demo.institution@certivault.test` / `DemoInst@2026`
 - Student: `demo.student@certivault.test` / `DemoStudent@2026`
@@ -365,6 +365,7 @@ After running `php scripts/seed_demo_data.php` you can log in with:
 6. `database/migrations/006_login_rate_limit.sql` (Phase 5)
 7. `database/migrations/007_flexible_certificate_id.sql`
 8. `database/migrations/008_external_verification_source.sql` (only needed for external sources; the local pipeline works without it)
+9. `database/migrations/009_smart_verify_enum.sql` (extends the `verification_logs.query_type` ENUM for Smart Verify; needed by Phase 1 – 3 features)
 
 Each file is idempotent where possible (guarded ALTERs / IF NOT EXISTS) and safe to re-run.
 

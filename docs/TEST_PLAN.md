@@ -55,7 +55,7 @@ php tests/test_validators.php    # single suite (each file runs standalone)
 - `test_crypto.php` (8): RSA keygen, GCM encrypt/decrypt round trip,
   sign + verify, verify failure after a 1-byte hash change and with a
   wrong public key.
-- `test_upload_validation.php` (192 checks, single durable file after the
+- `test_upload_suite.php` (192 checks, single durable file after the
   sandbox-AV incident retired `test_validators.php`) now hosts:
   - the original `v_upload()` matrix (12);
   - the validator + flexible-ID lookup + verification-cascade suites

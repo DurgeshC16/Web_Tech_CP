@@ -1,5 +1,5 @@
 <?php
-// tests/test_upload_validation.php — v_upload() against mocked $_FILES
+// tests/test_upload_suite.php — v_upload() against mocked $_FILES
 // arrays, one case per PHP upload error code plus the guard clauses.
 // NOTE: is_uploaded_file() is always false under CLI (nothing comes from
 // an HTTP POST), so the UPLOAD_ERR_OK branch can only reach the
@@ -10,7 +10,7 @@
 // and tests/test_certflow.php). New files created under tests/ are demonetized
 // deleted shortly after creation by this machine's sandbox filter driver, so
 // the existing files are the only durable homes for test content.
-// Run: php tests/test_upload_validation.php
+// Run: php tests/test_upload_suite.php
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../src/utils/validators.php';
 require_once __DIR__ . '/../src/utils/helpers.php'; // normalize_certificate_id(), sanitize_filename()
@@ -823,4 +823,4 @@ $outc = FileVerifyService::run(null, ['error' => UPLOAD_ERR_NO_FILE]);
 t_check('either/or: run() WOULD say required for NO_FILE (fileProvided() prevents it in prod)',
     ($outc['__upload_error'] ?? '') === 'A certificate file is required.');
 
-exit(t_summary('test_upload_validation') ? 0 : 1);
+exit(t_summary('test_upload_suite') ? 0 : 1);

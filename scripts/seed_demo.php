@@ -1,5 +1,5 @@
 <?php
-// scripts/seed_demo_data.php
+// scripts/seed_demo.php
 // -------------------------------------------------------------------------
 // Seeds realistic demo data for a live demo. Uses the EXACT same pipeline as
 // the real issuance flow (CryptoService + QRService) so every certificate's
@@ -8,7 +8,7 @@
 // Idempotent: safe to run repeatedly; existing rows (matched by fixed
 // email/name/title) are reused, not duplicated.
 //
-// Usage:  php scripts/seed_demo_data.php
+// Usage:  php scripts/seed_demo.php
 // -------------------------------------------------------------------------
 
 if (!getenv('OPENSSL_CONF') && file_exists('C:\\xampp\\php\\extras\\openssl\\openssl.cnf')) {

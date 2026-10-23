@@ -1,5 +1,5 @@
 <?php
-// scripts/test_smtp.php
+// scripts/smtp_diagnostic.php
 // ─────────────────────────────────────────────────────────────────────
 // CLI SMTP diagnostic that prints PASS/FAIL for every step of the real
 // OTP email path, so "users don't receive activation emails" can be
@@ -11,7 +11,7 @@
 //   4. STARTTLS + authentication  the same handshake create_otp() does
 //   5. test send                  a real email delivered end-to-end
 //
-// Usage:  php scripts/test_smtp.php someone@example.com
+// Usage:  php scripts/smtp_diagnostic.php someone@example.com
 //
 // Loads the same config and uses the same create_smtp_mailer() helper
 // that create_otp() does, so a pass here guarantees the real OTP email
@@ -25,7 +25,7 @@ if (php_sapi_name() !== 'cli') {
 }
 
 if ($argc < 2 || !filter_var($argv[1], FILTER_VALIDATE_EMAIL)) {
-    fwrite(STDERR, "Usage: php scripts/test_smtp.php <recipient-email>\n");
+    fwrite(STDERR, "Usage: php scripts/smtp_diagnostic.php <recipient-email>\n");
     exit(1);
 }
 

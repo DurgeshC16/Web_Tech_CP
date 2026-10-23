@@ -10,7 +10,7 @@
 | Authentication & Authorization functions | `require_role`, `require_approved_institution`, `redirect_to_dashboard`, `validate_csrf_token`, `verify_otp`, `validate_password_strength` in `helpers.php` | Yes |
 | CAPTCHA | reCAPTCHA v2 when keys set (`RECAPTCHA_*`, `verify_recaptcha()`), else offline arithmetic fallback (`generate_captcha()` / `verify_captcha()`); unified gate `validate_captcha()` + `captcha_field_html()` in `helpers.php`; used in `login.php`, `register_student.php`, `register_institution.php`, `forgot_password.php` | Yes |
 | OTP verification | `helpers.php` `create_otp()` / `verify_otp()` / `hash_otp()`; OTP flow in `activate_account.php`, `reset_password.php`, `change_password.php` | Yes |
-| Email verification | OTP emailed via PHPMailer in `create_otp()`; `scripts/test_smtp.php` | Yes |
+| Email verification | OTP emailed via PHPMailer in `create_otp()`; `scripts/smtp_diagnostic.php` | Yes |
 | Required validator | Server `v_required()` (`src/utils/validators.php:16`); client `required` (`public/assets/js/validation.js:22,114`); on every user-editable control in login, register ×2, activate, forgot, reset, change, issue, supersede, revoke, super_admin reject, verify/index quick-verify | Yes |
 | Range validator | Server `v_range()` (`validators.php:26`); client `range:min,max` (`validation.js:138`); CAPTCHA 2–18 in 4 forms + optional Validity 1–50 (`issue_certificate.php` server ~:60, input ~:293) | Yes |
 | Compare validator | Server `v_compare()` (`validators.php:51`) for password/confirm on all 5 password pages + `v_date_after()` (`validators.php:164`) for expiry-after-issue in issue/supersede; client `match:` (`validation.js:143`) + `after:` (`validation.js:148`, used on both expiry inputs) | Yes |
