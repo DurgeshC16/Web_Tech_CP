@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../src/config/Database.php';
 require_once __DIR__ . '/../src/utils/helpers.php';
 require_once __DIR__ . '/../src/services/VerificationService.php';
+require_once __DIR__ . '/../src/services/StudentStatsService.php';
 require_role('student');
 
 $db = Database::getInstance();
@@ -21,6 +22,10 @@ $stmt = $db->prepare('
 ');
 $stmt->execute(['student_id' => $student_id]);
 $certificates = $stmt->fetchAll();
+
+// Phase 4: per-certificate verification visibility (read-only stats).
+$cert_stats = StudentStatsService::perCertificate($db, (int)$student_id);
+$stats_totals = StudentStatsService::totals($db, (int)$student_id);
 ?>
 <?php $page_title = 'Student Dashboard - CertiVault'; require __DIR__ . '/../src/partials/head.php'; ?>
 <?php require __DIR__ . '/../src/partials/header.php'; ?>
@@ -34,8 +39,22 @@ $certificates = $stmt->fetchAll();
         </div>
 
         <?php if (count($certificates) > 0): ?>
+            <div class="card" style="margin-bottom:18px;">
+                <strong>Verification activity</strong>
+                <p style="margin:6px 0 0; color:var(--muted);">
+                    Your certificates have been verified
+                    <strong><?= (int)$stats_totals['verifications'] ?></strong> time<?= $stats_totals['verifications'] === 1 ? '' : 's' ?>
+                    (<?= (int)$stats_totals['valid_hits'] ?> reached a <strong>VALID</strong> seal).
+                    <?php if ($stats_totals['last_at']): ?>
+                        Most recent check: <?= htmlspecialchars(date('Y-m-d H:i', strtotime($stats_totals['last_at']))) ?> (UTC in logs).
+                    <?php else: ?>
+                        Nobody has verified them yet.
+                    <?php endif; ?>
+                </p>
+            </div>
             <div class="grid-container">
                 <?php foreach ($certificates as $cert): ?>
+                    <?php $cstat = $cert_stats[(int)$cert['id']] ?? null; ?>
                     <div class="card">
                         <div class="card-title"><?= htmlspecialchars($cert['title']) ?></div>
                         <div class="card-meta"><strong>ID:</strong> <?= htmlspecialchars($cert['certificate_id']) ?></div>
@@ -47,6 +66,16 @@ $certificates = $stmt->fetchAll();
                                 <?= htmlspecialchars($effStatus) ?>
                             </span>
                         </div>
+                        <?php if ($cstat): ?>
+                            <div class="card-meta" style="color:var(--muted); font-size:0.9em;">
+                                <small>
+                                    Verified <?= (int)$cstat['verifications'] ?>×
+                                    <?php if ($cstat['last_at']): ?>
+                                        · last <?= htmlspecialchars(date('Y-m-d H:i', strtotime($cstat['last_at']))) ?>
+                                    <?php endif; ?>
+                                </small>
+                            </div>
+                        <?php endif; ?>
                         <?php if ($cert['status'] === 'superseded' && !empty($cert['superseded_by_id'])): ?>
                             <div class="card-meta text-warn">
                                 <small>This version has been replaced. <a href="view_certificate_student.php?id=<?= (int)$cert['superseded_by_id'] ?>">View current version →</a></small>

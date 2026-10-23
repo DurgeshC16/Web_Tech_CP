@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../src/config/Database.php';
 require_once __DIR__ . '/../src/utils/helpers.php';
 require_once __DIR__ . '/../src/services/VerificationService.php';
+require_once __DIR__ . '/../src/services/TrustScoreService.php';
 require_role('student');
 
 $db = Database::getInstance();
@@ -17,9 +18,17 @@ $cert = require_owned_certificate(
     $cert_id,
     'student',
     $student_id,
-    'c.*, i.name as institution_name',
+    'c.*, i.name as institution_name, i.public_key',
     'JOIN institutions i ON c.institution_id = i.id'
 );
+
+// Phase 4: same rule-based trust score the public verifier sees.
+try {
+    $trusted = TrustScoreService::compute($db, $cert);
+} catch (Throwable $trustError) {
+    error_log('[CertiVault] Student trust score failed: ' . $trustError->getMessage());
+    $trusted = null;
+}
 
 // Generate Share Link Logic
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['generate_share'])) {
@@ -88,6 +97,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['generate_share'])) {
                     <input type="hidden" name="generate_share" value="1">
                     <button type="submit" class="btn btn-verified">Generate Share Link (24h)</button>
                 </form>
+                <a href="report.php?cert=<?= rawurlencode((string)$cert['certificate_id']) ?>" class="btn btn-secondary">
+                    ⬇ Verification report (PDF)
+                </a>
+            </div>
+            <?php endif; ?>
+
+            <?php if ($trusted): ?>
+            <div class="card" style="margin-top:14px; border-left:4px solid #c9a227;">
+                <strong>Trust score: <?= (int)$trusted['score'] ?> / 100</strong>
+                <?php if (($trusted['verdict'] ?? '') !== 'VALID'): ?>
+                    <span class="badge-status badge-<?= strtolower(htmlspecialchars($trusted['verdict'])) ?>" style="margin-left:6px;">
+                        <?= htmlspecialchars($trusted['verdict']) ?>
+                    </span>
+                <?php endif; ?>
+                <ul style="margin:8px 0 0 20px; color:var(--muted); font-size:0.95em;">
+                    <?php foreach (($trusted['checks'] ?? []) as $check_row): ?>
+                    <li style="margin-top:3px;">
+                        <span style="color:<?= $check_row['pass'] ? 'var(--verified)' : 'var(--danger)' ?>; font-weight:600;">
+                            <?= $check_row['pass'] ? '&#10003;' : '&#10007;' ?>
+                        </span>
+                        <?= htmlspecialchars((string)$check_row['label']) ?>
+                    </li>
+                    <?php endforeach; ?>
+                </ul>
+                <small style="color:var(--muted);"><?= htmlspecialchars(TrustScoreService::DISCLAIMER) ?></small>
             </div>
             <?php endif; ?>
             

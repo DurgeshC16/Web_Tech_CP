@@ -706,4 +706,54 @@ try {
     if ($api_file) @unlink($api_file);
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// Phase 4 — StudentStatsService (per-certificate verification visibility
+// for the student portal). Read-only aggregates, self-contained seeding.
+// ══════════════════════════════════════════════════════════════════════
+require_once __DIR__ . '/../src/services/StudentStatsService.php';
+$st_db = test_db();
+
+$st_db->beginTransaction();
+try {
+    $stTag = (string)time();
+    $st_db->prepare('INSERT INTO users (email, password_hash, role, is_verified)
+                     VALUES (:e, "x", "institution", 1)')->execute(['e' => "sts_$stTag@example.test"]);
+    $stUid = (int)$st_db->lastInsertId();
+    $st_db->prepare('INSERT INTO students (user_id, full_name) VALUES (:u, "Stats Student")')->execute(['u' => $stUid]);
+    $stSid = (int)$st_db->lastInsertId();
+
+    // One owned certificate; no verification traffic yet.
+    $st_db->prepare('INSERT INTO institutions (user_id, name, status) VALUES (:u, "Stats Uni", "approved")')->execute(['u' => $stUid]);
+    $stIid = (int)$st_db->lastInsertId();
+    $st_db->prepare('INSERT INTO certificates
+        (certificate_id, institution_id, student_id, title, issue_date, file_path, status, version)
+        VALUES ("CV-2026-830001", :iid, :sid, "Stats Score", "2026-03-03", "none.pdf", "active", 1)')
+        ->execute(['iid' => $stIid, 'sid' => $stSid]);
+    $stRowId = (int)$st_db->lastInsertId();
+
+    $stZero = StudentStatsService::perCertificate($st_db, $stSid);
+    t_check('student stats: unverified cert counts as 0', ($stZero[$stRowId]['verifications'] ?? -1) === 0);
+    $stZeroTotals = StudentStatsService::totals($st_db, $stSid);
+    t_check('student stats: totals zero when no logs', $stZeroTotals['verifications'] === 0
+        && $stZeroTotals['valid_hits'] === 0 && $stZeroTotals['last_at'] === null);
+
+    // Traffic: one VALID + one INVALID hit.
+    $st_db->prepare('INSERT INTO verification_logs
+        (query_type, query_value, certificate_id_found, result, detail, verifier_ip)
+        VALUES
+        ("certificate_id", "CV-2026-830001", "CV-2026-830001", "VALID", "student stats fixture", "192.0.2.7"),
+        ("certificate_id", "cv 2026 830001", "CV-2026-830001", "INVALID", "student stats fixture", "192.0.2.7")')
+        ->execute();
+    $stAfter = StudentStatsService::perCertificate($st_db, $stSid);
+    t_check('student stats: 2 logged attempts (1 VALID, 1 INVALID)',
+        ($stAfter[$stRowId]['verifications'] ?? -1) === 2
+        && ($stAfter[$stRowId]['valid_hits'] ?? -1) === 1);
+    t_check('student stats: last_at set after traffic', !empty($stAfter[$stRowId]['last_at']));
+    $stTotals = StudentStatsService::totals($st_db, $stSid);
+    t_check('student stats: totals match per-cert after traffic',
+        $stTotals['verifications'] === 2 && $stTotals['valid_hits'] === 1 && !empty($stTotals['last_at']));
+} finally {
+    $st_db->rollBack();
+}
+
 exit(t_summary('test_upload_validation') ? 0 : 1);
