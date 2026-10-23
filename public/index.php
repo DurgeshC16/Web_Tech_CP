@@ -67,9 +67,10 @@ $page_title = 'CertiVault — Verifiable digital certificates';
         <div class="container narrow">
             <h2>Smart verify</h2>
             <form method="POST" action="verify.php" class="card" id="smartVerifyFormIndex">
+                <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
                 <div class="form-group">
                     <label for="smart_id">Certificate ID, QR token or verification link</label>
-                    <input type="text" id="smart_id" name="smart_id" placeholder="Paste an ID (any format), a QR token, or a verification URL" data-validate="required" required>
+                    <input type="text" id="smart_id" name="smart_id" placeholder="Paste an ID (any format), a QR token, or a verification URL">
                     <small>Any format works, e.g. CV-2026-000001, cv20260001, a 43-character QR token, or a full verify link.</small>
                 </div>
                 <button type="submit" class="btn btn-primary">Smart Verify</button>

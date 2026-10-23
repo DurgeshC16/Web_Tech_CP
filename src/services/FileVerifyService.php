@@ -24,6 +24,20 @@ require_once __DIR__ . '/SmartVerifyService.php';
 
 class FileVerifyService
 {
+    /**
+     * True when the $_FILES entry represents an ACTUAL upload (any error
+     * code other than UPLOAD_ERR_NO_FILE). verify.php tests this BEFORE
+     * calling run(), so v_upload()'s "required" message can never fire
+     * for an omitted file — omitted file means the ID input carries the
+     * request (Smart Verify either/or).
+     */
+    public static function fileProvided($file): bool
+    {
+        return is_array($file)
+            && isset($file['error'])
+            && $file['error'] !== UPLOAD_ERR_NO_FILE;
+    }
+
     /** @return array candidate[] (empty when nothing actionable found) */
     public static function run($db, array $file): array
     {

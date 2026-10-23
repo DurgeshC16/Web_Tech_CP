@@ -66,6 +66,34 @@ class SmartVerifyService
      * @return array of ['type' => 'token'|'certificate_id'|'external_ref', 'value', 'issuer'?, 'reason'?, 'kind'?]
      *         (deduped, at most one token + one id + one external ref)
      */
+    public const SV_EITHER_OR_MSG = 'Enter a certificate ID or upload a certificate file.';
+
+    /**
+     * Smart Verify "either/or" planning (pure, no I/O — unit-testable).
+     * At least one of ID / file / hash must be present; when both ID and
+     * file/hash are provided the FILE result is consulted first and the
+     * ID becomes the fallback resolver.
+     *
+     * @return array{action:'either_or'|'id'|'file'|'file_first', message?:string, note?:string, fallback_to_id:bool}
+     */
+    public static function planVerifyInput(string $id, bool $hasFile, bool $hasHash): array
+    {
+        if (trim($id) === '' && !$hasFile && !$hasHash) {
+            return ['action' => 'either_or', 'message' => self::SV_EITHER_OR_MSG, 'fallback_to_id' => false];
+        }
+        if (trim($id) !== '' && ($hasFile || $hasHash)) {
+            return [
+                'action' => 'file_first',
+                'fallback_to_id' => true,
+                'note' => 'Both provided: checking the file first, then the ID.',
+            ];
+        }
+        if (trim($id) !== '') {
+            return ['action' => 'id', 'fallback_to_id' => false];
+        }
+        return ['action' => 'file', 'fallback_to_id' => false];
+    }
+
     public static function extractCandidates(string $text): array
     {
         $text = trim($text);

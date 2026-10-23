@@ -41,6 +41,32 @@ if (!empty($_GET['token'])) {
     $query_value = $_GET['token'];
 }
 
+// ── Smart Verify input normalization — either/or, at least one input ──
+// The ID box and the file field are ALTERNATIVES: exactly one, or both
+// (in which case the file counts first and the ID becomes the fallback).
+// Neither provided ⇒ one shared message, no red errors, no lookups.
+$sv_id_raw         = '';
+$sv_has_file       = FileVerifyService::fileProvided($_FILES['smart_file'] ?? null) && SMART_VERIFY_ENABLED;
+$sv_has_hash       = false;
+$sv_either_or      = null;   // set when NEITHER input was provided
+$sv_both_note      = null;   // set when BOTH ID and file/hash were provided
+$sv_fallback_to_id = false;  // set when the file stage was inconclusive
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['csrf_token']) && !isset($_FILES['qr_image'])) {
+    validate_csrf_token($_POST['csrf_token'] ?? '');
+    $sv_id_raw = trim((string)($_POST['smart_id'] ?? ''));
+    if ($sv_id_raw === '' && isset($_POST['certificate_id'])) {
+        // Legacy/quick-verify POST key — treated as the same ID input.
+        $sv_id_raw = trim((string)$_POST['certificate_id']);
+    }
+    $sv_has_hash = SMART_VERIFY_ENABLED && !empty($_POST['smart_hash']);
+    $plan = SmartVerifyService::planVerifyInput($sv_id_raw, $sv_has_file, $sv_has_hash);
+    if ($plan['action'] === 'either_or') {
+        $sv_either_or = $plan['message'];
+    } elseif ($plan['fallback_to_id']) {
+        $sv_both_note = $plan['note'];
+    }
+}
+
 // ── Smart Verify text pipeline (single input: ID, token, self-URL, issuer code) ──
 // Legacy identifiers keep working: certificate_id (index quick-verify) posts
 // straight through the same text pipeline below.
@@ -112,11 +138,120 @@ function sv_run_text_candidates($db, string $raw, string &$query_type, &$query_v
     return $local_misses_ids ? 'unresolved' : 'unresolved';
 }
 
-if (!empty($_POST['smart_id']) && SMART_VERIFY_ENABLED) {
-    $query_type  = $query_type ?: 'text';
-    $query_value = substr((string)$_POST['smart_id'], 0, 2048);
+// (The Smart Verify ID pipeline lives BELOW the file/hash stages so the
+// "both provided" order — file first, then ID — is enforced physically.)
+
+// ── Privacy-first client-side hash lookup (the FILE never leaves the device) ──
+$sv_via_hash = false;
+if ($query_type === null && $sv_has_hash
+    && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    validate_csrf_token($_POST['csrf_token'] ?? '');
+    $query_value = (string)$_POST['smart_hash'];
+    if (preg_match('/^[a-f0-9]{64}$/i', $query_value)) {
+        $sv_via_hash = true;
+        $query_type = 'file';
+        $found = FileVerifyService::findLocalByContentHash($db, $query_value);
+        if ($found) {
+            $cert = $found[0];
+        }
+    } else {
+        $query_value = '(malformed hash)';
+    }
+    if ($sv_both_note && $cert === null) {
+        // "Both provided" and the hash came up empty → the ID is the
+        // fallback. Reset the trail so the ID pipeline starts fresh.
+        $sv_fallback_to_id = true;
+        $sv_via_hash = false;
+        $query_type  = null;
+        $query_value = null;
+    }
+}
+
+// ── Smart Verify file pipeline (PDF/PNG/JPG/PNG-QR, max 5 MB) ──
+$sv_file_error = null;
+if ($query_type === null && $_SERVER['REQUEST_METHOD'] === 'POST'
+    && $sv_has_file && SMART_VERIFY_ENABLED) {
+    validate_csrf_token($_POST['csrf_token'] ?? '');
+    $query_type = 'file';
+    $query_value = '(file upload: ' . strtolower(pathinfo($_FILES['smart_file']['name'] ?? '', PATHINFO_EXTENSION)) . ')';
+    $outcome = FileVerifyService::run($db, $_FILES['smart_file']);
+
+    if (isset($outcome['__upload_error']) && $outcome['__upload_error'] !== true) {
+        $sv_file_error = $outcome['__upload_error'];
+        $verdict = 'INVALID';
+        $detail = $sv_file_error;
+        $query_value = '(file upload: rejected)';
+    } elseif (!empty($outcome['__cert'])) {
+        $cert = $outcome['__cert'];
+        $result = VerificationService::verify($db, $cert);
+        $verdict       = $result['verdict'];
+        $detail        = $result['detail'];
+        $superseded_by = $result['superseded_by'];
+        if (!empty($outcome['__resolved'])) {
+            $query_type = $outcome['__resolved']['query_type'];
+            $detail = ($detail ?: '') . ' [' . $outcome['__resolved']['stage'] . ']';
+        }
+    } elseif (isset($outcome['__upload_error'])) {
+        $sv_file_error = $outcome['__upload_error'];
+        $verdict = 'INVALID';
+        $detail = $sv_file_error;
+        $query_value = '(file upload: rejected)';
+    } elseif (!empty($outcome['__candidates']) && SMART_EXTERNAL_LINKS) {
+        $cand = $outcome['_candidates'][0];
+        $link = SmartVerifyService::buildIssuerLink($cand['issuer'] ?? '', $cand['value'] ?? '');
+        if (is_array($link)) {
+            $external_ref = ['issuer_label' => $link['label'], 'url' => $link['url'], 'code' => $cand['value']];
+            $query_type = 'external_ref';
+            $verdict = 'INVALID';
+            $detail = 'Not found in CertiVault. External reference found inside the file.';
+            $sv_tips = true;
+        } elseif ($sv_both_note) {
+            // "Both provided": candidates found but inconclusive → the ID
+            // is the fallback (reset the trail for the ID pipeline).
+            $sv_fallback_to_id = true;
+            $sv_tips = false;
+            $query_type  = null;
+            $query_value = null;
+        } else {
+            $verdict = 'INVALID';
+            $detail = 'No certificate found matching this file.';
+            $sv_tips = true;
+        }
+    } elseif ($sv_both_note) {
+        // "Both provided": file could NOT be resolved (no byte match,
+        // no QR decode, no usable text scan) → the ID is the fallback.
+        // Reset the trail so the ID pipeline starts fresh.
+        $sv_fallback_to_id = true;
+        $sv_tips = false;
+        $query_type  = null;
+        $query_value = null;
+    } else {
+        $verdict = 'INVALID';
+        $detail = 'No certificate found matching this file.';
+        $sv_tips = true;
+    }
+}
+
+// ── Smart Verify ID pipeline (ID, token, self-URL, issuer code) ──
+// Runs when the ID box carries the request. In the "both provided" case
+// this is the FALLBACK after an inconclusive file/hash stage: the file
+// result already ran first (see the file pipeline above) and came back
+// without a conclusion.
+if ($sv_id_raw !== '' && SMART_VERIFY_ENABLED
+    && ($query_type === null || $sv_fallback_to_id)) {
+    if ($sv_fallback_to_id) {
+        // Defensive reset of the inconclusive file/hash trail.
+        $query_type  = null;
+        $query_value = null;
+        $cert        = null;
+        $verdict     = null;
+        $detail      = null;
+        $sv_tips     = false;
+    }
+    $query_type   = $query_type ?: 'text';
+    $query_value  = substr($sv_id_raw, 0, 2048);
     $chosenIssuer = (string)($_POST['issuer'] ?? '');
-    $otherUrl = (string)($_POST['other_url'] ?? '');
+    $otherUrl     = (string)($_POST['other_url'] ?? '');
 
     $status = sv_run_text_candidates($db, $query_value, $query_type, $query_value, $cert, $external_ref);
 
@@ -152,81 +287,6 @@ if (!empty($_POST['smart_id']) && SMART_VERIFY_ENABLED) {
         $external_ref !== null
             ? ($detail = 'Not found in CertiVault. The external reference below is provided as a convenience only — CertiVault has not verified it.')
             : ($detail = 'No certificate found matching the provided identifier.');
-        $sv_tips = true;
-    }
-}
-
-// (b) Manual form POST with a Certificate ID (legacy/quick-verify path)
-if ($query_type === null && $_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['certificate_id'])) {
-    $query_type  = 'certificate_id';
-    $query_value = trim($_POST['certificate_id']);
-}
-
-// ── Privacy-first client-side hash lookup (the FILE never leaves the device) ──
-$sv_via_hash = false;
-if ($query_type === null && $_SERVER['REQUEST_METHOD'] === 'POST'
-    && !empty($_POST['smart_hash']) && SMART_VERIFY_ENABLED) {
-    validate_csrf_token($_POST['csrf_token'] ?? '');
-    $query_value = (string)$_POST['smart_hash'];
-    if (preg_match('/^[a-f0-9]{64}$/i', $query_value)) {
-        $sv_via_hash = true;
-        $query_type = 'file';
-        $found = FileVerifyService::findLocalByContentHash($db, $query_value);
-        if ($found) {
-            $cert = $found[0];
-        }
-    } else {
-        $query_value = '(malformed hash)';
-    }
-}
-
-// ── Smart Verify file pipeline (PDF/PNG/JPG/PNG-QR, max 5 MB) ──
-$sv_file_error = null;
-if ($query_type === null && $_SERVER['REQUEST_METHOD'] === 'POST'
-    && isset($_FILES['smart_file']) && ($_FILES['smart_file']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE
-    && SMART_VERIFY_ENABLED) {
-    validate_csrf_token($_POST['csrf_token'] ?? '');
-    $query_type = 'file';
-    $query_value = '(file upload: ' . strtolower(pathinfo($_FILES['smart_file']['name'] ?? '', PATHINFO_EXTENSION)) . ')';
-    $outcome = FileVerifyService::run($db, $_FILES['smart_file']);
-
-    if (isset($outcome['__upload_error']) && $outcome['__upload_error'] !== true) {
-        $sv_file_error = $outcome['__upload_error'];
-        $verdict = 'INVALID';
-        $detail = $sv_file_error;
-        $query_value = '(file upload: rejected)';
-    } elseif (!empty($outcome['__cert'])) {
-        $cert = $outcome['__cert'];
-        $result = VerificationService::verify($db, $cert);
-        $verdict       = $result['verdict'];
-        $detail        = $result['detail'];
-        $superseded_by = $result['superseded_by'];
-        if (!empty($outcome['__resolved'])) {
-            $query_type = $outcome['__resolved']['query_type'];
-            $detail = ($detail ?: '') . ' [' . $outcome['__resolved']['stage'] . ']';
-        }
-    } elseif (isset($outcome['__upload_error'])) {
-        $sv_file_error = $outcome['__upload_error'];
-        $verdict = 'INVALID';
-        $detail = $sv_file_error;
-        $query_value = '(file upload: rejected)';
-    } elseif (!empty($outcome['__candidates']) && SMART_EXTERNAL_LINKS) {
-        $cand = $outcome['_candidates'][0];
-        $link = SmartVerifyService::buildIssuerLink($cand['issuer'] ?? '', $cand['value'] ?? '');
-        if (is_array($link)) {
-            $external_ref = ['issuer_label' => $link['label'], 'url' => $link['url'], 'code' => $cand['value']];
-            $query_type = 'external_ref';
-            $verdict = 'INVALID';
-            $detail = 'Not found in CertiVault. External reference found inside the file.';
-            $sv_tips = true;
-        } else {
-            $verdict = 'INVALID';
-            $detail = 'No certificate found matching this file.';
-            $sv_tips = true;
-        }
-    } else {
-        $verdict = 'INVALID';
-        $detail = 'No certificate found matching this file.';
         $sv_tips = true;
     }
 }
@@ -285,7 +345,16 @@ if ($query_type !== null && $verdict === null && $cert === null) {
     $well_formed = true;
     if ($query_type === 'token') {
         $well_formed = (bool)preg_match('/^[A-Za-z0-9_-]{43}$/', $query_value);
-    } elseif (in_array($query_type, ['certificate_id', 'text'], true)) {
+    } elseif ($query_type === 'certificate_id') {
+        // Certificate IDs are the shorter primary identifiers: 3–40
+        // chars in the flexible set (letters, digits, spaces, - _ / .).
+        $t = trim((string)$query_value);
+        $well_formed = $t !== '' && mb_strlen($t) >= 3 && mb_strlen($t) <= 40
+            && (bool)preg_match('/^[A-Za-z0-9\-_\/. ]+$/', $t);
+    } elseif ($query_type === 'text') {
+        // Free-pasted Smart Verify text (single input box): same charset,
+        // still capped at 64 like before; unresolved URL-ish garbage
+        // fails the charset and reads as malformed.
         $t = trim((string)$query_value);
         $well_formed = $t !== '' && mb_strlen($t) <= 64
             && (bool)preg_match('/^[A-Za-z0-9\-_\/. ]+$/', $t);
@@ -293,7 +362,11 @@ if ($query_type !== null && $verdict === null && $cert === null) {
     if (!$well_formed) {
         $verdict = 'INVALID';
         $detail  = 'The provided identifier is malformed. Expected format: '
-            . ($query_type === 'token' ? 'a 43-character QR token.' : 'a certificate ID (letters, digits, spaces and - _ / ., max 64 chars).');
+            . ($query_type === 'token'
+                ? 'a 43-character QR token.'
+                : ($query_type === 'certificate_id'
+                    ? 'a certificate ID (letters, digits, spaces and - _ / ., 3 to 40 chars).'
+                    : 'a certificate ID (letters, digits, spaces and - _ / ., max 64 chars).'));
     }
 }
 
@@ -422,9 +495,9 @@ if ($query_type !== null) {
             <input type="hidden" name="MAX_FILE_SIZE" value="5242880">
 
             <div class="form-group">
-                <label for="smart_id">Certificate ID, QR token or verification link</label>
-                <input type="text" id="smart_id" name="smart_id" placeholder="Paste an ID (any format), a QR token, or a verification URL" data-validate="required" required>
-                <small>Any format works, e.g. CV-2026-000001, cv20260001, a 43-character QR token, or a full verify link.</small>
+                <label for="smart_id">Certificate ID, QR token or verification link (optional if you upload a file)</label>
+                <input type="text" id="smart_id" name="smart_id" placeholder="Paste an ID (any format), a QR token, or a verification URL">
+                <small>Any format works, e.g. CV-2026-000001, cv20260001, a 43-character QR token, or a full verify link. Enter at least one: the ID or the file below.</small>
             </div>
 
             <div class="form-group">
@@ -443,8 +516,8 @@ if ($query_type !== null) {
             </div>
 
             <div class="form-group">
-                <label for="smart_file">Certificate file (optional — PDF, PNG or JPG, max 5 MB)</label>
-                <input type="file" id="smart_file" name="smart_file" accept=".pdf,.png,.jpg,.jpeg" data-validate="upload:pdf,png,jpg,jpeg">
+                <label for="smart_file">Certificate file (optional if you entered an ID — PDF, PNG or JPG, max 5 MB)</label>
+                <input type="file" id="smart_file" name="smart_file" accept=".pdf,.png,.jpg,.jpeg" data-validate="upload_optional">
                 <small>Drop the certificate file here or pick it. We try byte match → QR decode → text scan, in that order.</small>
             </div>
 
@@ -460,6 +533,9 @@ if ($query_type !== null) {
         <?php endif; ?>
         <?php if ($sv_file_error !== null): ?>
             <p class="field-error" role="alert"><?= htmlspecialchars($sv_file_error) ?></p>
+        <?php endif; ?>
+        <?php if ($sv_either_or !== null): ?>
+            <p class="field-error" role="alert" style="text-align:center;"><?= htmlspecialchars($sv_either_or) ?></p>
         <?php endif; ?>
 
         <!-- ── QR camera scan (progressive enhancement; manual entry above always works) ── -->
@@ -641,6 +717,9 @@ if ($query_type !== null) {
                 <?= $verdict ?>
             </div>
             <p class="verdict-detail" style="text-align:center;"><?= htmlspecialchars($detail) ?></p>
+            <?php if ($sv_both_note !== null): ?>
+            <p style="text-align:center;color:var(--muted);font-size:0.9em;margin-top:6px;"><?= htmlspecialchars($sv_both_note) ?></p>
+            <?php endif; ?>
             <?php if ($sv_tips && $verdict === 'INVALID' && $external_ref === null): ?>
             <div style="max-width:480px;margin:14px auto 0;text-align:left;background:rgba(0,0,0,0.06);border-radius:8px;padding:12px 16px;">
                 <strong>Why not found?</strong>

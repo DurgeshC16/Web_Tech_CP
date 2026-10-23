@@ -756,4 +756,71 @@ try {
     $st_db->rollBack();
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// Smart Verify "either/or" input planning + no-file upload guards.
+// Decisions are injected inputs (no real files, no HTTP): the planner
+// decides WHICH pipeline runs and whether the ID is the fallback; the
+// fileProvided() guard decides whether v_upload() is ever reached.
+// ═══════════════════════════════════════════════════════════════════════
+
+$eo_msg = SmartVerifyService::SV_EITHER_OR_MSG;
+t_check('either/or: message constant matches shared copy',
+    $eo_msg === 'Enter a certificate ID or upload a certificate file.');
+
+// Neither input → one shared blocking message, no per-field errors.
+$p = SmartVerifyService::planVerifyInput('', false, false);
+t_check('either/or: neither → blocked with shared message',
+    $p['action'] === 'either_or' && ($p['message'] ?? '') === $eo_msg);
+$p = SmartVerifyService::planVerifyInput('   ', false, false);
+t_check('either/or: whitespace-only ID → blocked', $p['action'] === 'either_or');
+
+// ID only → ID pipeline, no fallback note.
+$p = SmartVerifyService::planVerifyInput('CV-2026-000001', false, false);
+t_check('either/or: ID only → id pipeline',
+    $p['action'] === 'id' && $p['fallback_to_id'] === false && !isset($p['note']));
+$p = SmartVerifyService::planVerifyInput('https://verify.example/verify.php?token=x', false, false);
+t_check('either/or: pasted link counts as ID', $p['action'] === 'id');
+
+// File / hash only → file pipeline (byte hash → QR → text scan order
+// lives inside FileVerifyService, covered above).
+$p = SmartVerifyService::planVerifyInput('', true, false);
+t_check('either/or: file only → file pipeline',
+    $p['action'] === 'file' && $p['fallback_to_id'] === false);
+$p = SmartVerifyService::planVerifyInput('', false, true);
+t_check('either/or: pending hash counts as file side',
+    $p['action'] === 'file' && $p['fallback_to_id'] === false);
+
+// Both → file/hash FIRST, ID as fallback, with the order note.
+$p = SmartVerifyService::planVerifyInput('CV-2026-000001', true, false);
+t_check('either/or: both (ID + file) → file first, ID fallback',
+    $p['action'] === 'file_first' && $p['fallback_to_id'] === true
+    && ($p['note'] ?? '') === 'Both provided: checking the file first, then the ID.');
+$p = SmartVerifyService::planVerifyInput('CV-2026-000001', false, true);
+t_check('either/or: both (ID + hash) → file first, ID fallback',
+    $p['action'] === 'file_first' && $p['fallback_to_id'] === true);
+
+// fileProvided(): verify.php gates run()/v_upload behind this guard, so
+// an omitted file can never yield the generic "required" message.
+t_check('either/or: null $_FILES entry not provided', FileVerifyService::fileProvided(null) === false);
+t_check('either/or: NO_FILE entry not provided',
+    FileVerifyService::fileProvided(['name' => '', 'error' => UPLOAD_ERR_NO_FILE]) === false);
+t_check('either/or: oversize error still counts as provided (specific error surfaces)',
+    FileVerifyService::fileProvided(['error' => UPLOAD_ERR_INI_SIZE]) === true);
+t_check('either/or: non-array input not provided', FileVerifyService::fileProvided('garbage') === false);
+
+// run() on injected error arrays (no real files created): too-large or
+// partial uploads surface their SPECIFIC messages — never "required".
+$outc = FileVerifyService::run(null, ['error' => UPLOAD_ERR_INI_SIZE, 'name' => 'big.pdf']);
+t_check('either/or: oversize upload → specific server-limit message',
+    is_string($outc['__upload_error'] ?? '')
+    && stripos($outc['__upload_error'], 'server upload limit') !== false
+    && stripos($outc['__upload_error'], 'required') === false);
+$outc = FileVerifyService::run(null, ['error' => UPLOAD_ERR_PARTIAL, 'name' => 'cut.pdf']);
+t_check('either/or: partial upload → specific partial message',
+    is_string($outc['__upload_error'] ?? '')
+    && stripos($outc['__upload_error'], 'partially uploaded') !== false);
+$outc = FileVerifyService::run(null, ['error' => UPLOAD_ERR_NO_FILE]);
+t_check('either/or: run() WOULD say required for NO_FILE (fileProvided() prevents it in prod)',
+    ($outc['__upload_error'] ?? '') === 'A certificate file is required.');
+
 exit(t_summary('test_upload_validation') ? 0 : 1);

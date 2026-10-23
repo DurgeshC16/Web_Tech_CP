@@ -17,6 +17,11 @@
     var FILE_OK_MIME = ['application/pdf', 'image/png', 'image/jpeg'];
     var FILE_MIN = 100;              // 100 bytes (mirrors v_upload())
     var FILE_MAX = 5 * 1024 * 1024;  // 5 MB
+    // Smart Verify "optional upload" rule: WEBP is decodable by the QR
+    // scanner client-side; the server still gives its own specific error
+    // when it cannot process a type.
+    var FILE_OK_EXT_OPTIONAL = ['pdf', 'png', 'jpg', 'jpeg', 'webp'];
+    var SV_EITHER_OR_MSG = 'Enter a certificate ID or upload a certificate file.';
 
     // ── Rule implementations (mirror src/utils/validators.php) ────────
     function ruleRequired(v) {
@@ -91,12 +96,29 @@
         if (f.size > FILE_MAX) return 'File size exceeds the 5MB limit.';
         return true;
     }
+    // Smart Verify only: no file chosen is NOT an error (either/or with the
+    // ID input). A chosen file still gets type + size checks.
+    function ruleUploadOptional(input) {
+        var f = input.files && input.files[0];
+        if (!f) return true;
+        var ext = (f.name.split('.').pop() || '').toLowerCase();
+        if (FILE_OK_EXT_OPTIONAL.indexOf(ext) === -1) return 'Only PDF, PNG, JPG, or WEBP files are allowed.';
+        if (f.type && f.type !== 'application/pdf' && f.type !== 'image/png' && f.type !== 'image/jpeg' && f.type !== 'image/webp') {
+            return 'File content does not match an allowed type (PDF, PNG, JPG, WEBP).';
+        }
+        if (f.size < FILE_MIN) return 'File appears to be empty or corrupted (minimum 100 bytes).';
+        if (f.size > FILE_MAX) return 'File size exceeds the 5MB limit.';
+        return true;
+    }
 
     // ── Validate one input against its data-validate rules ────────────
     function validateInput(input) {
         if (!input.dataset.validate) return true;
         if (input.type === 'file') {
-            var r0 = ruleUpload(input);
+            var rulesStr = input.dataset.validate;
+            var r0 = rulesStr.indexOf('upload_optional') !== -1
+                ? ruleUploadOptional(input)
+                : ruleUpload(input);
             setState(input, r0);
             return r0 === true;
         }
@@ -232,6 +254,63 @@
         input.parentNode.insertBefore(btn, ref);
     }
 
+    // ── Smart Verify either/or: at least one of ID / file must exist ──
+    function ensureFormMessage(form) {
+        var msg = form.parentNode.querySelector('[data-form-level-error]');
+        if (!msg) {
+            msg = document.createElement('p');
+            msg.setAttribute('data-form-level-error', '1');
+            msg.className = 'field-error';
+            msg.setAttribute('role', 'alert');
+            msg.setAttribute('aria-live', 'assertive');
+            msg.style.marginTop = '8px';
+            msg.style.width = '100%';
+            form.parentNode.insertBefore(msg, form.nextSibling);
+        }
+        return msg;
+    }
+    function setFormMessage(form, text) {
+        var msg = ensureFormMessage(form);
+        if (text) {
+            msg.textContent = text;
+            msg.style.display = 'block';
+        } else {
+            msg.textContent = '';
+            msg.style.display = 'none';
+        }
+    }
+    function attachEitherOr(form) {
+        var id = form.querySelector('[name="smart_id"]');
+        var file = form.querySelector('input[type="file"][name="smart_file"]');
+        if (!id || (form.id !== 'smartVerifyForm' && form.id !== 'smartVerifyFormIndex')) return;
+
+        function provided() {
+            var hasId = id && id.value.trim() !== '';
+            var hasFile = file && file.files && file.files.length > 0;
+            var hash = form.querySelector('[name="smart_hash"]');
+            return hasId || hasFile || !!(hash && hash.value);
+        }
+        // Clear the form-level message as soon as either field has a value.
+        function clearIfProvided() {
+            if (provided()) setFormMessage(form, '');
+        }
+        id.addEventListener('input', clearIfProvided);
+        if (file) file.addEventListener('change', clearIfProvided);
+
+        // Capture phase: runs before the shared per-field submit handler so
+        // a blocked request also skips the "disable submit button" step.
+        form.addEventListener('submit', function (e) {
+            form.dataset.svBlocked = '';
+            if (!provided()) {
+                // Block silently at field level: no red errors on the
+                // empty inputs — one shared message under the form.
+                form.dataset.svBlocked = '1';
+                e.preventDefault();
+                setFormMessage(form, SV_EITHER_OR_MSG);
+            }
+        }, true);
+    }
+
     document.addEventListener('DOMContentLoaded', function () {
         document.querySelectorAll('input[data-validate*="strong"]').forEach(attachMeter);
         document.querySelectorAll('input[type="password"]').forEach(function (input) { attachToggle(input); });
@@ -245,8 +324,15 @@
         });
 
         document.querySelectorAll('form').forEach(function (form) {
+            attachEitherOr(form);
             form.setAttribute('novalidate', 'novalidate');
             form.addEventListener('submit', function (e) {
+                // Either/or already blocked this submit — its own messages
+                // are shown; skip re-validation and the button-disable step.
+                if (form.dataset.svBlocked === '1') {
+                    form.dataset.svBlocked = '';
+                    return;
+                }
                 var ok = true;
                 form.querySelectorAll('[data-validate]').forEach(function (input) {
                     if (!validateInput(input)) ok = false;

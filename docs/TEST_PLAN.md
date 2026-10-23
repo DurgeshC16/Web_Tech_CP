@@ -31,7 +31,8 @@ Each case lists steps + expected result, and whether it has been verified by cod
 20. **REVOKED** — revoked cert → REVOKED (wins over expired *and* over tampered: status is server-authoritative). *verified e2e* evidenced by `verification_logs` rows VALID → TAMPERED → REVOKED for one QR token.
 21. **SUPERSEDED** — superseded cert → SUPERSEDED + link to current. *manual*
 22. **INVALID** — unknown ID, or malformed ID/token → INVALID, no DB hit for malformed. *verified*
-23. **Share-link expiry** — use an old share token → "This share link has expired." *manual*
+23. **Either/or inputs** — Smart Verify accepts an ID **or** a file: submitting with BOTH fields empty shows one shared message ("Enter a certificate ID or upload a certificate file.") under the form, no red per-field errors, and the button stays enabled; entering an ID clears the message; the file field keeps its specific error for other cases. With both provided, the file/hash pipeline resolves first and the ID is the fallback (note "Both provided: checking the file first, then the ID."). *verified* (CLI + live)
+24. **Share-link expiry** — use an old share token → "This share link has expired." *manual*
 
 ## Responsive check (four widths, touch emulation)
 24. **360 / 768 / 1024 / 1280** on index, login, verify, register_student, register_institution, forgot_password, share, student_dashboard, admin_dashboard, view_certificate_admin, view_certificate_student, audit_logs, super_admin, change_password, issue_certificate, revoke_certificate, supersede_certificate — headless Chromium with touch on, asserting per page-width: no document scroll past the viewport, no element clipped outside it, every button-like control ≥44px tall, every table inside `.table-wrap` (scrolls internally or stacked with `data-labels` ≤639px), `.form-row` single-column <768px. *verified 76/76 (plus a client-side `range` validator fix this run exposed: `(v + 0)` concatenated strings so every CAPTCHA failed — now `Number(v)`).* Text links inside sentences keep inline sizing (WCAG inline exception).
@@ -54,7 +55,7 @@ php tests/test_validators.php    # single suite (each file runs standalone)
 - `test_crypto.php` (8): RSA keygen, GCM encrypt/decrypt round trip,
   sign + verify, verify failure after a 1-byte hash change and with a
   wrong public key.
-- `test_upload_validation.php` (176 checks, single durable file after the
+- `test_upload_validation.php` (192 checks, single durable file after the
   sandbox-AV incident retired `test_validators.php`) now hosts:
   - the original `v_upload()` matrix (12);
   - the validator + flexible-ID lookup + verification-cascade suites
@@ -75,7 +76,14 @@ php tests/test_validators.php    # single suite (each file runs standalone)
     NOT_FOUND for unknown/empty/malformed, audit marker rows, per-IP
     429 rate limit, other IP unaffected;
   - student stats (Phase 4, 5): zero-log defaults, per-cert counts
-    (total + VALID hits), totals parity.
+    (total + VALID hits), totals parity;
+  - either/or input planning (new, 16): planner message copy, neither →
+    blocked, ID/link only → `id`, file/hash only → `file`, both →
+    `file_first` + `Both provided: checking the file first, then the
+    ID.` note, `FileVerifyService::fileProvided()` guards (null /
+    NO_FILE / non-array), and injected `run()` error arrays proving
+    oversize/partial uploads surface their SPECIFIC message — never the
+    generic "required".
 
   > NOTE (Windows AV): on machines with aggressive behavioral shields, this
   > file has been observed quarantined right after it runs (it writes temp

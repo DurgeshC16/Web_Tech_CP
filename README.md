@@ -297,8 +297,14 @@ source, set `EXT_OB_URL_TEMPLATE` and keep `EXT_SOURCE_ENABLED` true.
   token, full self-verification URL, QR-image upload, or the certificate
   FILE itself (PDF/PNG/JPG ≤5 MB) — plus a privacy toggle that hashes the
   file in the browser (`crypto.subtle`) so bytes never leave the device.
-  File matching falls back to the QR-stamped copy's hash and to QR/text
-  decoding; temp files are deleted in `finally` and never stored.
+  **Either/or inputs:** at least ONE of the ID box / file field must be
+  provided — submitting with neither shows the shared message "Enter a
+  certificate ID or upload a certificate file." (no per-field errors);
+  when BOTH are provided the file/hash pipeline resolves first and the
+  ID becomes the fallback ("Both provided: checking the file first, then
+  the ID."). File matching falls back to the QR-stamped copy's hash and
+  to QR/text decoding; temp files are deleted in `finally` and never
+  stored.
 - **Trust score** (`TrustScoreService`): a 0–100 rule-based score derived
   from the EXISTING checks only (exists 20 / hash 30 / signature 30 /
   not-expired 10 / not-revoked 10). A failed critical check (hash /
