@@ -13,6 +13,7 @@ require_once __DIR__ . '/../src/services/VerificationService.php';
 require_once __DIR__ . '/../src/services/ExternalSourceService.php';
 require_once __DIR__ . '/../src/services/SmartVerifyService.php';
 require_once __DIR__ . '/../src/services/FileVerifyService.php';
+require_once __DIR__ . '/../src/services/TrustScoreService.php';
 require_once __DIR__ . '/../src/utils/validators.php';
 require_once __DIR__ . '/../src/utils/helpers.php';
 require_once __DIR__ . '/../src/utils/qrdecoder/autoload.php';
@@ -609,6 +610,20 @@ if ($query_type !== null) {
         </script>
 
         <?php else: ?>
+        <?php
+        // ── Phase 2: rule-based trust score for local verdicts ──
+        // Read-only replay of VerificationService's own checks; the score
+        // can never contradict the verdict above.
+        $trusted = null;
+        if ($verdict !== 'INVALID') {
+            try {
+                $trusted = TrustScoreService::compute($db, $cert);
+            } catch (Throwable $trustError) {
+                error_log('[CertiVault] Trust score computation failed: ' . $trustError->getMessage());
+                $trusted = null;
+            }
+        }
+        ?>
         <!-- ── Verdict Display ───────────────────────────────────── -->
         <div class="verdict-wrap" style="text-align:center; margin-top:20px;">
             <?php
@@ -728,8 +743,53 @@ if ($query_type !== null) {
         <div style="text-align:center; margin-top:25px;">
             <a href="verify.php" class="btn">Verify Another Certificate</a>
         </div>
+            <?php endif; ?>
+        </div>
+
+        <?php if ($trusted && ($trusted['score'] ?? null) !== null): ?>
+        <?php
+        $score_int   = (int)$trusted['score'];
+        $gauge_angle = max(0, min(100, $score_int)) / 100.0 * 180.0;
+        $gauge_rad   = deg2rad(180.0 - $gauge_angle);
+        $gauge_x     = 55.0 + 47.0 * cos($gauge_rad);
+        $gauge_y     = 58.0 - 47.0 * sin($gauge_rad);
+        ?>
+        <div class="card trust-panel" style="margin-top:16px;">
+            <div style="display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;">
+                <svg width="110" height="66" viewBox="0 0 110 66" role="img" aria-label="Trust score gauge">
+                    <path d="M8 58 A47 47 0 0 1 102 58" fill="none" stroke="#e0e0e0" stroke-width="10"/>
+                    <path d="M8 58 A47 47 0 0 1 <?= number_format($gauge_x, 1, '.', '') ?> <?= number_format($gauge_y, 1, '.', '') ?>"
+                          fill="none" stroke="#c9a227" stroke-width="10"/>
+                </svg>
+                <div>
+                    <strong style="font-size:1.6em;"><?= $score_int ?></strong> / 100
+                    <p style="color:var(--muted); font-size:0.9em; margin-top:4px;">
+                        Rule-based score from CertiVault's existing checks.
+                    </p>
+                </div>
+            </div>
+            <ul style="margin:10px 0 0 20px; color:var(--muted);">
+                <?php foreach (($trusted['checks'] ?? []) as $check_row): ?>
+                <li style="margin-top:4px;">
+                    <span style="color:<?= $check_row['pass'] ? 'var(--verified)' : 'var(--danger)' ?>; font-weight:600;">
+                        <?= $check_row['pass'] ? '&#10003;' : '&#10007;' ?>
+                    </span>
+                    <?= htmlspecialchars((string)$check_row['label']) ?>
+                    <span>(<?= $check_row['pass'] ? '+' . (int)$check_row['points'] : 0 ?> / <?= (int)$check_row['points'] ?>)</span>
+                </li>
+                <?php endforeach; ?>
+            </ul>
+            <p style="color:var(--muted); font-size:0.85em; margin-top:10px;">
+                <?= htmlspecialchars(TrustScoreService::DISCLAIMER) ?>
+            </p>
+            <p style="margin-top:8px;">
+                <a class="btn btn-secondary" href="report.php?cert=<?= rawurlencode((string)$cert['certificate_id']) ?>">
+                    ⬇ Download verification report (PDF)
+                </a>
+            </p>
+        </div>
         <?php endif; ?>
-    </div>
+
     <script src="assets/js/validation.js"></script>
 </main>
 <?php require __DIR__ . '/../src/partials/footer.php'; ?>

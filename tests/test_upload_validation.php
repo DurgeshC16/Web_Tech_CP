@@ -469,4 +469,155 @@ try {
     if (isset($svTmpFile)) @unlink($svTmpFile);
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// Phase 2 — TrustScoreService (rule-based trust score) + ReportService
+// (dompdf verification report). No schema changes: safe to run directly.
+// ══════════════════════════════════════════════════════════════════════
+require_once __DIR__ . '/../src/services/TrustScoreService.php';
+require_once __DIR__ . '/../src/services/ReportService.php';
+$ts_db = test_db();
+
+// The public (non-transactional) test DB rows may be empty — everything so
+// far ran inside rolled-back transactions. Seed a self-contained family of
+// rows (active / expired / revoked / superseded / tampered) with REAL
+// hashes + signatures so the score expectations are exact.
+$ts_file = null;
+$ts_db->beginTransaction();
+try {
+    $tsTag = (string)time();
+    $ts_db->prepare('INSERT INTO users (email, password_hash, role, is_verified)
+                     VALUES (:e, "x", "institution", 1)')->execute(['e' => "ts_$tsTag@example.test"]);
+    $tsUser = (int)$ts_db->lastInsertId();
+    $ts_db->prepare('INSERT INTO students (user_id, full_name) VALUES (:u, "Trust Student")')->execute(['u' => $tsUser]);
+    $tsSid = (int)$ts_db->lastInsertId();
+
+    $tsPair = CryptoService::generateRSAKeyPair();
+    $ts_db->prepare('INSERT INTO institutions (user_id, name, status, public_key, encrypted_private_key)
+                     VALUES (:u, "Trust Score Uni", "approved", :pk, "")')
+        ->execute(['u' => $tsUser, 'pk' => $tsPair['public_key']]);
+    $tsIid = (int)$ts_db->lastInsertId();
+
+    // Harmless text fixture file under private_data/uploads/ (the ONLY way
+    // the hash check has real bytes to baseline against).
+    $ts_file = __DIR__ . '/../private_data/uploads/ts_fixture_' . $tsTag . '.pdf';
+    file_put_contents($ts_file, "%PDF-1.4\nTrust Score fixture $tsTag\n" . str_repeat('t', 100));
+
+    $ts_specs = [
+        'CV-2026-810001' => 'active',
+        'CV-2026-810002' => 'active',   // +past expiry_date => EXPIRED verdict
+        'CV-2026-810003' => 'revoked',
+        'CV-2026-810004' => 'superseded',
+        'CV-2026-810005' => 'active',   // +wrong stored hash => TAMPERED cap
+    ];
+    foreach ($ts_specs as $tsCid => $tsStatus) {
+        $tsCertData = [
+            'certificate_id' => $tsCid,
+            'institution_id' => $tsIid,
+            'student_id'     => $tsSid,
+            'title'          => 'TS Score',
+            'issue_date'     => '2026-01-01',
+            'expiry_date'    => $tsCid === 'CV-2026-810002' ? '2026-01-31' : null,
+        ];
+        $tsAbs = $ts_file;
+        $tsHash = CryptoService::computeCertificateHash($tsCertData, $tsAbs);
+        // TAMPERED row stores a wrong hash so the critical hash check fails.
+        $tsStoredHash = $tsCid === 'CV-2026-810005'
+            ? str_repeat('0', 64)
+            : $tsHash;
+        $tsSig = CryptoService::signCertificateHash($tsHash, $tsPair['private_key']);
+        $ts_db->prepare('INSERT INTO certificates
+            (certificate_id, institution_id, student_id, title, issue_date, expiry_date,
+             file_path, status, sha256_hash, digital_signature, version)
+            VALUES (:cid, :iid, :sid, "TS Score", "2026-01-01", :ed, :fp, :st, :h, :sig, 1)')
+            ->execute([
+                'cid' => $tsCid, 'iid' => $tsIid, 'sid' => $tsSid, 'ed' => $tsCertData['expiry_date'],
+                'fp' => basename($ts_file), 'st' => $tsStatus, 'h' => $tsStoredHash, 'sig' => $tsSig,
+            ]);
+    }
+
+    $ts_rows = $ts_db->prepare('
+        SELECT c.*, i.name AS institution_name, i.public_key, s.full_name AS student_name
+        FROM certificates c
+        JOIN institutions i ON c.institution_id = i.id
+        JOIN students s ON c.student_id = s.id
+        WHERE c.certificate_id LIKE "CV-2026-810%" ORDER BY c.id
+    ');
+    $ts_rows->execute();
+    $ts_all = $ts_rows->fetchAll();
+
+    t_check('trust: seeded 5 scoring rows', count($ts_all) === 5);
+
+    $ts_expect = [
+        'CV-2026-810001' => [100, 'VALID'],
+        'CV-2026-810002' => [90,  'EXPIRED'],
+        'CV-2026-810003' => [90,  'REVOKED'],
+        'CV-2026-810004' => [90,  'SUPERSEDED'],
+        'CV-2026-810005' => [40,  'TAMPERED'],
+    ];
+    foreach ($ts_all as $ts_row) {
+        $ts_trusted = TrustScoreService::compute($ts_db, $ts_row);
+        $ts_result  = VerificationService::verify($ts_db, $ts_row);
+        list($tsScore, $tsVerdict) = $ts_expect[$ts_row['certificate_id']];
+        t_check(
+            "trust: exact score {$ts_row['certificate_id']} = $tsScore",
+            $ts_trusted['score'] === $tsScore
+        );
+        t_check(
+            "trust: replay verdict = engine verdict ({$ts_row['certificate_id']})",
+            $ts_trusted['verdict'] === $tsVerdict && $ts_result['verdict'] === $tsVerdict
+        );
+        t_check(
+            "trust: 5 checks present ({$ts_row['certificate_id']})",
+            count($ts_trusted['checks']) === 5
+                && array_column($ts_trusted['checks'], 'id') === ['exists', 'status', 'hash', 'signature', 'expiry']
+        );
+        // Cap law: a critical failure (hash/signature/exists) never exceeds 40.
+        $tsCriticalFailed = false;
+        foreach ($ts_trusted['checks'] as $tsCheck) {
+            if ($tsCheck['critical'] && !$tsCheck['pass']) {
+                $tsCriticalFailed = true;
+            }
+        }
+        if ($tsCriticalFailed) {
+            t_check("trust: critical cap ({$ts_row['certificate_id']})", $ts_trusted['score'] <= 40);
+        }
+    }
+
+    // Report generation (dompdf installed via Composer in this workspace).
+    if (ReportService::dompdfAvailable() && count($ts_all) > 0) {
+        $tsCert    = $ts_all[0];
+        $tsTrusted = TrustScoreService::compute($ts_db, $tsCert);
+        $tsRes     = VerificationService::verify($ts_db, $tsCert);
+        $tsPdf     = ReportService::buildReportPdf($tsCert, $tsRes['detail'], $tsTrusted, $tsRes['superseded_by'] ?: null);
+        t_check('report: PDF generated with %PDF header', strncmp($tsPdf, '%PDF', 4) === 0);
+        t_check('report: PDF contains no key/block material', $tsPdf === ''
+            || (!str_contains($tsPdf, '-----BEGIN') && !str_contains($tsPdf, 'PRIVATE KEY')));
+        t_check('report: PDF substantial (verdict + QR embedded)', strlen($tsPdf) > 2000);
+    } else {
+        t_check('report: dompdf not installed (generate skipped)', true);
+        t_check('report: no-key check skipped', true);
+    }
+} finally {
+    $ts_db->rollBack();
+    if ($ts_file) @unlink($ts_file);
+}
+
+// Gauge arc: monotonic sweep across the semicircle; endpoints exact.
+$gaArc0 = ReportService::gaugeArc(0);
+$gaArc100 = ReportService::gaugeArc(100);
+t_check('gauge: score 0 is exact start of arc', preg_match('/^M8 58 A47 47 0 0 1 8\.0 58\.0$/', $gaArc0) === 1);
+t_check('gauge: score 100 reaches the arc end', str_contains($gaArc100, '102.0 58.0') || str_contains($gaArc100, '102.00 58.0'));
+$gaPrevX = null;
+$gaMonotonic = true;
+for ($gaS = 0; $gaS <= 100; $gaS += 5) {
+    if (preg_match('/0 0 1 ([\d.]+) ([\d.]+)$/', ReportService::gaugeArc($gaS), $gaM)) {
+        $gaX = (float)$gaM[1];
+        if ($gaPrevX !== null && $gaX < $gaPrevX) {
+            $gaMonotonic = false;
+        }
+        $gaPrevX = $gaX;
+    }
+}
+t_check('gauge: x sweeps monotonically with score', $gaMonotonic);
+
 exit(t_summary('test_upload_validation') ? 0 : 1);

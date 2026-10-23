@@ -1,0 +1,12 @@
+{
+  "require": {
+    "dompdf/dompdf": "^3.0",
+    "smalot/pdfparser": "^2.0"
+  },
+  "config": {
+    "platform": {
+      "php": "8.2.12"
+    }
+  },
+  "minimum-stability": "stable"
+}
