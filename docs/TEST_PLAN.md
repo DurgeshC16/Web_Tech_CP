@@ -54,15 +54,28 @@ php tests/test_validators.php    # single suite (each file runs standalone)
 - `test_crypto.php` (8): RSA keygen, GCM encrypt/decrypt round trip,
   sign + verify, verify failure after a 1-byte hash change and with a
   wrong public key.
-- `test_upload_validation.php` (12): `v_upload()` against mocked
-  `$_FILES` for every error code. `is_uploaded_file()` is false under
-  CLI by design, so the `UPLOAD_ERR_OK` happy path is asserted at its
-  guard message here and covered live by the multipart matrix below.
-- `test_flowchecks.php` (7): issues a certificate in an isolated
-  `certivault_test` database (auto-created, schema imported; override
-  with `CV_TEST_DB`) and asserts VALID → TAMPERED → REVOKED
-  (incl. revoked-wins-over-tampered) → EXPIRED → INVALID, then
-  removes its fixtures. The dev database is never touched.
+- `test_upload_validation.php` (176 checks, single durable file after the
+  sandbox-AV incident retired `test_validators.php`) now hosts:
+  - the original `v_upload()` matrix (12);
+  - the validator + flexible-ID lookup + verification-cascade suites
+    (moved from the retired files);
+  - external-source adapter coverage (35): SSRF-guard matrix, allow-list,
+    OpenBadges schema validation, + `ExternalSourceService::lookup`
+    against the demo sqlite;
+  - Smart Verify (Phase 1, 34): text classification, issuer-link
+    allow-list map, other-link SSRF guards, byte-hash/stamped-hash file
+    pipeline over runtime fixtures (temp dir only), unknown QR token
+    stays unresolved, external candidate can never carry a cert row;
+  - trust score (Phase 2, 15): exact scores for seeded
+    VALID/EXPIRED/REVOKED/SUPERSEDED/TAMPERED rows (100/90/90/90/40 =
+    critical cap), replay verdict == engine verdict, 5 checks present,
+    gauge arc math (endpoints exact, monotonic), dompdf PDF build
+    (%PDF magic, no key material);
+  - status API (Phase 3, 12): 200 happy path (public fields only),
+    NOT_FOUND for unknown/empty/malformed, audit marker rows, per-IP
+    429 rate limit, other IP unaffected;
+  - student stats (Phase 4, 5): zero-log defaults, per-cert counts
+    (total + VALID hits), totals parity.
 
   > NOTE (Windows AV): on machines with aggressive behavioral shields, this
   > file has been observed quarantined right after it runs (it writes temp
@@ -102,6 +115,28 @@ real MIME, ≤3 MB), deletes the temp file, and runs the same
 - [ ] 10 MB image → 3 MB rejection. *verified e2e*
 - [ ] Text file renamed `.png` → content-mismatch rejection. *verified e2e*
 - [ ] Drag-drop, paste-from-clipboard, preview, 360px overflow. *verified headless*
+
+## Trust score, report & status API (Phases 2–3, live)
+- [ ] Verify page (POST certificate_id): verdict seal + trust panel with
+      semicircular gauge, 5-check checklist and disclaimer; REVOKED seeded
+      row scored 30/100 (critical hash failure caps, status lost). *verified e2e*
+- [ ] `report.php?cert=…` → `application/pdf`, `%PDF` magic, ~29 KB;
+      report shows verdict, score/checks, cert fields, SHA-256, live-verify
+      QR; no keys/tokens/file paths. *verified e2e*
+- [ ] Report rate limit: 6th download within 10 min → HTTP 429 page. *verified in prod*
+- [ ] `api_status.php?certificate_id=…` → JSON 200 with verdict/detail/
+      public cert fields/trust score; unknown id → JSON 404 NOT_FOUND. *verified e2e*
+- [ ] Status API obeys `CV_API_ENABLED=0` (403 `api_disabled`). *unit-gated*
+- [ ] Audit logs: transparency summary strip renders outcome-mix counts +
+      top non-VALID reasons. *verified e2e*
+
+## Student portal visibility (Phase 4, live)
+- [ ] Dashboard "Verification activity" strip (total checks / VALID seals /
+      last check) + per-card "Verified N× · last …". *verified e2e*
+- [ ] Certificate detail: trust score card (100/100, 5 ✓ checks) +
+      "Verification report (PDF)" button → PDF. *verified e2e*
+- [ ] 360 px viewport (real browser): no horizontal overflow on verify
+      panel, student dashboard, certificate detail; trust panel wraps. *verified headless*
 - [ ] `private_data/uploads/` gains no files from image uploads. *verified e2e*
 
 ## Validator checklist (server is source of truth, client is UX only)
