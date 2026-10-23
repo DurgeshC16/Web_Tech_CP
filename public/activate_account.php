@@ -27,7 +27,7 @@ if (!empty($_SESSION['otp_send_failed'])) {
     $error = "We couldn't send the verification email right now. Please try again in a minute using 'Resend verification code'.";
     unset($_SESSION['otp_send_failed']);
 } elseif (!empty($_SESSION['otp_smtp_unconfigured'])) {
-    $error = 'Email delivery is not set up on this server. Contact the administrator.';
+    $error = smtp_not_configured_message();
     unset($_SESSION['otp_smtp_unconfigured']);
 } elseif (!empty($_SESSION['otp_cooldown_seconds'])) {
     $sec = (int)$_SESSION['otp_cooldown_seconds'];
@@ -52,7 +52,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($otp_result === 'limit') {
             $error = 'Too many codes requested. Please try again later.';
         } elseif ($otp_result === 'smtp_not_configured') {
-            $error = 'Email delivery is not set up on this server. Contact the administrator.';
+            $error = smtp_not_configured_message();
         } else {
             $error = "We couldn't send the verification email right now. Please try again in a minute.";
         }

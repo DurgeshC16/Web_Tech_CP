@@ -48,6 +48,45 @@ $stage_ok = function ($label, $ok, $detail = '') use (&$failures) {
 
 // ── 1. Configuration present ────────────────────────────────────────
 echo "CertiVault SMTP diagnostic\n==========================\n";
+
+// Where each SMTP value came from — the local override file wins over
+// environment variables, which win over config.php defaults. The
+// password itself is NEVER printed, only its source and set/empty state.
+function smtp_config_source(string $const, string $local_src): string
+{
+    if ($local_src !== ''
+        && preg_match('/^\s*define\(\s*[\'"]' . preg_quote($const, '/') . '[\'"]\s*,/mi', $local_src)) {
+        return 'local file (config.local.php)';
+    }
+    $env = getenv($const);
+    if ($env !== false && trim((string)$env) !== '') {
+        return "env var $const";
+    }
+    return 'default (config.php fallback)';
+}
+$sv_local_raw = '';
+$sv_local_path = __DIR__ . '/../src/config/config.local.php';
+if (is_file($sv_local_path)) {
+    $sv_local_raw = (string)file_get_contents($sv_local_path);
+}
+echo "Value sources:" . PHP_EOL;
+foreach (['SMTP_HOST', 'SMTP_PORT', 'SMTP_USERNAME', 'SMTP_PASSWORD', 'SMTP_ENCRYPTION', 'SMTP_FROM_EMAIL', 'SMTP_FROM_NAME'] as $sv_c) {
+    $sv_hidden = $sv_c === 'SMTP_PASSWORD';
+    $sv_val = constant($sv_c);
+    $sv_shown = $sv_hidden
+        ? (trim((string)$sv_val) !== '' ? '(set — hidden)' : '(empty)')
+        : (trim((string)$sv_val) === '' ? '(empty)' : $sv_val);
+    echo sprintf(
+        '  %-16s %-28s <- %s',
+        $sv_c, (string)$sv_shown, smtp_config_source($sv_c, $sv_local_raw)
+    ) . PHP_EOL;
+}
+if (!is_file($sv_local_path)) {
+    echo '  NOTE: src/config/config.local.php does not exist — copy '
+        . 'config.local.php.example there and fill in SMTP_USERNAME / '
+        . 'SMTP_PASSWORD (Gmail App Password).' . PHP_EOL;
+}
+
 $stage_ok(
     '1. configuration present',
     smtp_configured(),

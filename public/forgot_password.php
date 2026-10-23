@@ -17,7 +17,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Checked before the user lookup so the error itself reveals nothing
     // about whether an account exists.
     if (!smtp_configured() && !otp_dev_logging_enabled()) {
-        $error = 'Email delivery is not set up on this server. Contact the administrator.';
+        $error = smtp_not_configured_message();
     } elseif (!validate_captcha($errors)) {
         $error = 'Please correct the highlighted fields below.';
     } else {

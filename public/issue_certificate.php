@@ -120,7 +120,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     } elseif ($otp_result === 'limit') {
                         throw new ActivationGate('This student has not activated their account yet, and too many activation codes were requested. Please try again later, after the student activates.');
                     } elseif ($otp_result === 'smtp_not_configured') {
-                        throw new ActivationGate('This student has not activated their account yet, and email delivery is not set up on this server. Contact the administrator.');
+                        throw new ActivationGate('This student has not activated their account yet. ' . smtp_not_configured_message());
                     } else {
                         throw new ActivationGate("This student has not activated their account yet, and we couldn't send the activation email right now. Please try again in a minute.");
                     }

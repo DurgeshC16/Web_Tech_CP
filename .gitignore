@@ -8,3 +8,4 @@ private_data/external_source/*
 private_data/cache/external/*
 .rnd
 src/config/config.local.php
+private_data/dev_mail.log

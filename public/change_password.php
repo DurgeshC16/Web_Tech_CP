@@ -63,7 +63,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 } elseif ($otp_result === 'limit') {
                     $error = 'Too many codes requested. Please try again later.';
                 } elseif ($otp_result === 'smtp_not_configured') {
-                    $error = 'Email delivery is not set up on this server. Contact the administrator.';
+                    $error = smtp_not_configured_message();
                 } else {
                     $error = "We couldn't send the verification email right now. Please try again in a minute.";
                 }

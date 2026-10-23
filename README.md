@@ -74,6 +74,33 @@ users will not be able to receive verification codes and complete account
 activation. Use `php scripts/test_smtp.php someone@example.com` to verify
 your SMTP setup before running the application.
 
+## Email setup (Gmail App Password)
+
+1. Copy the local override file (it is gitignored — credentials never get
+   committed):
+   ```
+   copy src\config\config.local.php.example src\config\config.local.php
+   ```
+2. Fill in these values in `src/config/config.local.php`:
+   - `SMTP_USERNAME` — your full Gmail address, e.g. `you@gmail.com`
+   - `SMTP_PASSWORD` — a **16-character App Password** (NOT your Gmail
+     login password; generate one at <https://myaccount.google.com/apppasswords>
+     after enabling 2-Step Verification)
+   - `SMTP_FROM_EMAIL` — the same Gmail address
+   (`SMTP_HOST`/`SMTP_PORT`/`SMTP_ENCRYPTION` ship as
+   `smtp.gmail.com`/`587`/`tls` and need no change.)
+3. Verify: `php scripts/test_smtp.php you@gmail.com` — it also prints
+   which source every SMTP value came from (local file, env var or default);
+   the password is never shown.
+4. Restart Apache if it was already running.
+
+Without credentials the app shows "Email delivery is not set up on this
+server. Contact the administrator." (when `CV_DEBUG=true` on a dev server,
+the message instead points at `config.local.php` and the offline
+`private_data/dev_mail.log` fallback). `config.local.php` values win over
+env vars, which win over the `config.php` defaults. In production set real
+env vars instead.
+
 ## Email troubleshooting — OTP / activation emails don't arrive
 
 The SMTP diagnostic prints PASS/FAIL for every stage of the email path

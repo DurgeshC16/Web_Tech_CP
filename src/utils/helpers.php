@@ -738,6 +738,23 @@ function smtp_configured() {
 }
 
 /**
+ * The user-facing message for 'smtp_not_configured'.
+ * Developers get an actionable hint instead of the end-user text — but
+ * only OUTSIDE production (CV_ENV=production always shows the neutral
+ * wording, even with CV_DEBUG on, so hints about local files and the
+ * plaintext dev log can never leak into a real deployment).
+ *
+ * @return string  Ready-to-display error message.
+ */
+function smtp_not_configured_message() {
+    if (getenv('CV_ENV') !== 'production' && defined('CV_DEBUG') && CV_DEBUG === true) {
+        return 'SMTP is not configured. Fill SMTP_USERNAME and SMTP_PASSWORD in '
+            . 'src/config/config.local.php, or read the code in private_data/dev_mail.log.';
+    }
+    return 'Email delivery is not set up on this server. Contact the administrator.';
+}
+
+/**
  * Development fallback switch: CV_DEBUG=true or CV_DEV_SHOW_OTP defined.
  * NEVER active when CV_ENV=production, so the plaintext-code log below can
  * never leak in a production deployment. Iterating locally without SMTP:
@@ -1050,6 +1067,16 @@ function verify_otp($db, $user_id, $purpose, $code) {
  * @return bool              True if sent, false on failure.
  */
 function send_notification_email($to_email, $subject, $heading, $body_text) {
+    // SMTP not configured: record the would-be delivery in the dev log
+    // BEFORE any send attempt (there is nothing to attempt without
+    // credentials), so notification flows are testable offline too.
+    if (!smtp_configured()) {
+        error_log('CertiVault notification email: SMTP is not configured — cannot notify ' . $to_email . '.');
+        if (otp_dev_logging_enabled()) {
+            otp_dev_log($to_email, 'notification (' . $subject . ')', $heading, 'SMTP not configured — dev fallback');
+        }
+        return false;
+    }
     try {
         $mail = create_smtp_mailer();
         $mail->setFrom(SMTP_FROM_EMAIL, SMTP_FROM_NAME);
