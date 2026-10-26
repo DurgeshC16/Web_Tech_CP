@@ -19,6 +19,7 @@ if (!getenv('OPENSSL_CONF') && file_exists('C:\\xampp\\php\\extras\\openssl\\ope
 
 require_once __DIR__ . '/../src/config/Database.php';
 require_once __DIR__ . '/../src/services/CryptoService.php';
+require_once __DIR__ . '/../src/services/TransparencyLogService.php';
 require_once __DIR__ . '/../src/services/QRService.php';
 
 const DEMO_INST_EMAIL = 'demo.institution@certivault.test';
@@ -47,8 +48,11 @@ if (!$inst_user_id) {
     // Same key generation/encryption as super_admin.php's approval flow.
     $keys = CryptoService::generateRSAKeyPair();
     $encryptedPriv = CryptoService::encryptPrivateKey($keys['private_key']);
-    $stmt = $db->prepare("INSERT INTO institutions (user_id, name, status, public_key, encrypted_private_key) VALUES (:uid, :name, 'approved', :pub, :priv)");
-    $stmt->execute(['uid' => $inst_user_id, 'name' => 'Demo Institute of Technology', 'pub' => $keys['public_key'], 'priv' => $encryptedPriv]);
+    $stmt = $db->prepare("INSERT INTO institutions (user_id, name, status) VALUES (:uid, :name, 'approved')");
+    $stmt->execute(['uid' => $inst_user_id, 'name' => 'Demo Institute of Technology']);
+    $institution_id = (int)$db->lastInsertId();
+    $keyInsert=$db->prepare('INSERT INTO institution_keys (institution_id,key_id,public_key,encrypted_private_key,status,valid_from) VALUES (:iid,1,:pub,:priv,"active",NOW())');
+    $keyInsert->execute(['iid'=>$institution_id,'pub'=>$keys['public_key'],'priv'=>$encryptedPriv]);
     echo "[+] Created demo institution (user id $inst_user_id)\n";
 } else {
     echo "[=] Demo institution already exists (user id $inst_user_id)\n";
@@ -62,12 +66,25 @@ if (!$institution_id) {
     // — finish the same "approval" provisioning here.
     $keys = CryptoService::generateRSAKeyPair();
     $encryptedPriv = CryptoService::encryptPrivateKey($keys['private_key']);
-    $stmt = $db->prepare("INSERT INTO institutions (user_id, name, status, public_key, encrypted_private_key) VALUES (:uid, :name, 'approved', :pub, :priv)");
-    $stmt->execute(['uid' => $inst_user_id, 'name' => 'Demo Institute of Technology', 'pub' => $keys['public_key'], 'priv' => $encryptedPriv]);
+    $stmt = $db->prepare("INSERT INTO institutions (user_id, name, status) VALUES (:uid, :name, 'approved')");
+    $stmt->execute(['uid' => $inst_user_id, 'name' => 'Demo Institute of Technology']);
     $institution_id = $db->lastInsertId();
+    $keyInsert=$db->prepare('INSERT INTO institution_keys (institution_id,key_id,public_key,encrypted_private_key,status,valid_from) VALUES (:iid,1,:pub,:priv,"active",NOW())');
+    $keyInsert->execute(['iid'=>$institution_id,'pub'=>$keys['public_key'],'priv'=>$encryptedPriv]);
     echo "[+] Created missing institution row for existing user\n";
 } else {
     $institution_id = (int)$institution_id;
+}
+
+$activeKeyStmt=$db->prepare('SELECT key_id FROM institution_keys WHERE institution_id=:iid AND status="active" ORDER BY key_id DESC LIMIT 1');
+$activeKeyStmt->execute(['iid'=>$institution_id]);
+if ($activeKeyStmt->fetchColumn() === false) {
+    $keys=CryptoService::generateRSAKeyPair();
+    $encryptedPriv=CryptoService::encryptPrivateKey($keys['private_key']);
+    $maxStmt=$db->prepare('SELECT COALESCE(MAX(key_id),0)+1 FROM institution_keys WHERE institution_id=:iid');
+    $maxStmt->execute(['iid'=>$institution_id]); $keyId=(int)$maxStmt->fetchColumn();
+    $db->prepare('INSERT INTO institution_keys (institution_id,key_id,public_key,encrypted_private_key,status,valid_from) VALUES (:iid,:kid,:pub,:priv,"active",NOW())')
+       ->execute(['iid'=>$institution_id,'kid'=>$keyId,'pub'=>$keys['public_key'],'priv'=>$encryptedPriv]);
 }
 
 // ── 2. Demo student ─────────────────────────────────────────────────
@@ -143,17 +160,19 @@ function issue_cert($db, $institution_id, $student_id, $title, $issue_date, $exp
     ];
     $sha256_hash = CryptoService::computeCertificateHash($certData, $destination);
 
-    $stmt = $db->prepare('SELECT encrypted_private_key FROM institutions WHERE id = :id');
+    $stmt = $db->prepare('SELECT key_id,encrypted_private_key FROM institution_keys WHERE institution_id = :id AND status="active" ORDER BY key_id DESC LIMIT 1');
     $stmt->execute(['id' => $institution_id]);
-    $privateKey = CryptoService::decryptPrivateKey($stmt->fetchColumn());
+    $activeKey=$stmt->fetch(PDO::FETCH_ASSOC);
+    $privateKey = CryptoService::decryptPrivateKey($activeKey['encrypted_private_key'] ?? '');
     $digital_signature = CryptoService::signCertificateHash($sha256_hash, $privateKey);
 
-    $stmt = $db->prepare('INSERT INTO certificates (certificate_id, institution_id, student_id, title, issue_date, expiry_date, file_path, status, version, qr_token, sha256_hash, digital_signature) VALUES (:cid, :iid, :sid, :title, :issue, :expiry, :path, "active", 1, :qr, :hash, :sig)');
+    $stmt = $db->prepare('INSERT INTO certificates (certificate_id, institution_id, key_id, student_id, title, issue_date, expiry_date, file_path, status, version, qr_token, sha256_hash, digital_signature) VALUES (:cid, :iid, :key_id, :sid, :title, :issue, :expiry, :path, "active", 1, :qr, :hash, :sig)');
     $stmt->execute([
-        'cid' => $cert_id, 'iid' => $institution_id, 'sid' => $student_id,
+        'cid' => $cert_id, 'iid' => $institution_id, 'key_id'=>(int)$activeKey['key_id'], 'sid' => $student_id,
         'title' => $title, 'issue' => $issue_date, 'expiry' => $expiry_date ?: null,
         'path' => $filename, 'qr' => $qr_token, 'hash' => $sha256_hash, 'sig' => $digital_signature,
     ]);
+    TransparencyLogService::append($db,$cert_id,'ISSUE');
 
     return ['id' => (int)$db->lastInsertId(), 'certificate_id' => $cert_id, 'qr_token' => $qr_token, 'version' => 1];
 }
@@ -199,6 +218,7 @@ $status = $stmt->fetchColumn();
 if ($status !== 'revoked') {
     $stmt = $db->prepare('UPDATE certificates SET status = "revoked", revocation_reason = :r WHERE id = :id');
     $stmt->execute(['r' => 'Seeded demo data — revoked for testing.', 'id' => $found['id']]);
+    TransparencyLogService::append($db,(string)$found['certificate_id'],'REVOKE');
     echo "[+] Revoked: $title\n";
 }
 $seeded[] = ['cert' => $found, 'expected' => 'REVOKED'];
@@ -234,22 +254,25 @@ if (!$v2) {
         'expiry_date' => null,
     ];
     $sha256_hash = CryptoService::computeCertificateHash($certData, $destination);
-    $stmt = $db->prepare('SELECT encrypted_private_key FROM institutions WHERE id = :id');
+    $stmt = $db->prepare('SELECT key_id,encrypted_private_key FROM institution_keys WHERE institution_id = :id AND status="active" ORDER BY key_id DESC LIMIT 1');
     $stmt->execute(['id' => $institution_id]);
-    $privateKey = CryptoService::decryptPrivateKey($stmt->fetchColumn());
+    $activeKey=$stmt->fetch(PDO::FETCH_ASSOC);
+    $privateKey = CryptoService::decryptPrivateKey($activeKey['encrypted_private_key'] ?? '');
     $digital_signature = CryptoService::signCertificateHash($sha256_hash, $privateKey);
 
-    $stmt = $db->prepare('INSERT INTO certificates (certificate_id, institution_id, student_id, title, issue_date, expiry_date, file_path, status, version, previous_version_id, qr_token, sha256_hash, digital_signature) VALUES (:cid, :iid, :sid, :title, :issue, NULL, :path, "active", :ver, :prev, :qr, :hash, :sig)');
+    $stmt = $db->prepare('INSERT INTO certificates (certificate_id, institution_id, key_id, student_id, title, issue_date, expiry_date, file_path, status, version, previous_version_id, qr_token, sha256_hash, digital_signature) VALUES (:cid, :iid, :key_id, :sid, :title, :issue, NULL, :path, "active", :ver, :prev, :qr, :hash, :sig)');
     $stmt->execute([
-        'cid' => $new_cert_id, 'iid' => $institution_id, 'sid' => $student_id,
+        'cid' => $new_cert_id, 'iid' => $institution_id, 'key_id'=>(int)$activeKey['key_id'], 'sid' => $student_id,
         'title' => $title, 'issue' => $issue_date, 'path' => $filename,
         'ver' => $new_version, 'prev' => $v1['id'], 'qr' => $qr_token,
         'hash' => $sha256_hash, 'sig' => $digital_signature,
     ]);
+    TransparencyLogService::append($db,$new_cert_id,'ISSUE');
     $new_db_id = $db->lastInsertId();
 
     $stmt = $db->prepare('UPDATE certificates SET status = "superseded", superseded_by_id = :new WHERE id = :old');
     $stmt->execute(['new' => $new_db_id, 'old' => $v1['id']]);
+    TransparencyLogService::append($db,(string)$v1['certificate_id'],'SUPERSEDE');
 
     $v2 = ['id' => (int)$new_db_id, 'certificate_id' => $new_cert_id, 'qr_token' => $qr_token, 'version' => 2];
     echo "[+] Superseded v1 -> v2: $title\n";

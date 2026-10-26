@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../src/config/Database.php';
 require_once __DIR__ . '/../src/utils/helpers.php';
+require_once __DIR__ . '/../src/services/TransparencyLogService.php';
 require_role('admin');
 require_approved_institution();
 
@@ -44,17 +45,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error)) {
     if (!empty($errors)) {
         $error = 'Please correct the highlighted fields below.';
     } else {
-        $stmt = $db->prepare('UPDATE certificates SET status = "revoked", revocation_reason = :reason, revoked_at = :revoked_at, revoked_by = :revoked_by WHERE id = :id');
-        $stmt->execute([
-            'reason' => $reason,
-            'id' => $cert_db_id,
-            'revoked_at' => date('Y-m-d H:i:s'),
-            'revoked_by' => $_SESSION['user_id'],
-        ]);
-        $success = "Certificate {$cert['certificate_id']} has been revoked.";
-        // Refresh cert data
-        $cert['status'] = 'revoked';
-        $cert['revocation_reason'] = $reason;
+        try {
+            $db->beginTransaction();
+            $stmt = $db->prepare('UPDATE certificates SET status = "revoked", revocation_reason = :reason, revoked_at = :revoked_at, revoked_by = :revoked_by WHERE id = :id AND institution_id=:iid AND status IN ("active","expired")');
+            $stmt->execute([
+                'reason' => $reason,
+                'id' => $cert_db_id,
+                'iid' => $institution_id,
+                'revoked_at' => date('Y-m-d H:i:s'),
+                'revoked_by' => $_SESSION['user_id'],
+            ]);
+            if ($stmt->rowCount() !== 1) throw new RuntimeException('Certificate status changed before revocation.');
+            TransparencyLogService::append($db, (string)$cert['certificate_id'], 'REVOKE');
+            $db->commit();
+            $success = "Certificate {$cert['certificate_id']} has been revoked.";
+            $cert['status'] = 'revoked';
+            $cert['revocation_reason'] = $reason;
+        } catch (Throwable $e) {
+            if ($db->inTransaction()) $db->rollBack();
+            error_log('[CertiVault] Certificate revocation failed: ' . $e->getMessage());
+            $error = 'Certificate could not be revoked. Please retry or contact the administrator.';
+        }
     }
 }
 ?>

@@ -18,8 +18,8 @@ $cert = require_owned_certificate(
     $cert_id,
     'student',
     $student_id,
-    'c.*, i.name as institution_name, i.public_key',
-    'JOIN institutions i ON c.institution_id = i.id'
+    'c.*, i.name as institution_name, ik.public_key, ik.status AS signing_key_status',
+    'JOIN institutions i ON c.institution_id = i.id LEFT JOIN institution_keys ik ON ik.institution_id = c.institution_id AND ik.key_id = c.key_id'
 );
 
 // Phase 4: same rule-based trust score the public verifier sees.

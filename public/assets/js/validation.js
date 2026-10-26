@@ -141,6 +141,13 @@
             switch (rule) {
                 case 'required': result = ruleRequired(v); break;
                 case 'email': result = ruleEmail(v.trim()); break;
+                case 'json':
+                    try {
+                        var parsedJson = JSON.parse(v);
+                        result = parsedJson && typeof parsedJson === 'object' && !Array.isArray(parsedJson)
+                            ? true : 'Configuration must be a JSON object.';
+                    } catch (jsonError) { result = 'Configuration must be valid JSON.'; }
+                    break;
                 case 'number': result = ruleNumber(v); break;
                 case 'strong': result = ruleStrong(v); break;
                 case 'otp': result = ruleOtp(v); break;

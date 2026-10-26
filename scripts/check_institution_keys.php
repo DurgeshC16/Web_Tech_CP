@@ -18,7 +18,7 @@ require_once __DIR__ . '/../src/config/Database.php';
 require_once __DIR__ . '/../src/services/CryptoService.php';
 
 $db = Database::getInstance();
-$stmt = $db->query('SELECT id, name, status, public_key, encrypted_private_key FROM institutions ORDER BY id');
+$stmt = $db->query('SELECT i.id,i.name,i.status,k.key_id,k.status AS key_status,k.public_key,k.encrypted_private_key FROM institutions i LEFT JOIN institution_keys k ON k.institution_id=i.id ORDER BY i.id,k.key_id');
 $rows = $stmt->fetchAll();
 
 if (!$rows) {
@@ -49,8 +49,9 @@ foreach ($rows as $row) {
     $countStmt->execute(['id' => $row['id']]);
     $certCount = (int)$countStmt->fetchColumn();
 
-    echo "id={$row['id']} name=" . str_replace("\n", ' ', $row['name']) . " status={$row['status']}\n";
+    echo "id={$row['id']} name=" . str_replace("\n", ' ', $row['name']) . " status={$row['status']} key=v" . (int)($row['key_id'] ?? 0) . ' ' . ($row['key_status'] ?? 'missing') . "\n";
     echo "  public_key_present=" . ($hasPublic ? 'true' : 'false') . " length=" . ($hasPublic ? strlen($row['public_key']) : 0) . "\n";
+    if ($hasPublic) echo '  fingerprint_sha256=' . CryptoService::fingerprintPublicKey($row['public_key']) . "\n";
     echo "  encrypted_private_key_present=" . ($hasEncrypted ? 'true' : 'false') . " length=" . ($hasEncrypted ? strlen($row['encrypted_private_key']) : 0) . "\n";
     echo "  private_key_decrypts=" . ($decrypts ? 'true' : 'false') . "\n";
     echo "  private_key_matches_public=" . ($matches ? 'true' : 'false') . "\n";

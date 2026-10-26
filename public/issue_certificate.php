@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../src/config/Database.php';
 require_once __DIR__ . '/../src/utils/helpers.php';
+require_once __DIR__ . '/../src/services/TransparencyLogService.php';
 
 require_role('admin');
 require_approved_institution();
@@ -195,9 +196,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $sha256_hash = CryptoService::computeCertificateHash($certData, $destination);
                 
                 // 6. Sign the hash with institution's RSA private key
-                $instStmt = $db->prepare('SELECT public_key, encrypted_private_key FROM institutions WHERE id = :id');
+                $instStmt = $db->prepare('SELECT key_id, public_key, encrypted_private_key FROM institution_keys WHERE institution_id = :id AND status="active" ORDER BY key_id DESC LIMIT 1 FOR UPDATE');
                 $instStmt->execute(['id' => $institution_id]);
                 $instKeys = $instStmt->fetch();
+                if (!$instKeys) throw new Exception('This institution has no active signing key. Please contact the platform administrator.');
                 try {
                     $privateKey = CryptoService::decryptPrivateKey($instKeys['encrypted_private_key'] ?? '');
                     if (!empty($instKeys['public_key']) && !CryptoService::verifyKeyPair($privateKey, $instKeys['public_key'])) {
@@ -211,10 +213,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 
                 // 7. Insert Certificate with hash, signature, and QR token
-                $stmt = $db->prepare('INSERT INTO certificates (certificate_id, institution_id, student_id, title, issue_date, expiry_date, file_path, status, version, qr_token, sha256_hash, digital_signature) VALUES (:cid, :iid, :sid, :title, :issue, :expiry, :path, "active", 1, :qr_token, :hash, :sig)');
+                $stmt = $db->prepare('INSERT INTO certificates (certificate_id, institution_id, key_id, student_id, title, issue_date, expiry_date, file_path, status, version, qr_token, sha256_hash, digital_signature) VALUES (:cid, :iid, :key_id, :sid, :title, :issue, :expiry, :path, "active", 1, :qr_token, :hash, :sig)');
                 $stmt->execute([
                     'cid' => $cert_id,
                     'iid' => $institution_id,
+                    'key_id' => (int)$instKeys['key_id'],
                     'sid' => $student_id,
                     'title' => $title,
                     'issue' => $issue_date,
@@ -224,6 +227,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'hash' => $sha256_hash,
                     'sig' => $digital_signature
                 ]);
+                TransparencyLogService::append($db, $cert_id, 'ISSUE');
                 
                 $db->commit();
                 $success = "Certificate successfully issued! Certificate ID: " . $cert_id;

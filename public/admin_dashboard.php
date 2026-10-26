@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../src/config/Database.php';
 require_once __DIR__ . '/../src/utils/helpers.php';
 require_once __DIR__ . '/../src/services/VerificationService.php';
+require_once __DIR__ . '/../src/services/CryptoService.php';
 require_role('admin');
 require_approved_institution();
 
@@ -12,6 +13,12 @@ $stmt = $db->prepare('SELECT id, name FROM institutions WHERE user_id = :user_id
 $stmt->execute(['user_id' => $_SESSION['user_id']]);
 $institution = $stmt->fetch();
 $institution_id = $institution['id'] ?? null;
+$active_key = null;
+if ($institution_id && defined('CERTIFICATE_TRANSPARENCY_ENABLED') && CERTIFICATE_TRANSPARENCY_ENABLED) {
+    $keyStmt = $db->prepare('SELECT key_id,public_key,valid_from FROM institution_keys WHERE institution_id=:iid AND status="active" ORDER BY key_id DESC LIMIT 1');
+    $keyStmt->execute(['iid'=>$institution_id]);
+    $active_key = $keyStmt->fetch(PDO::FETCH_ASSOC) ?: null;
+}
 
 if (!$institution_id) {
     show_error_page('Error', 'Institution profile not found.');
@@ -64,8 +71,11 @@ $certificates = $stmt->fetchAll();
     <div class="container shell-wide">
         <div class="page-head">
             <h2><?= htmlspecialchars($institution['name']) ?> Dashboard</h2>
-            <a href="issue_certificate.php" class="btn btn-primary">Issue New Certificate</a>
+            <div><?php if (defined('CERTIFICATE_TRANSPARENCY_ENABLED') && CERTIFICATE_TRANSPARENCY_ENABLED): ?><a href="rotate_key.php" class="btn btn-warn">Rotate key</a><?php endif; ?>
+            <?php if (defined('ATTESTED_EXTERNAL_CREDENTIALS_ENABLED') && ATTESTED_EXTERNAL_CREDENTIALS_ENABLED): ?><a href="attest_external_credentials.php" class="btn btn-secondary">External attestation queue</a><?php endif; ?>
+            <a href="issue_certificate.php" class="btn btn-primary">Issue New Certificate</a></div>
         </div>
+        <?php if ($active_key): ?><div class="card" style="margin-bottom:16px;"><strong>Active signing key v<?= (int)$active_key['key_id'] ?></strong><br><small>SHA-256 fingerprint: <?= htmlspecialchars(CryptoService::fingerprintPublicKey($active_key['public_key'])) ?></small><br><a href="institutions.php#institution-<?= (int)$institution_id ?>">Public key directory</a></div><?php endif; ?>
 
         <div class="stat-grid">
             <div class="stat-card"><div class="stat-num"><?= (int)$stats['total'] ?></div><div class="stat-label">Total Issued</div></div>

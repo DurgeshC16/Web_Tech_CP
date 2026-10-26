@@ -77,6 +77,14 @@ function test_db() {
         [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC, PDO::ATTR_EMULATE_PREPARES => false]
     );
 
+    // Mirror Database.php: align the MySQL session zone with PHP so tests
+    // see the same NOW()/time() relationship the application relies on.
+    try {
+        $pdo->exec("SET time_zone = '" . date('P') . "'");
+    } catch (\PDOException $e) {
+        // Non-fatal, as in Database.php.
+    }
+
     // Import the canonical schema when the database is empty.
     $n = (int)$pdo->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = " . $pdo->quote($db))->fetchColumn();
     if ($n === 0) {
@@ -92,5 +100,44 @@ function test_db() {
             }
         }
     }
+
+    // Keep older isolated test databases compatible with migration 012 and
+    // seed a v1 key record for test-created institutions. Production installs
+    // receive these rows through the migration, not through this test helper.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS institution_keys (
+        institution_id INT NOT NULL, key_id INT NOT NULL, public_key TEXT NOT NULL,
+        encrypted_private_key TEXT NOT NULL, status ENUM('active','retired') NOT NULL DEFAULT 'active',
+        valid_from DATETIME NOT NULL, valid_to DATETIME NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY(institution_id,key_id), INDEX idx_institution_keys_status(institution_id,status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $hasKeyId = (int)$pdo->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='certificates' AND COLUMN_NAME='key_id'")->fetchColumn();
+    if (!$hasKeyId) $pdo->exec('ALTER TABLE certificates ADD COLUMN key_id INT NOT NULL DEFAULT 1 AFTER institution_id');
+    $hasOldPub = (int)$pdo->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='institutions' AND COLUMN_NAME='public_key'")->fetchColumn();
+    $hasOldPriv = (int)$pdo->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='institutions' AND COLUMN_NAME='encrypted_private_key'")->fetchColumn();
+    if ($hasOldPub && $hasOldPriv) {
+        $pdo->exec("INSERT IGNORE INTO institution_keys (institution_id,key_id,public_key,encrypted_private_key,status,valid_from,valid_to)
+            SELECT i.id,1,COALESCE(i.public_key,''),COALESCE(i.encrypted_private_key,''),IF(i.status='approved','active','retired'),NOW(),IF(i.status='approved',NULL,NOW()) FROM institutions i");
+    }
+    $pdo->exec("INSERT IGNORE INTO institution_keys (institution_id,key_id,public_key,encrypted_private_key,status,valid_from,valid_to)
+        SELECT i.id,1,'','',IF(i.status='approved','active','retired'),NOW(),IF(i.status='approved',NULL,NOW()) FROM institutions i");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS tlog_entries (
+        seq BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, certificate_id VARCHAR(64) NOT NULL,
+        event_type ENUM('ISSUE','REVOKE','SUPERSEDE') NOT NULL, leaf_hash CHAR(64) NOT NULL, prev_root CHAR(64) NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX idx_tlog_certificate(certificate_id,seq)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS tlog_checkpoints (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, tree_size BIGINT UNSIGNED NOT NULL UNIQUE,
+        last_seq BIGINT UNSIGNED NOT NULL DEFAULT 0,
+        root_hash CHAR(64) NOT NULL, signature TEXT NOT NULL, public_key_fingerprint CHAR(95) NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $hasTlogLastSeq=(int)$pdo->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='tlog_checkpoints' AND COLUMN_NAME='last_seq'")->fetchColumn();
+    if (!$hasTlogLastSeq) $pdo->exec('ALTER TABLE tlog_checkpoints ADD COLUMN last_seq BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER tree_size');
     return $pdo;
+}
+
+/** Seed a version-1 key row for fixture-created institutions. */
+function test_insert_institution_key($db, int $institutionId, string $publicKey, string $encryptedPrivateKey, string $status='active'): void {
+    $stmt=$db->prepare('INSERT INTO institution_keys (institution_id,key_id,public_key,encrypted_private_key,status,valid_from) VALUES (:iid,1,:pub,:priv,:status,NOW()) ON DUPLICATE KEY UPDATE public_key=VALUES(public_key),encrypted_private_key=VALUES(encrypted_private_key),status=VALUES(status)');
+    $stmt->execute(['iid'=>$institutionId,'pub'=>$publicKey,'priv'=>$encryptedPrivateKey,'status'=>$status]);
 }

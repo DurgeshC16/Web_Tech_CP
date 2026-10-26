@@ -22,6 +22,20 @@ class TrustScoreService
     public const DISCLAIMER = 'CertiVault confirms the record passes technical checks; '
         . 'it does not verify the real-world achievement.';
 
+    /** External credentials never receive a VALID verdict; an attestation caps at 70. */
+    public static function computeExternalCredential($db, array $credential): array
+    {
+        $status = class_exists('AttestedCredentialService')
+            ? AttestedCredentialService::verdict($db, $credential)
+            : (string)($credential['status'] ?? 'SELF_DECLARED');
+        $checks = [
+            ['id'=>'student_declaration','label'=>'Student supplied an external credential record','pass'=>true,'points'=>10,'critical'=>false],
+            ['id'=>'institution_attestation','label'=>'Approved institution signed the attestation','pass'=>$status==='ATTESTED','points'=>60,'critical'=>false],
+        ];
+        $score = $status === 'ATTESTED' ? 70 : 0;
+        return ['score'=>min(70, $score), 'verdict'=>$status, 'checks'=>$checks, 'disclaimer'=>'Attestation is an institution’s statement that it checked the external record; CertiVault did not verify it with the issuer.'];
+    }
+
     /**
      * Replay the same order of checks as VerificationService::verify().
      * @param array $cert full certificate row (with institution_name etc.)

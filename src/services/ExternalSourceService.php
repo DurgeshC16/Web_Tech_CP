@@ -1,6 +1,8 @@
 <?php
 // src/services/ExternalSourceService.php
 // ─────────────────────────────────────────────────────────────────────
+
+require_once __DIR__ . '/CryptoService.php';
 // Optional external certificate sources for verify.php. CertiVault's own
 // verdict pipeline is NEVER applied to external records: they are shown
 // in a clearly separate card as "found elsewhere", never as VALID.
@@ -28,6 +30,8 @@ interface ExternalSourceInterface
 
 class ExternalSourceService
 {
+    /** Test seam: callback(string $url, array $allowedHosts): array{0:?string,1:?string}. */
+    private static $httpGetOverride = null;
     /** Max redirects followed; each hop must pass the same SSRF validation. */
     const REDIRECT_LIMIT = 3;
     /** Response size cap in bytes. */
@@ -52,14 +56,20 @@ class ExternalSourceService
             $ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
 
             // Per-IP rate limit: too many external lookups → skip this one.
-            if (defined('EXT_RATE_LIMIT')) {
+            $limit = (int)(defined('EXT_RATE_LIMIT') ? EXT_RATE_LIMIT : 15);
+            foreach (self::adapters($db) as $candidate) {
+                if (method_exists($candidate, 'rateLimit')) {
+                    $limit = max(1, min($limit, $candidate->rateLimit()));
+                }
+            }
+            if ($limit > 0) {
                 $stmt = $db->prepare("
                     SELECT COUNT(*) FROM verification_logs
                     WHERE verifier_ip = :ip AND result LIKE 'EXTERNAL%'
                       AND verified_at > DATE_SUB(NOW(), INTERVAL 10 MINUTE)
                 ");
                 $stmt->execute(['ip' => $ip]);
-                if ((int)$stmt->fetchColumn() >= (int)EXT_RATE_LIMIT) {
+                if ((int)$stmt->fetchColumn() >= $limit) {
                     error_log("[CertiVault] External-source rate limit hit for IP $ip — skipping external lookup.");
                     $out['blocked'] = true;
                     return $out;
@@ -76,7 +86,7 @@ class ExternalSourceService
                 return $out;
             }
 
-            foreach (self::adapters() as $adapter) {
+            foreach (self::adapters($db) as $adapter) {
                 $fields = $adapter->fetch($id);
                 if ($fields !== null) {
                     $out['hit'] = $fields;
@@ -102,7 +112,51 @@ class ExternalSourceService
     }
 
     /** @return ExternalSourceInterface[] */
-    public static function adapters(): array
+    public static function adapters($db = null, ?bool $registryEnabled = null): array
+    {
+        $adapters = [];
+        $registryEnabled = $registryEnabled ?? (defined('EXT_REGISTRY_ENABLED') && EXT_REGISTRY_ENABLED);
+        if ($db !== null && $registryEnabled) {
+            try {
+                $rows = $db->query('SELECT id, slug, label, type, config_json, allowed_host, rate_limit FROM external_sources WHERE enabled = 1 ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+                foreach ($rows as $row) {
+                    try {
+                        $json = CryptoService::decryptConfig((string)$row['config_json']);
+                        $config = json_decode($json, true, 32, JSON_THROW_ON_ERROR);
+                        if (!is_array($config)) {
+                            continue;
+                        }
+                        $hosts = array_values(array_filter(array_map('trim', explode(',', strtolower((string)$row['allowed_host'])))));
+                        if (!$hosts) {
+                            continue;
+                        }
+                        if ($row['type'] === 'open_badges' && ($config['provider'] ?? '') === 'credly') {
+                            $adapters[] = new CredlyAdapter((string)$row['label'], $hosts, (int)$row['rate_limit']);
+                        } elseif ($row['type'] === 'open_badges') {
+                            $adapters[] = new OpenBadgesAdapter((string)($config['template'] ?? ''), (string)$row['label'], $hosts, (int)$row['rate_limit']);
+                        } elseif ($row['type'] === 'remote_db') {
+                            $adapters[] = new RemoteDbAdapter($config + [
+                                'label' => (string)$row['label'], 'allowed_hosts' => $hosts,
+                                'rate_limit' => (int)$row['rate_limit'],
+                            ]);
+                        }
+                    } catch (Throwable $e) {
+                        error_log('[CertiVault] Skipping invalid managed external source ' . (string)$row['slug'] . '.');
+                    }
+                }
+            } catch (Throwable $e) {
+                // A missing migration must not break local verification.
+                error_log('[CertiVault] Managed external-source registry unavailable; using legacy configuration.');
+            }
+        }
+        if ($adapters) {
+            return $adapters;
+        }
+        return self::legacyAdapters();
+    }
+
+    /** Legacy config fallback for installations not yet migrated/configured. */
+    private static function legacyAdapters(): array
     {
         $adapters = [];
         $template = (string)(defined('EXT_OB_URL_TEMPLATE') ? EXT_OB_URL_TEMPLATE : '');
@@ -128,6 +182,23 @@ class ExternalSourceService
             ]);
         }
         return $adapters;
+    }
+
+    public static function setHttpGetOverride(?callable $callback): void
+    {
+        self::$httpGetOverride = $callback;
+    }
+
+    public static function hasHttpGetOverride(): bool
+    {
+        return self::$httpGetOverride !== null;
+    }
+
+    public static function requestGet(string $url, array $allowedHosts): array
+    {
+        return self::$httpGetOverride !== null
+            ? (self::$httpGetOverride)($url, $allowedHosts)
+            : self::httpGet($url, $allowedHosts ?: null);
     }
 
     // ── Logging (row appended to verification_logs) ────────────────────
@@ -229,9 +300,12 @@ class ExternalSourceService
      * @param string $url absolute URL, https scheme required
      * @return array{0:?string,1:?string} [body|null, errorReason|null]
      */
-    public static function httpGet(string $url): array
+    public static function httpGet(string $url, ?array $allowedHosts = null): array
     {
         for ($hop = 0; $hop <= self::REDIRECT_LIMIT; $hop++) {
+            $isRedirect = false;
+            $redirectTo = null;
+            $contentLength = null;
             $parts = parse_url($url);
             if (!$parts) {
                 return [null, 'Malformed source URL.'];
@@ -243,7 +317,7 @@ class ExternalSourceService
             $host = strtolower($parts['host'] ?? '');
 
             // Allow-list: exact match, or subdomain of an allow-listed host.
-            if (!self::isHostAllowed($host)) {
+            if (!self::isHostAllowed($host, $allowedHosts)) {
                 return [null, 'Source host is not on the allow-list (EXT_ALLOWED_HOSTS).'];
             }
 
@@ -360,10 +434,10 @@ class ExternalSourceService
      * Host allow-list check: exact match or subdomain of an entry.
      * @param string $host lowercase host
      */
-    public static function isHostAllowed(string $host): bool
+    public static function isHostAllowed(string $host, ?array $allowedHosts = null): bool
     {
-        $list = defined('EXT_ALLOWED_HOSTS') ? (string)EXT_ALLOWED_HOSTS : '';
-        foreach (explode(',', $list) as $entry) {
+        $entries = $allowedHosts ?? explode(',', defined('EXT_ALLOWED_HOSTS') ? (string)EXT_ALLOWED_HOSTS : '');
+        foreach ($entries as $entry) {
             $entry = strtolower(trim($entry));
             if ($entry === '') {
                 continue;
@@ -507,13 +581,22 @@ class ExternalSourceService
 class OpenBadgesAdapter implements ExternalSourceInterface
 {
     private $template;
-    public function __construct(string $urlTemplate)
+    private $label;
+    private $allowedHosts;
+    private $limit;
+    public function __construct(string $urlTemplate, string $label = '', array $allowedHosts = [], int $rateLimit = 15)
     {
         $this->template = $urlTemplate;
+        $this->label = $label;
+        $this->allowedHosts = $allowedHosts;
+        $this->limit = $rateLimit;
     }
+
+    public function rateLimit(): int { return $this->limit; }
 
     public function name(): string
     {
+        if ($this->label !== '') return $this->label;
         return defined('EXT_OB_SOURCE_NAME') && EXT_OB_SOURCE_NAME !== ''
             ? EXT_OB_SOURCE_NAME
             : 'Open Badges (hosted)';
@@ -522,7 +605,7 @@ class OpenBadgesAdapter implements ExternalSourceInterface
     public function fetch(string $id): ?array
     {
         $url = str_replace('{id}', rawurlencode($id), $this->template);
-        [$body, $err] = ExternalSourceService::httpGet($url);
+        [$body, $err] = ExternalSourceService::requestGet($url, $this->allowedHosts);
         if ($body === null) {
             error_log("[CertiVault] OpenBadgesAdapter($id): $err");
             return null;
@@ -562,10 +645,11 @@ class RemoteDbAdapter implements ExternalSourceInterface
         }
     }
 
+    public function rateLimit(): int { return (int)($this->opts['rate_limit'] ?? 15); }
+
     private function identifiers(): array
     {
-        return [$this->opts['table']]
-            + array_values($this->opts['cols']);
+        return array_merge([$this->opts['table']], array_values($this->opts['cols']));
     }
 
     public function name(): string
@@ -619,6 +703,118 @@ class RemoteDbAdapter implements ExternalSourceInterface
             'issue_date' => $ts ? date('Y-m-d', $ts) : $date,
             'status'     => $status,
             'source_url' => '',  // relational source has no public URL
+        ];
+    }
+}
+
+/** Credly Open Badges v2 resolver; each URL hop uses the same SSRF guard. */
+class CredlyAdapter implements ExternalSourceInterface
+{
+    private string $label;
+    private array $allowedHosts;
+    private int $limit;
+    private static array $documentCache = [];
+
+    public function __construct(string $label, array $allowedHosts, int $rateLimit = 15)
+    {
+        $this->label = $label !== '' ? $label : 'Credly';
+        $this->allowedHosts = $allowedHosts;
+        $this->limit = $rateLimit;
+    }
+
+    public function name(): string { return $this->label; }
+    public function rateLimit(): int { return $this->limit; }
+
+    public static function normalizeId(string $input): ?string
+    {
+        $input = trim($input);
+        if (preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i', $input)) {
+            return strtolower($input);
+        }
+        $parts = parse_url($input);
+        if (!$parts || strtolower($parts['scheme'] ?? '') !== 'https'
+            || !in_array(strtolower($parts['host'] ?? ''), ['credly.com', 'www.credly.com'], true)) {
+            return null;
+        }
+        if (preg_match('#^/badges/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})(?:/(?:public_url|linked_in_profile))?/?$#i', $parts['path'] ?? '', $m)) {
+            return strtolower($m[1]);
+        }
+        return null;
+    }
+
+    private function jsonDocument(string $url): ?array
+    {
+        $mocked = ExternalSourceService::hasHttpGetOverride();
+        if (!$mocked && isset(self::$documentCache[$url]) && self::$documentCache[$url]['expires'] > time()) {
+            return self::$documentCache[$url]['value'];
+        }
+        $cachePath = __DIR__ . '/../../private_data/cache/external/credly_' . hash('sha256', $url) . '.json';
+        $cachedRaw = $mocked ? false : @file_get_contents($cachePath);
+        $cached = $cachedRaw !== false ? json_decode($cachedRaw, true) : null;
+        if (is_array($cached) && isset($cached['t'], $cached['data'])
+            && time() - (int)$cached['t'] <= ExternalSourceService::CACHE_TTL && is_array($cached['data'])) {
+            self::$documentCache[$url] = ['expires' => (int)$cached['t'] + ExternalSourceService::CACHE_TTL, 'value' => $cached['data']];
+            return $cached['data'];
+        }
+        [$body, $error] = ExternalSourceService::requestGet($url, $this->allowedHosts);
+        if ($body === null) {
+            error_log('[CertiVault] Credly lookup failed: ' . ($error ?? 'source unavailable'));
+            return null;
+        }
+        $data = json_decode($body, true);
+        if (!is_array($data)) return null;
+        if (!$mocked) {
+            self::$documentCache[$url] = ['expires' => time() + ExternalSourceService::CACHE_TTL, 'value' => $data];
+            $cacheDir = dirname($cachePath);
+            if (!is_dir($cacheDir)) @mkdir($cacheDir, 0770, true);
+            @file_put_contents($cachePath, json_encode(['t'=>time(),'data'=>$data]), LOCK_EX);
+        }
+        return $data;
+    }
+
+    private function safeDocumentUrl(string $url): bool
+    {
+        $parts = parse_url($url);
+        return is_array($parts) && ($parts['scheme'] ?? '') === 'https'
+            && !isset($parts['user']) && !isset($parts['pass'])
+            && ExternalSourceService::isHostAllowed(strtolower($parts['host'] ?? ''), $this->allowedHosts);
+    }
+
+    public function fetch(string $id): ?array
+    {
+        $uuid = self::normalizeId($id);
+        if ($uuid === null || !in_array('api.credly.com', $this->allowedHosts, true)) return null;
+        $assertionUrl = 'https://api.credly.com/v1/obi/v2/badge_assertions/' . rawurlencode($uuid);
+        $response = $this->jsonDocument($assertionUrl);
+        if (!$response) return null;
+        $assertion = is_array($response['assertion'] ?? null) ? $response['assertion'] : $response;
+        $badgeUrl = $assertion['badge'] ?? null;
+        if (!is_string($badgeUrl) || !$this->safeDocumentUrl($badgeUrl)) return null;
+        $badge = $this->jsonDocument($badgeUrl);
+        if (!$badge) return null;
+        $issuerUrl = $badge['issuer'] ?? null;
+        if (is_array($issuerUrl)) $issuerUrl = $issuerUrl['id'] ?? $issuerUrl['url'] ?? null;
+        if (!is_string($issuerUrl) || !$this->safeDocumentUrl($issuerUrl)) return null;
+        $issuer = $this->jsonDocument($issuerUrl);
+        if (!$issuer) return null;
+        $recipient = $assertion['recipient'] ?? $assertion['recipientProfile'] ?? [];
+        $holder = is_array($recipient)
+            ? (string)($recipient['name'] ?? $recipient['identity'] ?? $recipient['email'] ?? '')
+            : (string)$recipient;
+        if (!empty($recipient['hashed'])) $holder = 'Recipient identity withheld (hashed by issuer)';
+        $date = (string)($assertion['issuedOn'] ?? $assertion['issued_at'] ?? $assertion['issuedAt'] ?? '');
+        if ($date === '' || strtotime($date) === false) return null;
+        $revoked = $assertion['revoked'] ?? false;
+        $status = ($revoked === true || (is_array($revoked) && $revoked !== [])
+            || in_array(strtolower((string)($assertion['status'] ?? '')), ['revoked', 'retracted'], true)) ? 'revoked' : 'active';
+        $issuerName = (string)($issuer['name'] ?? $badge['issuerName'] ?? 'Credly issuer');
+        return [
+            'holder' => $holder !== '' ? $holder : 'Recipient identity withheld',
+            'title' => (string)($badge['name'] ?? $badge['title'] ?? 'Credly badge'),
+            'issuer' => $issuerName,
+            'issue_date' => date('Y-m-d', strtotime($date)),
+            'status' => $status,
+            'source_url' => 'https://www.credly.com/badges/' . rawurlencode($uuid),
         ];
     }
 }

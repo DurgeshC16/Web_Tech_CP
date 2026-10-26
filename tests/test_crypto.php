@@ -11,11 +11,25 @@ $keys = CryptoService::generateRSAKeyPair();
 t_check('keygen: private PEM', strpos($keys['private_key'], '-----BEGIN') === 0);
 t_check('keygen: public PEM', strpos($keys['public_key'], '-----BEGIN') === 0);
 t_check('keygen: pair matches', CryptoService::verifyKeyPair($keys['private_key'], $keys['public_key']));
+$fingerprint = CryptoService::fingerprintPublicKey($keys['public_key']);
+t_check('key fingerprint: 32 colon-separated SHA-256 bytes', strlen($fingerprint) === 95
+    && preg_match('/^(?:[A-F0-9]{2}:){31}[A-F0-9]{2}$/', $fingerprint) === 1);
 
 // ── Encrypt / decrypt round trip ──
 $blob = CryptoService::encryptPrivateKey($keys['private_key']);
 t_check('encrypt: GCM1 prefix', strpos($blob, 'GCM1.') === 0);
 t_check('decrypt: round trip', CryptoService::decryptPrivateKey($blob) === $keys['private_key']);
+$configBlob = CryptoService::encryptConfig('{"api_token":"sensitive-test-value"}');
+t_check('config encryption: CFG1 authenticated round trip', str_starts_with($configBlob, 'CFG1.')
+    && CryptoService::decryptConfig($configBlob) === '{"api_token":"sensitive-test-value"}');
+$tamperedConfig = $configBlob;
+$tamperedConfig[strlen($tamperedConfig) - 2] = $tamperedConfig[strlen($tamperedConfig) - 2] === 'A' ? 'B' : 'A';
+try {
+    CryptoService::decryptConfig($tamperedConfig);
+    t_check('config encryption: tamper rejected', false);
+} catch (Exception $e) {
+    t_check('config encryption: tamper rejected', true);
+}
 
 // ── Sign + verify ──
 $hash = hash('sha256', 'certivault-test-payload');

@@ -1,0 +1,2 @@
+RewriteEngine On
+RewriteRule ^\.well-known/certivault-keys\.json$ well-known-keys.php [L]

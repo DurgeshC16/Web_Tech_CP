@@ -111,6 +111,11 @@ defined('EXT_DB_DATE_COLUMN')   || define('EXT_DB_DATE_COLUMN', getenv('CV_EXT_D
 defined('EXT_DB_STATUS_COLUMN') || define('EXT_DB_STATUS_COLUMN', getenv('CV_EXT_DB_STATUS_COLUMN') ?: 'status');
 defined('EXT_DB_LABEL')         || define('EXT_DB_LABEL', getenv('CV_EXT_DB_LABEL') ?: 'external database');
 defined('EXT_RATE_LIMIT')       || define('EXT_RATE_LIMIT', (int)(getenv('CV_EXT_RATE_LIMIT') ?: 15)); // lookups / IP / 10 min
+// Managed registry lookups are disabled unless explicitly enabled. Legacy
+// EXT_* settings remain available as a fallback for existing installations.
+defined('EXT_REGISTRY_ENABLED') || define('EXT_REGISTRY_ENABLED', (getenv('CV_EXT_REGISTRY_ENABLED') ?: '0') === '1');
+// Student/institution attestation flow has its own explicit opt-in.
+defined('ATTESTED_EXTERNAL_CREDENTIALS_ENABLED') || define('ATTESTED_EXTERNAL_CREDENTIALS_ENABLED', (getenv('CV_ATTESTED_CREDENTIALS_ENABLED') ?: '0') === '1');
 
 // ── Smart Verify (verify.php / index.php; local, ON by default) ─────
 // Text/file/QR pipeline. Outbound requests: NONE — external issuer
@@ -125,6 +130,12 @@ defined('SMART_EXTERNAL_LINKS')     || define('SMART_EXTERNAL_LINKS', (getenv('C
 // Read-only, rate-limited, audit-logged; disable per install with
 // CV_API_ENABLED=0 (e.g. behind a firewall that exposes something else).
 defined('API_ENABLED')              || define('API_ENABLED', (getenv('CV_API_ENABLED') ?: '1') !== '0');
+
+// Transparency checkpoint signing key is deliberately file-backed and
+// separate from institution signing keys and APP_ENCRYPTION_KEY.
+defined('TLOG_PRIVATE_KEY_FILE') || define('TLOG_PRIVATE_KEY_FILE', getenv('CV_TLOG_PRIVATE_KEY_FILE') ?: __DIR__ . '/../../private_data/tlog/platform_private.pem');
+defined('TLOG_PUBLIC_KEY_FILE')  || define('TLOG_PUBLIC_KEY_FILE', getenv('CV_TLOG_PUBLIC_KEY_FILE') ?: __DIR__ . '/../../private_data/tlog/platform_public.pem');
+defined('CERTIFICATE_TRANSPARENCY_ENABLED') || define('CERTIFICATE_TRANSPARENCY_ENABLED', (getenv('CV_CERTIFICATE_TRANSPARENCY_ENABLED') ?: '0') === '1');
 
 // ── Error Handling ──────────────────────────────────────────────────
 // In production: display_errors = Off, log_errors = On

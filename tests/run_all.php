@@ -18,6 +18,8 @@ $files = [
     // verification cascade, Smart Verify either/or).
     'test_upload_suite.php',
     'test_crypto.php',
+    'test_attested_credentials.php',
+    'test_transparency_log.php',
 ];
 
 $failed = [];

@@ -14,6 +14,7 @@ require_once __DIR__ . '/../src/services/ExternalSourceService.php';
 require_once __DIR__ . '/../src/services/SmartVerifyService.php';
 require_once __DIR__ . '/../src/services/FileVerifyService.php';
 require_once __DIR__ . '/../src/services/TrustScoreService.php';
+require_once __DIR__ . '/../src/services/TransparencyLogService.php';
 require_once __DIR__ . '/../src/utils/validators.php';
 require_once __DIR__ . '/../src/utils/helpers.php';
 require_once __DIR__ . '/../src/utils/qrdecoder/autoload.php';
@@ -86,6 +87,13 @@ function sv_run_text_candidates($db, string $raw, string &$query_type, &$query_v
 
     $local_misses_ids = false;
     foreach ($qualityCandidates as $cand) {
+        if (($cand['type'] ?? '') === 'unsafe_link') {
+            $external_ref = ['issuer_label' => (string)$cand['label'], 'url' => '', 'code' => '', 'unsafe' => true];
+            $query_type = 'external_ref';
+            return 'external';
+        }
+    }
+    foreach ($qualityCandidates as $cand) {
         if (($cand['type'] ?? '') === 'external_ref') {
             continue; // handled after local candidates per spec order
         }
@@ -115,6 +123,13 @@ function sv_run_text_candidates($db, string $raw, string &$query_type, &$query_v
     foreach ($qualityCandidates as $cand) {
         if (($cand['type'] ?? '') !== 'external_ref') {
             continue;
+        }
+        if (($cand['issuer'] ?? '') === 'credly') {
+            // Credly IDs are sent through the normal local-first verification
+            // pipeline, then looked up through the managed external registry.
+            $query_type = 'certificate_id';
+            $query_value = (string)$cand['value'];
+            return 'unresolved';
         }
         $link = SmartVerifyService::buildIssuerLink($cand['issuer'], $cand['value']);
         $url  = is_array($link) ? $link['url'] : null;
@@ -257,13 +272,21 @@ if ($sv_id_raw !== '' && SMART_VERIFY_ENABLED
 
     // Explicit issuer dropdown: when the user selected an issuer and the
     // text looks like their code, build the allow-listed public link.
-    if ($status === 'unresolved' && SMART_EXTERNAL_LINKS && $chosenIssuer !== '' && $chosenIssuer !== 'certivault') {
+    if ($status === 'unresolved' && $query_type !== 'certificate_id' && SMART_EXTERNAL_LINKS && $chosenIssuer !== '' && $chosenIssuer !== 'certivault') {
         $link = null;
         if ($chosenIssuer !== 'other') {
             $code = trim($query_value);
             $link = SmartVerifyService::buildIssuerLink($chosenIssuer, $code);
         } else {
             $link = SmartVerifyService::validateOtherLink($otherUrl !== '' ? $otherUrl : $query_value);
+            if ($link === null) {
+                $spoofIssuer = SmartVerifyService::suspiciousIssuerUrl($otherUrl !== '' ? $otherUrl : $query_value);
+                if ($spoofIssuer !== null) {
+                    $external_ref = ['issuer_label' => $spoofIssuer, 'url' => '', 'code' => '', 'unsafe' => true];
+                    $query_type = 'external_ref';
+                    $status = 'external';
+                }
+            }
         }
         if (is_array($link)) {
             $issuers = SmartVerifyService::externalIssuers();
@@ -372,6 +395,7 @@ if ($query_type !== null && $verdict === null && $cert === null) {
 
 // ── Verification Engine (local lookups not yet run) ────────────────────
 $external = null; // optional external-source record (Phase: external sources)
+$transparency = null;
 if ($query_type !== null && $verdict === null) {
     if ($cert === null) {
         if ($query_type === 'token') {
@@ -391,7 +415,8 @@ if ($query_type !== null && $verdict === null) {
         $sv_tips = (bool)($sv_tips || $sv_via_hash);
 
         // ── Optional external source (feature is OFF by default) ──
-        if ($query_type === 'certificate_id' && EXT_SOURCE_ENABLED) {
+        if ($query_type === 'certificate_id' && ((defined('EXT_SOURCE_ENABLED') && EXT_SOURCE_ENABLED)
+            || (defined('EXT_REGISTRY_ENABLED') && EXT_REGISTRY_ENABLED))) {
             $xres = ExternalSourceService::lookup($db, $query_value);
             if ($xres['hit'] !== null) {
                 $external = ['fields' => $xres['hit'], 'source' => $xres['source']];
@@ -406,6 +431,7 @@ if ($query_type !== null && $verdict === null) {
         $detail        = $result['detail'];
         $superseded_by = $result['superseded_by'];
     }
+    if ($cert && defined('CERTIFICATE_TRANSPARENCY_ENABLED') && CERTIFICATE_TRANSPARENCY_ENABLED) $transparency = TransparencyLogService::certificateStatus($db, $cert);
 }
 
 // ── Rate limiting ─────────────────────────────────────────────────────
@@ -717,6 +743,11 @@ if ($query_type !== null) {
                 <?= $verdict ?>
             </div>
             <p class="verdict-detail" style="text-align:center;"><?= htmlspecialchars($detail) ?></p>
+            <?php if ($cert && !empty($cert['public_key']) && defined('CERTIFICATE_TRANSPARENCY_ENABLED') && CERTIFICATE_TRANSPARENCY_ENABLED): ?>
+                <?php $certFingerprint = CryptoService::fingerprintPublicKey((string)$cert['public_key']); $fingerprintPrefix = implode(':', array_slice(explode(':', $certFingerprint), 0, 6)); ?>
+                <p style="text-align:center;font-size:0.9em;"><strong>Signed by key <?= htmlspecialchars($fingerprintPrefix) ?>:… v<?= (int)($cert['key_id'] ?? 1) ?></strong>
+                    <a href="institutions.php#institution-<?= (int)$cert['institution_id'] ?>">Compare full fingerprint</a></p>
+            <?php endif; ?>
             <?php if ($sv_both_note !== null): ?>
             <p style="text-align:center;color:var(--muted);font-size:0.9em;margin-top:6px;"><?= htmlspecialchars($sv_both_note) ?></p>
             <?php endif; ?>
@@ -731,19 +762,39 @@ if ($query_type !== null) {
             <?php endif; ?>
         </div>
 
+        <?php if ($cert && is_array($transparency)): ?>
+        <div class="card" style="margin-top:14px;border-left:4px solid <?= !empty($transparency['reconciled']) ? 'var(--verified)' : 'var(--warn)' ?>;">
+            <strong>Transparency log</strong>
+            <?php if (!empty($transparency['reconciled']) && !empty($transparency['proof'])): ?>
+                <p>Certificate is included at sequence <?= (int)$transparency['proof']['seq'] ?> in a checkpoint signed by CertiVault’s platform key.</p>
+                <p><small>Merkle root: <code class="break-all"><?= htmlspecialchars($transparency['proof']['root_hash']) ?></code></small></p>
+                <details><summary>Inclusion proof</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere;"><?= htmlspecialchars(json_encode($transparency['proof'], JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)) ?></pre></details>
+            <?php else: ?>
+                <p class="text-warn"><?= htmlspecialchars((string)($transparency['warning'] ?? 'WARNING: transparency log could not be reconciled.')) ?></p>
+            <?php endif; ?>
+            <a href="checkpoints/latest.json">Latest public checkpoint</a>
+        </div>
+        <?php endif; ?>
+
         <?php if ($external_ref !== null): ?>
         <!-- ── External reference card: NEVER a CertiVault verdict ── -->
         <div class="card external-ref-card" style="margin-top:16px; border-left:4px solid #8a72c9;">
             <p style="font-weight:600; margin-bottom:4px;">EXTERNAL REFERENCE FOUND
                 <?= $external_ref['code'] !== '' ? '— ' . htmlspecialchars($external_ref['code']) : '' ?></p>
             <p style="color:var(--warn); font-size:0.92em; margin-bottom:10px;">
+                <?php if (!empty($external_ref['unsafe'])): ?>
+                This link is NOT the official <?= htmlspecialchars($external_ref['issuer_label']) ?> domain. Do not open it.
+                <?php else: ?>
                 Not verified by CertiVault. This is an issuer self-verification link
                 generated from an allow-listed map; opening it takes you to the
                 issuer's own public page.
+                <?php endif; ?>
             </p>
+            <?php if (empty($external_ref['unsafe'])): ?>
             <a href="<?= htmlspecialchars($external_ref['url']) ?>" target="_blank" rel="noopener noreferrer" class="btn btn-secondary">
                 Open at <?= htmlspecialchars($external_ref['issuer_label']) ?> →
             </a>
+            <?php endif; ?>
         </div>
         <?php endif; ?>
 

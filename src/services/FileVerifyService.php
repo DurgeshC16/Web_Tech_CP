@@ -135,10 +135,11 @@ class FileVerifyService
     private static function findByHashColumn($db, string $column, string $hash)
     {
         $sql = '
-            SELECT c.*, i.name AS institution_name, i.public_key,
+            SELECT c.*, i.name AS institution_name, ik.public_key, ik.status AS signing_key_status,
                    s.full_name AS student_name
             FROM certificates c
             JOIN institutions i ON c.institution_id = i.id
+            LEFT JOIN institution_keys ik ON ik.institution_id=c.institution_id AND ik.key_id=c.key_id
             JOIN students     s ON c.student_id     = s.id
             WHERE ' . $column . ' = :hash
             LIMIT 1

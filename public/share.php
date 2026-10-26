@@ -38,9 +38,10 @@ if (empty($token)) {
             } else {
                 $db = Database::getInstance();
                 $stmt = $db->prepare('
-                    SELECT c.*, i.name as institution_name, i.public_key, s.full_name as student_name
+                    SELECT c.*, i.name as institution_name, ik.public_key, ik.status AS signing_key_status, s.full_name as student_name
                     FROM certificates c
                     JOIN institutions i ON c.institution_id = i.id
+                    LEFT JOIN institution_keys ik ON ik.institution_id = c.institution_id AND ik.key_id = c.key_id
                     JOIN students s ON c.student_id = s.id
                     WHERE c.id = :id
                 ');

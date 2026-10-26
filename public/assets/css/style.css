@@ -792,7 +792,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 }
 
 /* -- Buttons ------------------------------------------------------- */
-.btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-2); min-height: 44px; padding: var(--sp-2) var(--sp-5); border-radius: 6px; border: 1px solid transparent; cursor: pointer; font-weight: 600; font-size: 0.95rem; text-decoration: none; transition: background-color .15s ease, color .15s ease, border-color .15s ease; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-2); min-height: 44px; padding: var(--sp-2) var(--sp-5); border-radius: 6px; border: 1px solid transparent; box-sizing: border-box; cursor: pointer; font-weight: 600; font-size: 0.95rem; text-decoration: none; transition: background-color .15s ease, color .15s ease, border-color .15s ease; }
 .btn-primary { background: var(--seal); color: #fff; }
 .btn-primary:hover { background: var(--seal-hover); color: #fff; }
 .btn-secondary { background: transparent; border-color: var(--border); color: var(--ink); }
@@ -994,4 +994,108 @@ img { max-width: 100%; height: auto; }
     .nav-toggle { min-height: 44px; }
     .pw-toggle { min-height: 44px; padding: 8px 4px; }
     input[type="checkbox"] { width: 22px; height: 22px; }
+}
+
+/* ==========================================================================
+   Verification input UI (camera / QR image / PDF / certificate-id tabs)
+   ========================================================================== */
+.verify-app { margin-top: var(--sp-5); }
+
+/* -- Tab list -- */
+.tablist {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-1);
+    border-bottom: 1px solid var(--border);
+    margin-bottom: var(--sp-4);
+}
+.tab {
+    appearance: none;
+    background: transparent;
+    border: 1px solid transparent;
+    border-bottom: none;
+    border-radius: 6px 6px 0 0;
+    color: var(--muted);
+    cursor: pointer;
+    font: inherit;
+    font-weight: 600;
+    font-size: 0.9rem;
+    padding: var(--sp-2) var(--sp-3);
+    min-height: 44px;
+    margin-bottom: -1px;
+    white-space: nowrap;
+}
+.tab:hover { color: var(--ink); }
+.tab.is-active,
+.tab[aria-selected="true"] {
+    background: var(--surface);
+    border-color: var(--border);
+    border-bottom: 1px solid var(--surface);
+    color: var(--ink);
+}
+.tab:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/* -- Panels -- */
+.tabpanel { animation: none; }
+.panel-help { color: var(--muted); font-size: 0.875rem; margin: 0 0 var(--sp-4); }
+.panel-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-bottom: var(--sp-3); }
+
+/* Camera / decoder mount point */
+.qr-reader {
+    max-width: 400px;
+    margin: 0 auto var(--sp-3);
+    border-radius: 8px;
+    overflow: hidden;
+}
+.qr-reader video { max-width: 100%; height: auto; }
+
+/* -- Progress -- */
+.scan-progress { margin-top: var(--sp-3); }
+.scan-progress-bar {
+    height: 8px;
+    background: var(--border);
+    border-radius: var(--radius-pill);
+    overflow: hidden;
+}
+.scan-progress-fill {
+    height: 100%;
+    width: 0;
+    background: var(--seal);
+    transition: width .2s ease;
+}
+.scan-progress-label { font-size: 0.8125rem; color: var(--muted); margin-top: var(--sp-1); }
+
+/* -- Shared status region -- */
+.scan-status {
+    margin-top: var(--sp-4);
+    padding: var(--sp-3) var(--sp-4);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 0.9rem;
+    text-align: center;
+}
+.scan-status-busy,
+.scan-status-info { color: var(--ink); }
+.scan-status-error {
+    color: var(--danger);
+    border-color: var(--danger);
+    background: rgba(179,38,30,.06);
+}
+
+/* -- Multi-QR chooser -- */
+.qr-chooser {
+    margin-top: var(--sp-4);
+    padding: var(--sp-4);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-2);
+}
+.qr-chooser .panel-help { flex: 1 1 100%; margin-bottom: var(--sp-2); }
+.qr-choice { flex: 0 1 auto; }
+
+@media (max-width: 479px) {
+    .tablist { gap: 0; }
+    .tab { flex: 1 1 auto; text-align: center; padding: var(--sp-2) var(--sp-1); font-size: 0.82rem; }
 }

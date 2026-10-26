@@ -1,69 +1,50 @@
 <?php
-// scripts/seed_external_source.php
-// -------------------------------------------------------------------------
-// OPTIONAL FEATURE (off by default). Seeds a small "public-style" external
-// dataset so the external verification source demo works OFFLINE:
-// a tiny SQLite database that RemoteDbAdapter can read via a read-only
-// PDO connection. No MySQL credentials are needed for this demo source.
-//
-// Usage:   php scripts/seed_external_source.php
-// Idempotent: recreates the SQLite file from scratch each run.
-// Then point config.local.php at it (see printed instructions).
-// -------------------------------------------------------------------------
+// Seed a MySQL-backed, entirely invented Coursera-style registry for demos.
+// Safe to re-run: only this demo table's rows and managed source are replaced.
+if (PHP_SAPI !== 'cli') { http_response_code(403); exit('CLI only.'); }
+require_once __DIR__ . '/../src/config/Database.php';
+require_once __DIR__ . '/../src/services/CryptoService.php';
 
-if (php_sapi_name() !== 'cli') {
-    die('CLI only.');
-}
-if (!extension_loaded('pdo_sqlite')) {
-    fwrite(STDERR, "[!] The pdo_sqlite extension is not enabled (uncomment 'extension=pdo_sqlite' in php.ini).\n");
+try {
+    $db = Database::getInstance();
+    $db->exec('CREATE TABLE IF NOT EXISTS demo_mooc_registry (
+        certificate_id VARCHAR(64) PRIMARY KEY, holder VARCHAR(160) NOT NULL,
+        title VARCHAR(200) NOT NULL, issuer VARCHAR(120) NOT NULL,
+        issue_date DATE NOT NULL, status VARCHAR(20) NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+    $records = [
+        ['DEMO-MOOC-001','Asha Menon','Python Data Analysis','Coursera Learning Network','2024-01-18','active'],
+        ['DEMO-MOOC-002','Mateo Ruiz','Foundations of Project Management','Coursera Learning Network','2024-02-22','active'],
+        ['DEMO-MOOC-003','Nadia Ibrahim','Introduction to Cloud Computing','Open Skills Academy','2024-03-05','active'],
+        ['DEMO-MOOC-004','Ethan Brooks','UX Research and Design','Open Skills Academy','2024-04-12','active'],
+        ['DEMO-MOOC-005','Linh Tran','Machine Learning Essentials','Coursera Learning Network','2024-05-09','revoked'],
+        ['DEMO-MOOC-006','Samira Patel','Cybersecurity Fundamentals','Digital Learning Institute','2024-06-14','active'],
+        ['DEMO-MOOC-007','Noah Kim','Business Writing','Digital Learning Institute','2024-07-01','active'],
+        ['DEMO-MOOC-008','Isabel Costa','SQL for Data Reporting','Coursera Learning Network','2024-08-16','active'],
+        ['DEMO-MOOC-009','Omar Hassan','Sustainable Cities','Open Skills Academy','2024-09-23','active'],
+        ['DEMO-MOOC-010','Zoe Williams','Digital Marketing Analytics','Digital Learning Institute','2024-10-30','active'],
+    ];
+    $db->beginTransaction();
+    $db->exec('DELETE FROM demo_mooc_registry');
+    $stmt = $db->prepare('INSERT INTO demo_mooc_registry (certificate_id,holder,title,issuer,issue_date,status) VALUES (:id,:holder,:title,:issuer,:date,:status)');
+    foreach ($records as $r) $stmt->execute(['id'=>$r[0],'holder'=>$r[1],'title'=>$r[2],'issuer'=>$r[3],'date'=>$r[4],'status'=>$r[5]]);
+
+    $cfg = [
+        'dsn' => 'mysql:host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=utf8mb4',
+        'user' => DB_USER, 'pass' => DB_PASS, 'table' => 'demo_mooc_registry',
+        'cols' => ['id'=>'certificate_id','holder'=>'holder','title'=>'title','issuer'=>'issuer','date'=>'issue_date','status'=>'status'],
+    ];
+    $encrypted = CryptoService::encryptConfig(json_encode($cfg, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
+    $upsert = $db->prepare("INSERT INTO external_sources (slug,label,type,config_json,enabled,allowed_host,rate_limit)
+        VALUES ('demo-mooc','DEMO MOOC registry','remote_db',:cfg,1,'localhost',30)
+        ON DUPLICATE KEY UPDATE label=VALUES(label),type=VALUES(type),config_json=VALUES(config_json),enabled=1,allowed_host='localhost',rate_limit=30");
+    $upsert->execute(['cfg'=>$encrypted]);
+    $db->commit();
+    echo "Seeded 10 invented Coursera-style records and enabled the DEMO MOOC registry source.\n";
+    echo "Look up DEMO-MOOC-001 through DEMO-MOOC-010 after applying migration 010 and setting EXT_REGISTRY_ENABLED=true.\n";
+} catch (Throwable $e) {
+    if (isset($db) && $db->inTransaction()) $db->rollBack();
+    fwrite(STDERR, "Seed failed. Check database connectivity and apply migration 010.\n");
+    error_log('[CertiVault] demo source seed failed: ' . $e->getMessage());
     exit(1);
 }
-
-$root = dirname(__DIR__);
-$dir = $root . '/private_data/external_source';
-if (!is_dir($dir) && !@mkdir($dir, 0770, true)) {
-    fwrite(STDERR, "[!] Could not create $dir\n");
-    exit(1);
-}
-$file = $dir . '/demo_external.sqlite';
-
-// Idempotent: always rebuild from scratch.
-@unlink($file);
-$pdo = new PDO('sqlite:' . $file, null, null, [
-    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-]);
-chmod($file, 0444); // the app only ever needs to READ this file
-
-$pdo->exec('CREATE TABLE external_certificates (
-    certificate_id TEXT PRIMARY KEY,
-    holder         TEXT NOT NULL,
-    title          TEXT NOT NULL,
-    issuer         TEXT NOT NULL,
-    issue_date     TEXT NOT NULL,
-    status         TEXT NOT NULL
-)');
-
-// Deliberately NON-CertiVault ID formats so the demo looks like a real
-// external registry; one revoked row exercises the status display.
-$sample = [
-    ['REG-2024-001', 'Priya Raghavan', 'Diploma in Geographic Information Systems', 'State Survey Council', '2024-03-15', 'active'],
-    ['REG-2024-002', 'Miguel Andrada', 'Advanced Water Quality Analysis', 'State Survey Council', '2024-06-02', 'active'],
-    ['LIC-88231', 'Fatima Zahra Bouadi', 'Licensed Structural Engineer', 'Province Engineering Board', '2023-11-20', 'active'],
-    ['SEA/MAR/2023/117', 'Daniel Okafor', 'Seafarer Certificate of Competency', 'Maritime Authority', '2023-08-14', 'revoked'],
-    ['reg-2024-009', 'Hsiao-Lin Chen', 'Cartographic Data Management', 'State Survey Council', '2024-10-30', 'active'],
-];
-$stmt = $pdo->prepare('INSERT INTO external_certificates (certificate_id, holder, title, issuer, issue_date, status) VALUES (?,?,?,?,?,?)');
-foreach ($sample as $row) {
-    $stmt->execute($row);
-}
-
-echo "[+] Seeded external demo source: $file (read-only file)\n";
-echo "    Sample lookup IDs: REG-2024-001, reg-2024-009 (case-insensitive),\n";
-echo "                       SEA/MAR/2023/117 (revoked example), LIC-88231\n\n";
-echo "Enable the feature in src/config/config.local.php:\n\n";
-echo "    define('EXT_SOURCE_ENABLED', true);\n";
-echo "    define('EXT_DB_DSN', 'sqlite:" . $file . "');\n";
-echo "    define('EXT_DB_LABEL', 'Regional Registry (demo)');\n\n";
-echo "Then verify an ID NOT present in CertiVault, e.g. REG-2024-001, on verify.php:\n";
-echo "CertiVault shows INVALID locally plus a separate external-source card.\n";

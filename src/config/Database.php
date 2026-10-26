@@ -15,6 +15,21 @@ class Database {
                 PDO::ATTR_EMULATE_PREPARES   => false,
             ];
             $this->pdo = new PDO($dsn, DB_USER, DB_PASS, $options);
+
+            // Align the MySQL session time zone with PHP's. Several queries
+            // compare MySQL NOW()/CURRENT_TIMESTAMP against PHP time()
+            // (OTP resend cooldown, login-lockout remaining, remember-me
+            // expiry). On XAMPP the MySQL server often uses the OS zone
+            // while PHP uses date.timezone, so those comparisons can skew
+            // by the offset (observed: Europe/Berlin vs Asia/Calcutta).
+            // date('P') is a fixed "+HH:MM"/"-HH:MM" value (never user
+            // input). Numeric offsets work without MySQL tz tables.
+            try {
+                $this->pdo->exec("SET time_zone = '" . date('P') . "'");
+            } catch (\PDOException $e) {
+                // Non-fatal: keep the server default if the offset is
+                // rejected, so the app still connects.
+            }
         } catch (\PDOException $e) {
             throw new \PDOException($e->getMessage(), (int)$e->getCode());
         }

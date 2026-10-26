@@ -130,15 +130,21 @@ class SmartVerifyService
                     continue;
                 }
 
-                // Allow-listed issuer URLs → external_ref with code.
+                // Exact official hosts become actionable references. Close
+                // lookalikes are surfaced as warnings, never as links.
                 foreach (self::externalIssuers() as $slug => $issuer) {
-                    if ($host === $issuer['host']) {
+                    $hostMatch = self::classifyIssuerHost($host, $issuer['host']);
+                    if ($hostMatch === 'exact') {
                         $path = trim($parts['path'] ?? '', '/');
-                        if (preg_match('#^[A-Za-z0-9._\-]{3,64}$#', basename($path))
+                        $code = basename($path);
+                        if ($slug === 'credly' && preg_match('#^badges/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})(?:/(?:public_url|linked_in_profile))?$#i', $path, $uuid)) {
+                            $code = strtolower($uuid[1]);
+                        }
+                        if (preg_match('#^[A-Za-z0-9._\-]{3,64}$#', $code)
                             && !in_array('ext', $pushed, true)) {
                             $out[] = [
                                 'type' => 'external_ref',
-                                'value' => basename($path),
+                                'value' => $code,
                                 'issuer' => $slug,
                                 'label' => $issuer['label'],
                                 'url' => $url,
@@ -147,9 +153,18 @@ class SmartVerifyService
                             $pushed[] = 'ext';
                         }
                         break;
+                    } elseif ($hostMatch === 'suspicious' && !in_array('warning', $pushed, true)) {
+                        $out[] = ['type' => 'unsafe_link', 'issuer' => $slug, 'label' => $issuer['label'], 'host' => $host];
+                        $pushed[] = 'warning';
                     }
                 }
             }
+        }
+
+        if (!in_array('ext', $pushed, true)
+            && preg_match('/\b([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\b/i', $text, $uuid)) {
+            $out[] = ['type' => 'external_ref', 'value' => strtolower($uuid[1]), 'issuer' => 'credly', 'label' => 'Credly', 'reason' => 'Credly badge UUID'];
+            $pushed[] = 'ext';
         }
 
         // 2) Bare 43-char base64url token (possibly with "token=" label).
@@ -170,6 +185,34 @@ class SmartVerifyService
         }
 
         return $out;
+    }
+
+    /** Exact official-host match or a likely spoof (IDN, typo, nested domain). */
+    public static function classifyIssuerHost(string $host, string $officialHost): string
+    {
+        $host = strtolower($host);
+        $officialHost = strtolower($officialHost);
+        if (preg_match('/[^\x00-\x7F]/', $host)) return 'suspicious';
+        $officialRoot = preg_replace('/^www\./', '', $officialHost);
+        $hostRoot = preg_replace('/^www\./', '', $host);
+        if ($host === $officialHost || $host === $officialRoot) return 'exact';
+        if (str_contains($hostRoot, $officialRoot) || str_contains($hostRoot, 'xn--')) return 'suspicious';
+        $labels = explode('.', $hostRoot);
+        foreach ($labels as $label) {
+            if (levenshtein($label, $officialRoot) <= 2) return 'suspicious';
+        }
+        if (levenshtein($hostRoot, $officialRoot) <= 2) return 'suspicious';
+        return 'other';
+    }
+
+    public static function suspiciousIssuerUrl(string $url): ?string
+    {
+        $parts = @parse_url($url);
+        if (!$parts || empty($parts['host'])) return null;
+        foreach (self::externalIssuers() as $issuer) {
+            if (self::classifyIssuerHost(strtolower((string)$parts['host']), $issuer['host']) === 'suspicious') return $issuer['label'];
+        }
+        return null;
     }
 
     private static function looksLikeSelfVerifyUrl(string $host, string $url, array $selfHosts): bool
@@ -216,6 +259,9 @@ class SmartVerifyService
             return null;
         }
         $host = strtolower($parts['host']);
+        if (self::suspiciousIssuerUrl($url) !== null) {
+            return null;
+        }
         if (!preg_match('/^[a-z0-9.\-]+(\.[a-z]{2,})$/', $host)) {
             return null;
         }

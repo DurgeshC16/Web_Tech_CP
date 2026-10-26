@@ -124,9 +124,10 @@ try {
     $db->prepare('INSERT INTO users (email, password_hash, role, is_verified) VALUES (:e, "x", "student", 1)')
        ->execute(['e' => "lk-student-$tag@example.com"]);
     $stu_uid = $db->lastInsertId();
-    $db->prepare('INSERT INTO institutions (user_id, name, status) VALUES (:u, "Lookup Uni", "approved")')
-       ->execute(['u' => $inst_uid]);
-    $inst_id = $db->lastInsertId();
+     $db->prepare('INSERT INTO institutions (user_id, name, status) VALUES (:u, "Lookup Uni", "approved")')
+        ->execute(['u' => $inst_uid]);
+     $inst_id = $db->lastInsertId();
+     test_insert_institution_key($db, (int)$inst_id, '', '');
     $db->prepare('INSERT INTO students (user_id, full_name) VALUES (:u, "Lookup Student")')
        ->execute(['u' => $stu_uid]);
     $student_id = $db->lastInsertId();
@@ -188,9 +189,10 @@ try {
     $vc_admin_uid = $db->lastInsertId();
 
     $vc_keys = CryptoService::generateRSAKeyPair();
-    $db->prepare('INSERT INTO institutions (user_id, name, status, public_key, encrypted_private_key) VALUES (:u, "VC Uni", "approved", :pub, :priv)')
-       ->execute(['u' => $vc_admin_uid, 'pub' => $vc_keys['public_key'], 'priv' => CryptoService::encryptPrivateKey($vc_keys['private_key'])]);
-    $vc_inst_id = $db->lastInsertId();
+     $db->prepare('INSERT INTO institutions (user_id, name, status) VALUES (:u, "VC Uni", "approved")')
+        ->execute(['u' => $vc_admin_uid]);
+     $vc_inst_id = $db->lastInsertId();
+     test_insert_institution_key($db, (int)$vc_inst_id, $vc_keys['public_key'], CryptoService::encryptPrivateKey($vc_keys['private_key']));
 
     $db->prepare('INSERT INTO users (email, password_hash, role, is_verified) VALUES (:e, :h, "student", 1)')
        ->execute(['e' => $vc_student, 'h' => password_hash('x', PASSWORD_BCRYPT)]);
@@ -343,9 +345,60 @@ t_check('ssrf: https required (http rejected)', ExternalSourceService::httpGet('
     && str_contains(ExternalSourceService::httpGet('http://8.8.8.8/a.json')[1] ?? '', 'HTTPS'));
 t_check('ssrf: empty allowlist rejects host', ExternalSourceService::httpGet('https://evil-allowlist-test-xyz.example.org/a.json')[0] === null);
 
+// Credly resolver: all network stages are mocked, including unhappy paths.
+$credlyHosts = ['api.credly.com', 'www.credly.com'];
+$uuidHappy = '4f3b2b2a-7b1e-4f05-9c8a-9b731a12c001';
+$uuidRevoked = '4f3b2b2a-7b1e-4f05-9c8a-9b731a12c002';
+$credlyDocs = [
+    'https://api.credly.com/v1/obi/v2/badge_assertions/' . $uuidHappy => ['assertion'=>[
+        'badge'=>'https://www.credly.com/organizations/demo/badges/data-class', 'issuedOn'=>'2024-06-15T00:00:00Z',
+        'recipientProfile'=>['name'=>'Demo Learner'], 'revoked'=>false]],
+    'https://www.credly.com/organizations/demo/badges/data-class' => ['name'=>'Data Skills','issuer'=>'https://www.credly.com/organizations/demo'],
+    'https://www.credly.com/organizations/demo' => ['name'=>'Demo Academy'],
+    'https://api.credly.com/v1/obi/v2/badge_assertions/' . $uuidRevoked => ['assertion'=>[
+        'badge'=>'https://www.credly.com/organizations/demo/badges/data-class', 'issuedOn'=>'2023-01-02',
+        'recipient'=>['hashed'=>true,'identity'=>'sha256$hidden'], 'revoked'=>true]],
+];
+ExternalSourceService::setHttpGetOverride(function ($url, $hosts) use (&$credlyDocs, $credlyHosts) {
+    if ($hosts !== $credlyHosts) return [null, 'unexpected allow-list'];
+    return isset($credlyDocs[$url]) ? [json_encode($credlyDocs[$url]), null] : [null, '404 Not Found'];
+});
+$credly = new CredlyAdapter('Credly test', $credlyHosts);
+$happy = $credly->fetch($uuidHappy);
+t_check('credly: assertion -> badge -> issuer normalized', is_array($happy) && $happy['holder']==='Demo Learner'
+    && $happy['title']==='Data Skills' && $happy['issuer']==='Demo Academy' && $happy['issue_date']==='2024-06-15'
+    && $happy['status']==='active' && str_contains($happy['source_url'], $uuidHappy));
+t_check('credly: public badge URL normalized to UUID', CredlyAdapter::normalizeId('https://www.credly.com/badges/' . $uuidHappy) === $uuidHappy);
+t_check('credly: copied public_url suffix normalized', CredlyAdapter::normalizeId('https://www.credly.com/badges/' . $uuidHappy . '/public_url') === $uuidHappy);
+t_check('credly: lookalike URL rejected as ID', CredlyAdapter::normalizeId('https://www.credly.com.evil.test/badges/' . $uuidHappy) === null);
+t_check('credly: 404 not found remains no hit', $credly->fetch('4f3b2b2a-7b1e-4f05-9c8a-9b731a12c003') === null);
+$revokedCredly = $credly->fetch($uuidRevoked);
+t_check('credly: revoked assertion remains revoked', is_array($revokedCredly) && $revokedCredly['status'] === 'revoked');
+ExternalSourceService::setHttpGetOverride(function () { return [null, 'timed out']; });
+t_check('credly: timeout remains no hit', (new CredlyAdapter('Credly timeout', $credlyHosts))->fetch('4f3b2b2a-7b1e-4f05-9c8a-9b731a12c004') === null);
+ExternalSourceService::setHttpGetOverride(null);
+
 // ── Smart Verify: schema self-heal for the TEST database (migration 009
 //    equivalents, guarded — safe to re-run on any state) ─────────────
 $sv_db = test_db();
+$sv_db->exec("CREATE TABLE IF NOT EXISTS external_sources (
+    id INT AUTO_INCREMENT PRIMARY KEY, slug VARCHAR(64) NOT NULL UNIQUE, label VARCHAR(120) NOT NULL,
+    type ENUM('open_badges','remote_db') NOT NULL, config_json LONGTEXT NOT NULL,
+    enabled TINYINT(1) NOT NULL DEFAULT 0, allowed_host VARCHAR(255) NOT NULL,
+    rate_limit SMALLINT UNSIGNED NOT NULL DEFAULT 15, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_external_sources_enabled (enabled)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+$registrySecret = 'credly-test-secret-never-plaintext';
+$encryptedRegistry = CryptoService::encryptConfig(json_encode(['provider'=>'credly','api_token'=>$registrySecret]));
+$sv_db->beginTransaction();
+try {
+    $ins = $sv_db->prepare("INSERT INTO external_sources (slug,label,type,config_json,enabled,allowed_host,rate_limit) VALUES ('test-credly-registry','Credly test','open_badges',:cfg,1,'api.credly.com,www.credly.com',7)");
+    $ins->execute(['cfg'=>$encryptedRegistry]);
+    $registryAdapters = ExternalSourceService::adapters($sv_db, true);
+    t_check('external registry: enabled encrypted row creates Credly adapter', count(array_filter($registryAdapters, fn($a) => $a instanceof CredlyAdapter && $a->name()==='Credly test')) === 1);
+    t_check('external registry: secrets are encrypted at rest', !str_contains($encryptedRegistry, $registrySecret)
+        && json_decode(CryptoService::decryptConfig($encryptedRegistry), true)['api_token'] === $registrySecret);
+} finally { $sv_db->rollBack(); }
 $sv_qt = $sv_db->query("SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'verification_logs' AND COLUMN_NAME = 'query_type'")->fetchColumn();
 if (is_string($sv_qt) && !str_contains($sv_qt, "'file'")) {
     $sv_db->exec("ALTER TABLE verification_logs MODIFY COLUMN query_type ENUM('token','certificate_id','file','qr_image','text','external_ref') NOT NULL");
@@ -384,6 +437,15 @@ t_check('smart: coursera link built', is_array($link) && str_starts_with($link['
 t_check('smart: unknown issuer => null', SmartVerifyService::buildIssuerLink('doodlebug', 'abc123') === null);
 t_check('smart: unsafe code chars => null', SmartVerifyService::buildIssuerLink('coursera', 'abc/../etc') === null);
 t_check('smart: too-short code => null', SmartVerifyService::buildIssuerLink('coursera', 'ab') === null);
+t_check('smart: exact Coursera host recognized', SmartVerifyService::classifyIssuerHost('www.coursera.org','www.coursera.org') === 'exact');
+t_check('smart: nested Coursera lookalike flagged', SmartVerifyService::classifyIssuerHost('coursera.org.evil.com','www.coursera.org') === 'suspicious');
+t_check('smart: Coursera typo flagged', SmartVerifyService::classifyIssuerHost('www.coursera.orq','www.coursera.org') === 'suspicious');
+t_check('smart: Unicode IDN lookalike flagged', SmartVerifyService::classifyIssuerHost('www.cоursera.org','www.coursera.org') === 'suspicious');
+t_check('smart: punycode host flagged', SmartVerifyService::classifyIssuerHost('www.xn--coursera-9za.org','www.coursera.org') === 'suspicious');
+t_check('smart: pasted spoof becomes warning not issuer ref', has_candidate(SmartVerifyService::extractCandidates('https://coursera.org.evil.com/verify/abc123'),'unsafe_link'));
+t_check('smart: pasted Credly badge resolves external candidate', has_candidate(SmartVerifyService::extractCandidates('https://www.credly.com/badges/' . $uuidHappy),'external_ref'));
+$credlyCandidate = array_values(array_filter(SmartVerifyService::extractCandidates('https://www.credly.com/badges/' . $uuidHappy . '/public_url'), fn($c) => ($c['type'] ?? '') === 'external_ref'))[0] ?? [];
+t_check('smart: Credly public_url suffix extracts badge UUID', ($credlyCandidate['value'] ?? '') === $uuidHappy);
 t_check('smart: other link https ok', is_array(SmartVerifyService::validateOtherLink('https://example.org/verify/certs/abc')));
 t_check('smart: other link http rejected', SmartVerifyService::validateOtherLink('http://example.org/verify/certs/abc') === null);
 t_check('smart: other link private-ip literal rejected', SmartVerifyService::validateOtherLink('https://169.254.10.10/verify') === null);
@@ -403,8 +465,9 @@ try {
     $svInstUid = $sv_db->lastInsertId();
     $sv_db->prepare('INSERT INTO users (email, password_hash, role, is_verified) VALUES (:e, "x", "student", 1)')->execute(['e' => "sv-student-$svTag@example.com"]);
     $svStuUid = $sv_db->lastInsertId();
-    $sv_db->prepare('INSERT INTO institutions (user_id, name, status) VALUES (:u, "SV Uni", "approved")')->execute(['u' => $svInstUid]);
-    $svInstId = $sv_db->lastInsertId();
+     $sv_db->prepare('INSERT INTO institutions (user_id, name, status) VALUES (:u, "SV Uni", "approved")')->execute(['u' => $svInstUid]);
+     $svInstId = $sv_db->lastInsertId();
+     test_insert_institution_key($sv_db, (int)$svInstId, '', '');
     $sv_db->prepare('INSERT INTO students (user_id, full_name) VALUES (:u, "SV Student")')->execute(['u' => $svStuUid]);
     $svStudentId = $sv_db->lastInsertId();
 
@@ -492,10 +555,10 @@ try {
     $tsSid = (int)$ts_db->lastInsertId();
 
     $tsPair = CryptoService::generateRSAKeyPair();
-    $ts_db->prepare('INSERT INTO institutions (user_id, name, status, public_key, encrypted_private_key)
-                     VALUES (:u, "Trust Score Uni", "approved", :pk, "")')
-        ->execute(['u' => $tsUser, 'pk' => $tsPair['public_key']]);
-    $tsIid = (int)$ts_db->lastInsertId();
+     $ts_db->prepare('INSERT INTO institutions (user_id, name, status) VALUES (:u, "Trust Score Uni", "approved")')
+         ->execute(['u' => $tsUser]);
+     $tsIid = (int)$ts_db->lastInsertId();
+     test_insert_institution_key($ts_db, $tsIid, $tsPair['public_key'], CryptoService::encryptPrivateKey($tsPair['private_key']));
 
     // Harmless text fixture file under private_data/uploads/ (the ONLY way
     // the hash check has real bytes to baseline against).
@@ -536,9 +599,10 @@ try {
     }
 
     $ts_rows = $ts_db->prepare('
-        SELECT c.*, i.name AS institution_name, i.public_key, s.full_name AS student_name
+        SELECT c.*, i.name AS institution_name, ik.public_key, s.full_name AS student_name
         FROM certificates c
         JOIN institutions i ON c.institution_id = i.id
+        LEFT JOIN institution_keys ik ON ik.institution_id=c.institution_id AND ik.key_id=c.key_id
         JOIN students s ON c.student_id = s.id
         WHERE c.certificate_id LIKE "CV-2026-810%" ORDER BY c.id
     ');
@@ -637,10 +701,10 @@ try {
     $api_db->prepare('INSERT INTO students (user_id, full_name) VALUES (:u, "API Student")')->execute(['u' => $apiUid]);
     $apiSid = (int)$api_db->lastInsertId();
     $apiPair = CryptoService::generateRSAKeyPair();
-    $api_db->prepare('INSERT INTO institutions (user_id, name, status, public_key, encrypted_private_key)
-                      VALUES (:u, "API Status Uni", "approved", :pk, "")')
-        ->execute(['u' => $apiUid, 'pk' => $apiPair['public_key']]);
-    $apiIid = (int)$api_db->lastInsertId();
+     $api_db->prepare('INSERT INTO institutions (user_id, name, status) VALUES (:u, "API Status Uni", "approved")')
+         ->execute(['u' => $apiUid]);
+     $apiIid = (int)$api_db->lastInsertId();
+     test_insert_institution_key($api_db, $apiIid, $apiPair['public_key'], CryptoService::encryptPrivateKey($apiPair['private_key']));
 
     $api_file = __DIR__ . '/../private_data/uploads/api_fixture_' . $apiTag . '.pdf';
     file_put_contents($api_file, "%PDF-1.4\nAPI fixture $apiTag\n" . str_repeat('a', 60));
@@ -723,8 +787,9 @@ try {
     $stSid = (int)$st_db->lastInsertId();
 
     // One owned certificate; no verification traffic yet.
-    $st_db->prepare('INSERT INTO institutions (user_id, name, status) VALUES (:u, "Stats Uni", "approved")')->execute(['u' => $stUid]);
-    $stIid = (int)$st_db->lastInsertId();
+     $st_db->prepare('INSERT INTO institutions (user_id, name, status) VALUES (:u, "Stats Uni", "approved")')->execute(['u' => $stUid]);
+     $stIid = (int)$st_db->lastInsertId();
+     test_insert_institution_key($st_db, (int)$stIid, '', '');
     $st_db->prepare('INSERT INTO certificates
         (certificate_id, institution_id, student_id, title, issue_date, file_path, status, version)
         VALUES ("CV-2026-830001", :iid, :sid, "Stats Score", "2026-03-03", "none.pdf", "active", 1)')

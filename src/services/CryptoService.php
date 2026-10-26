@@ -3,6 +3,42 @@
 require_once __DIR__ . '/../config/config.php';
 
 class CryptoService {
+
+    /** Stable colon-separated SHA-256 fingerprint of a public PEM. */
+    public static function fingerprintPublicKey(string $publicKey): string {
+        $compact = preg_replace('/\s+/', '', trim($publicKey));
+        if ($compact === '') throw new InvalidArgumentException('A public key is required for fingerprinting.');
+        return strtoupper(implode(':', str_split(hash('sha256', $compact), 2)));
+    }
+
+    /** Encrypt arbitrary application configuration with authenticated GCM. */
+    public static function encryptConfig(string $plaintext): string {
+        $key = self::dataKey();
+        $iv = random_bytes(12);
+        $tag = '';
+        $ciphertext = openssl_encrypt($plaintext, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag);
+        if ($ciphertext === false) {
+            throw new Exception('Configuration could not be encrypted.');
+        }
+        return 'CFG1.' . base64_encode($iv . $tag . $ciphertext);
+    }
+
+    /** Decrypt a CFG1 config blob; authentication failures are fatal. */
+    public static function decryptConfig(string $encrypted): string {
+        if (!str_starts_with($encrypted, 'CFG1.')) {
+            throw new Exception('Encrypted configuration has an unsupported format.');
+        }
+        $data = base64_decode(substr($encrypted, 5), true);
+        if ($data === false || strlen($data) < 29) {
+            throw new Exception('Encrypted configuration is incomplete.');
+        }
+        $plain = openssl_decrypt(substr($data, 28), 'aes-256-gcm', self::dataKey(), OPENSSL_RAW_DATA,
+            substr($data, 0, 12), substr($data, 12, 16));
+        if ($plain === false) {
+            throw new Exception('Encrypted configuration could not be decrypted with the current key.');
+        }
+        return $plain;
+    }
     
     /**
      * Generate an RSA Key Pair

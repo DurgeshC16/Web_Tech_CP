@@ -35,6 +35,7 @@ $stats_totals = StudentStatsService::totals($db, (int)$student_id);
             <h2>My Certificates</h2>
             <div>
                 <a href="change_password.php" class="btn btn-secondary">Change Password</a>
+                <?php if (defined('ATTESTED_EXTERNAL_CREDENTIALS_ENABLED') && ATTESTED_EXTERNAL_CREDENTIALS_ENABLED): ?><a href="external_credentials.php" class="btn btn-primary">External credentials</a><?php endif; ?>
             </div>
         </div>
 

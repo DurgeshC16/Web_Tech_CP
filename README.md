@@ -297,18 +297,10 @@ external attempt logged to `verification_logs` as `EXTERNAL_FOUND` /
 `EXTERNAL_NOT_FOUND` / `EXTERNAL_ERROR` (run migration 008 first;
 without it the row falls back to an `INVALID` + `[external] …` detail).
 
-**Enable offline demo:**
-```bash
-php scripts/seed_external_source.php
-```
-then in `src/config/config.local.php`:
-```php
-define('EXT_SOURCE_ENABLED', true);
-define('EXT_DB_DSN', 'sqlite:C:/path/to/private_data/external_source/demo_external.sqlite');
-define('EXT_DB_LABEL', 'Regional Registry (demo)');
-```
-Sample IDs to verify on verify.php: `REG-2024-001`, `reg-2024-009`
-(case-insensitive), `LIC-88231`; `SEA/MAR/2023/117` is a revoked example.
+**Enable the offline MySQL demo:** first apply migration 010, then run
+`php scripts/seed_external_source.php` and set `EXT_REGISTRY_ENABLED` to true
+in local configuration. It creates the `DEMO MOOC registry` managed source
+and ten fictional records (`DEMO-MOOC-001` through `DEMO-MOOC-010`).
 
 **Limitation:** CertiVault cannot cryptographically verify records it does
 not hold — hashes, signatures and files only exist for locally issued
@@ -400,3 +392,111 @@ the exact PHP version is not advertised to scanners (verify with
 `display_errors = Off` (with `log_errors = On`, already configured in
 `src/config/config.php`) keeps stack traces out of responses; errors go to
 `private_data/php_errors.log` instead.
+
+## Managed external-source registry (migration 010)
+
+The super-admin dashboard has an **External sources** tab for adding,
+editing, testing and disabling sources. Apply `database/migrations/010_external_sources_registry.sql`
+first. Registry configuration (including passwords and tokens) is stored as
+authenticated AES-256-GCM ciphertext using `CryptoService`; the UI never
+re-displays secret values. Set `EXT_REGISTRY_ENABLED=true` in local config to
+turn on registry lookups; this is OFF by default. Existing `EXT_*` settings
+remain the fallback when no enabled managed source is available.
+
+For Credly add an `open_badges` source with `{"provider":"credly"}` and
+allowed hosts `api.credly.com,www.credly.com`. Credly assertions, badge-class
+documents and issuer documents are fetched only through the HTTPS SSRF-guarded
+HTTP client. Enter either the badge UUID or its `https://www.credly.com/badges/<uuid>`
+URL. External results always remain in the separate **Not verified by
+CertiVault** card.
+Public Credly badge URL to smoke-test: `https://www.credly.com/badges/2ce07a8a-ba1c-450f-98d6-bad4deffe5f5` (the public “Sample Badge” record).
+
+For an offline example run `php scripts/seed_external_source.php`, then enable
+`EXT_REGISTRY_ENABLED`; look up `DEMO-MOOC-001` through `DEMO-MOOC-010`. These
+10 invented Coursera-style records are held in the local MySQL database. They
+are not real Coursera certificates and are never CertiVault-verified.
+
+Pasted URLs are matched against exact official issuer hosts. Likely typosquats,
+IDN/punycode and nested lookalikes are shown as warnings and never emitted as
+clickable links. Use a real public Credly badge URL for an online smoke test;
+the demo registry provides deterministic offline coverage.
+
+## Attested external credentials
+
+Apply `database/migrations/011_attested_external_credentials.sql` and opt in
+by setting `ATTESTED_EXTERNAL_CREDENTIALS_ENABLED=true` in local config (it is
+OFF by default). Students
+can add Coursera, Credly, NPTEL, or a custom issuer host from the enabled
+managed-source allow-list, enter an official verification URL or code, and
+optionally attach a PDF. The record begins as `SELF_DECLARED`. An approved
+institution administrator must open the exact-host-validated issuer link,
+compare the evidence, and explicitly attest it. Its signature covers the
+student identity, issuer, code, URL, title, issue date, optional PDF SHA-256,
+attesting institution, and attestation timestamp. The institution may later
+withdraw its attestation. QR and public share links resolve to
+`public/external_credential.php`; the page never calls the issuer and never
+returns `VALID`. A trust-score variant is capped at 70 and means only that an
+institution signed its own claim.
+
+### Why we don't scrape Coursera
+
+CertiVault does not scrape Coursera, Credly, NPTEL, or other issuer sites and
+does not make server-side requests to them. Scraping is brittle, can violate
+issuer terms, may expose student identifiers, and would falsely suggest that
+CertiVault independently validated a credential. Instead, the student shares
+the official link and an approved institution representative checks it in
+their browser. The institution's signed attestation is attributed to that
+institution; it is not an issuer signature or a CertiVault verification.
+
+## Institution key history and transparency log
+
+Apply `database/migrations/012_versioned_keys_transparency_log.sql`, then opt
+in by setting `CERTIFICATE_TRANSPARENCY_ENABLED=true` in local config (OFF by
+default). Existing
+certificates receive `key_id=1` and are not re-signed. New certificates use
+the institution's active key version; retired public keys remain available to
+verify historical signatures. Institution dashboards, `institutions.php`,
+the verify page and `/.well-known/certivault-keys.json` show key versions and
+SHA-256 fingerprints. Compare fingerprints through a channel independent of
+CertiVault before trusting a key.
+
+Certificate issuance, revocation and supersession append leaves to
+`tlog_entries`. A leaf is SHA-256 of
+`certificate_id|sha256_hash|signature|certificates.created_at` (`created_at`
+is the immutable issuance timestamp). Publish signed checkpoints periodically:
+
+```sh
+php scripts/publish_checkpoint.php
+```
+
+The first run creates a dedicated platform RSA key pair under
+`private_data/tlog/`; back up and protect the private key, and pin the public
+key fingerprint independently. The command writes `public/checkpoints/latest.json`.
+Schedule it with cron/Task Scheduler after migration 012. The verify page and
+status API include inclusion proofs and flag a database/log mismatch.
+
+### Anchor checkpoints outside CertiVault
+
+Publish each `latest.json` to a **separate, public GitHub repository** whose
+credentials CertiVault does not possess (prefer a protected branch and signed
+commits). For example, a separate operator can periodically download
+`https://your-certivault-host/checkpoints/latest.json` and commit it to that
+repository. Compare the downloaded copy to the local published checkpoint:
+
+```sh
+php scripts/compare_checkpoint.php path/to/out-of-band/latest.json
+```
+
+The comparison checks tree size, Merkle root, and the checkpoint signature
+against the locally pinned platform public key. A mismatch is evidence that
+the local database/checkpoint changed or the published anchor is stale.
+
+For paper measurements run:
+
+```sh
+php tests/benchmark_transparency_log.php
+```
+
+It prints CSV timings for leaf append/hash, proof generation and verification
+at 1k, 10k and 100k entries; these in-memory primitive timings exclude SQL and
+network I/O.

@@ -16,6 +16,15 @@ define('SMTP_ENCRYPTION', 'tls');
 define('SMTP_FROM_EMAIL', 'your-email@gmail.com');
 define('SMTP_FROM_NAME', 'CertiVault');
 
+// ── LOCAL DEVELOPMENT mail transport (no SMTP account needed) ───────
+// Uncomment to stop sending real email and instead write each message
+// (including the OTP) to private_data/mail/*.eml so you can read the
+// code locally. This is refused when CV_ENV=production, so it can never
+// silently disable real delivery on a live system. Verification itself
+// is unchanged — codes are still hashed, stored and checked.
+// define('MAIL_TRANSPORT', 'file');
+// Or set the CV_MAIL_TRANSPORT=file environment variable.
+
 // Server-side data key for institution RSA private keys at rest (any long
 // random string; changing it orphans previously encrypted keys).
 // define('APP_ENCRYPTION_KEY', 'paste-a-long-random-string-here');

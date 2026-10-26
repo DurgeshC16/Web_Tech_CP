@@ -27,10 +27,12 @@ $role = $_SESSION['role'] ?? null;
                 <a href="register_student.php">Register</a>
             <?php elseif ($role === 'student'): ?>
                 <a href="student_dashboard.php">My Certificates</a>
+                <?php if (defined('ATTESTED_EXTERNAL_CREDENTIALS_ENABLED') && ATTESTED_EXTERNAL_CREDENTIALS_ENABLED): ?><a href="external_credentials.php">External credentials</a><?php endif; ?>
                 <a href="verify.php">Verify</a>
                 <a href="change_password.php">Change Password</a>
             <?php elseif ($role === 'admin'): ?>
                 <a href="admin_dashboard.php">Dashboard</a>
+                <?php if (defined('ATTESTED_EXTERNAL_CREDENTIALS_ENABLED') && ATTESTED_EXTERNAL_CREDENTIALS_ENABLED): ?><a href="attest_external_credentials.php">Attestation queue</a><?php endif; ?>
                 <a href="issue_certificate.php">Issue</a>
                 <a href="audit_logs.php">Audit Logs</a>
                 <a href="change_password.php">Change Password</a>
@@ -38,6 +40,8 @@ $role = $_SESSION['role'] ?? null;
                 <a href="super_admin.php">Dashboard</a>
                 <a href="change_password.php">Change Password</a>
             <?php endif; ?>
+
+            <?php if (defined('CERTIFICATE_TRANSPARENCY_ENABLED') && CERTIFICATE_TRANSPARENCY_ENABLED): ?><a href="institutions.php">Institution keys</a><?php endif; ?>
 
             <?php if ($role): ?>
                 <form method="POST" action="logout.php" class="nav-logout">

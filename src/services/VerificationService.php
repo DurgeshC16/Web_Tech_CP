@@ -15,6 +15,42 @@ require_once __DIR__ . '/CryptoService.php';
 
 class VerificationService {
 
+    // ── Public verification rate limiting (per IP) ──────────────────────
+    // At most VERIFY_RATE_MAX *distinct* lookups are allowed from one IP
+    // within VERIFY_RATE_WINDOW_MINUTES. The next distinct lookup in the
+    // window is rejected (HTTP 429). Repeated lookups of the same value
+    // cost nothing, so a legitimate reload/refresh never trips the limit.
+    const VERIFY_RATE_MAX = 30;
+    const VERIFY_RATE_WINDOW_MINUTES = 10;
+    // Distinct lookups past this count in the window are logged as a
+    // possible enumeration attempt (warning only, never blocks).
+    const VERIFY_ENUM_WARN = 20;
+
+    /**
+     * Count the distinct query values this IP has looked up inside the
+     * current window. Must be called BEFORE the current lookup is logged
+     * so the boundary is "already-seen count".
+     */
+    public static function recentLookupCount($db, $ip) {
+        // VERIFY_RATE_WINDOW_MINUTES is an int class constant (never user
+        // input), so inlining it here is injection-safe.
+        $stmt = $db->prepare(
+            'SELECT COUNT(DISTINCT query_value) FROM verification_logs
+             WHERE verifier_ip = :ip
+               AND verified_at > DATE_SUB(NOW(), INTERVAL ' . (int)self::VERIFY_RATE_WINDOW_MINUTES . ' MINUTE)'
+        );
+        $stmt->execute(['ip' => $ip]);
+        return (int)$stmt->fetchColumn();
+    }
+
+    /**
+     * True when this IP has already made VERIFY_RATE_MAX distinct lookups
+     * in the window, i.e. the request about to be served is over the limit.
+     */
+    public static function isRateLimited($db, $ip) {
+        return self::recentLookupCount($db, $ip) >= self::VERIFY_RATE_MAX;
+    }
+
     /**
      * Fetch a certificate row (with institution name, public key, and
      * student name) by QR token, or null when not found.
@@ -65,10 +101,11 @@ class VerificationService {
 
         // Layer 1: exact match, case-insensitive.
         $sql = '
-            SELECT c.*, i.name AS institution_name, i.public_key,
+            SELECT c.*, i.name AS institution_name, ik.public_key, ik.status AS signing_key_status,
                    s.full_name AS student_name
             FROM certificates c
             JOIN institutions i ON c.institution_id = i.id
+            LEFT JOIN institution_keys ik ON ik.institution_id = c.institution_id AND ik.key_id = c.key_id
             JOIN students     s ON c.student_id     = s.id
             WHERE LOWER(c.certificate_id) = LOWER(:val)
             LIMIT 1
@@ -86,10 +123,11 @@ class VerificationService {
             : null;
         if ($norm !== null && strcasecmp($norm, $raw) !== 0) {
             $sql = '
-                SELECT c.*, i.name AS institution_name, i.public_key,
+                SELECT c.*, i.name AS institution_name, ik.public_key, ik.status AS signing_key_status,
                        s.full_name AS student_name
                 FROM certificates c
                 JOIN institutions i ON c.institution_id = i.id
+                LEFT JOIN institution_keys ik ON ik.institution_id = c.institution_id AND ik.key_id = c.key_id
                 JOIN students     s ON c.student_id     = s.id
                 WHERE c.certificate_id = :norm
                 LIMIT 1
@@ -108,10 +146,11 @@ class VerificationService {
             return null;
         }
         $sql = '
-            SELECT c.*, i.name AS institution_name, i.public_key,
+            SELECT c.*, i.name AS institution_name, ik.public_key, ik.status AS signing_key_status,
                    s.full_name AS student_name
             FROM certificates c
             JOIN institutions i ON c.institution_id = i.id
+            LEFT JOIN institution_keys ik ON ik.institution_id = c.institution_id AND ik.key_id = c.key_id
             JOIN students     s ON c.student_id     = s.id
             WHERE LOWER(REPLACE(REPLACE(REPLACE(REPLACE(c.certificate_id, " ", ""), "-", ""), "/", ""), ".", "")) = :compact
             LIMIT 1
@@ -125,10 +164,11 @@ class VerificationService {
     private static function findOne($db, $column, $value) {
         // Never interpolate anything but a fixed column name.
         $sql = '
-            SELECT c.*, i.name AS institution_name, i.public_key,
+            SELECT c.*, i.name AS institution_name, ik.public_key, ik.status AS signing_key_status,
                    s.full_name AS student_name
             FROM certificates c
             JOIN institutions i ON c.institution_id = i.id
+            LEFT JOIN institution_keys ik ON ik.institution_id = c.institution_id AND ik.key_id = c.key_id
             JOIN students     s ON c.student_id     = s.id
             WHERE ' . $column . ' = :val
             LIMIT 1

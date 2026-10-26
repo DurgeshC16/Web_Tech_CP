@@ -13,6 +13,7 @@
 
 require_once __DIR__ . '/VerificationService.php';
 require_once __DIR__ . '/TrustScoreService.php';
+require_once __DIR__ . '/TransparencyLogService.php';
 
 class StatusApiService
 {
@@ -67,6 +68,12 @@ class StatusApiService
                 'issue_date'     => $cert['issue_date'],
                 'status'         => $cert['status'],
             ],
+            'signing_key' => defined('CERTIFICATE_TRANSPARENCY_ENABLED') && CERTIFICATE_TRANSPARENCY_ENABLED ? [
+                'version' => (int)($cert['key_id'] ?? 1),
+                'fingerprint_sha256' => !empty($cert['public_key']) ? CryptoService::fingerprintPublicKey((string)$cert['public_key']) : null,
+            ] : null,
+            'transparency_log' => defined('CERTIFICATE_TRANSPARENCY_ENABLED') && CERTIFICATE_TRANSPARENCY_ENABLED
+                ? TransparencyLogService::certificateStatus($db, $cert) : null,
             'trust_score' => [
                 'score'   => $trusted['score'],
                 'checks'  => array_map(

@@ -1,12 +1,11 @@
 <?php
-// scripts/repair_institution_keys.php <institution_id> [--force]
-// CLI only. Generates a fresh key pair for ONE institution.
+// scripts/repair_institution_keys.php <institution_id>
+// CLI-only recovery rotation for ONE institution. Historical key versions
+// remain in institution_keys and continue verifying old certificates.
 //
 // Safety:
-// - Refuses if the current key already decrypts and matches the stored public key.
-// - Refuses if the institution has issued certificates unless --force is passed.
-//   With --force, old certificates will fail re-verification because their signatures
-//   were made with the previous public key.
+// - Refuses if the current active key already decrypts and matches its public key.
+// - Rotation preserves retired public keys; it never re-signs certificates.
 // - Requires typed confirmation of the institution id before changing anything.
 
 if (php_sapi_name() !== 'cli') {
@@ -15,12 +14,11 @@ if (php_sapi_name() !== 'cli') {
 }
 
 if ($argc < 2) {
-    fwrite(STDERR, "Usage: php scripts/repair_institution_keys.php <institution_id> [--force]\n");
+    fwrite(STDERR, "Usage: php scripts/repair_institution_keys.php <institution_id>\n");
     exit(1);
 }
 
 $institutionId = (int)$argv[1];
-$force = in_array('--force', $argv, true);
 
 if (!getenv('OPENSSL_CONF')) {
     foreach (['C:\\xampp\\php\\extras\\openssl\\openssl.cnf', 'C:\\xampp\\php\\extras\\ssl\\openssl.cnf', 'C:\\xampp\\apache\\conf\\openssl.cnf'] as $candidate) {
@@ -33,7 +31,7 @@ require_once __DIR__ . '/../src/config/Database.php';
 require_once __DIR__ . '/../src/services/CryptoService.php';
 
 $db = Database::getInstance();
-$stmt = $db->prepare('SELECT id, name, status, public_key, encrypted_private_key FROM institutions WHERE id = :id');
+$stmt = $db->prepare('SELECT id, name, status FROM institutions WHERE id = :id');
 $stmt->execute(['id' => $institutionId]);
 $inst = $stmt->fetch();
 
@@ -42,33 +40,28 @@ if (!$inst) {
     exit(1);
 }
 
+$keyStmt=$db->prepare('SELECT key_id,public_key,encrypted_private_key FROM institution_keys WHERE institution_id=:iid AND status="active" ORDER BY key_id DESC LIMIT 1');
+$keyStmt->execute(['iid'=>$institutionId]);
+$currentKey=$keyStmt->fetch(PDO::FETCH_ASSOC);
 $currentDecrypts = false;
 $currentMatches = false;
 try {
-    $currentPrivate = CryptoService::decryptPrivateKey($inst['encrypted_private_key'] ?? '');
+    $currentPrivate = CryptoService::decryptPrivateKey($currentKey['encrypted_private_key'] ?? '');
     $currentDecrypts = true;
-    $currentMatches = !empty($inst['public_key']) && CryptoService::verifyKeyPair($currentPrivate, $inst['public_key']);
+    $currentMatches = !empty($currentKey['public_key']) && CryptoService::verifyKeyPair($currentPrivate, $currentKey['public_key']);
 } catch (Exception $e) {
     $currentDecrypts = false;
     $currentMatches = false;
 }
 
-if ($currentDecrypts && $currentMatches) {
-    fwrite(STDOUT, "Refused: institution {$institutionId} already has a decryptable, matching key pair.\n");
-    exit(0);
-}
+if ($currentDecrypts && $currentMatches) { fwrite(STDOUT,"Active key is healthy; use the dashboard Rotate key action for a planned rotation.\n"); exit(0); }
 
 $countStmt = $db->prepare('SELECT COUNT(*) FROM certificates WHERE institution_id = :id');
 $countStmt->execute(['id' => $institutionId]);
 $certCount = (int)$countStmt->fetchColumn();
 
-if ($certCount > 0 && !$force) {
-    fwrite(STDERR, "Refused: institution {$institutionId} has {$certCount} certificate(s). Re-running with --force will make old certificates fail verification because the public key changes.\n");
-    exit(1);
-}
-
 fwrite(STDOUT, "You are about to replace the signing key for institution id={$institutionId} name={$inst['name']} status={$inst['status']}.\n");
-fwrite(STDOUT, "Certificates issued: {$certCount}. --force: " . ($force ? 'yes' : 'no') . "\n");
+fwrite(STDOUT, "Certificates issued: {$certCount}. Previous key versions remain available for verification.\n");
 fwrite(STDOUT, "Type the institution id to confirm: ");
 $typed = trim((string)fgets(STDIN));
 if ($typed !== (string)$institutionId) {
@@ -84,8 +77,10 @@ try {
     if (!CryptoService::verifyKeyPair($roundTrip, $keys['public_key'])) {
         throw new Exception('Generated key pair failed round-trip verification.');
     }
-    $upd = $db->prepare('UPDATE institutions SET public_key = :pub, encrypted_private_key = :priv WHERE id = :id');
-    $upd->execute(['pub' => $keys['public_key'], 'priv' => $encrypted, 'id' => $institutionId]);
+    if ($currentKey) $db->prepare('UPDATE institution_keys SET status="retired",valid_to=NOW() WHERE institution_id=:iid AND key_id=:kid AND status="active"')->execute(['iid'=>$institutionId,'kid'=>(int)$currentKey['key_id']]);
+    $max=$db->prepare('SELECT COALESCE(MAX(key_id),0)+1 FROM institution_keys WHERE institution_id=:iid'); $max->execute(['iid'=>$institutionId]); $keyId=(int)$max->fetchColumn();
+    $upd = $db->prepare('INSERT INTO institution_keys (institution_id,key_id,public_key,encrypted_private_key,status,valid_from) VALUES (:iid,:kid,:pub,:priv,"active",NOW())');
+    $upd->execute(['iid'=>$institutionId,'kid'=>$keyId,'pub' => $keys['public_key'], 'priv' => $encrypted]);
     $db->commit();
 } catch (Exception $e) {
     if ($db->inTransaction()) { $db->rollBack(); }
@@ -93,6 +88,6 @@ try {
     exit(1);
 }
 
-fwrite(STDOUT, "Updated institution {$institutionId}: public_key length=" . strlen($keys['public_key']) . ", encrypted_private_key length=" . strlen($encrypted) . "\n");
-fwrite(STDOUT, "Old public key invalidated for future signature checks on old certificates.\n");
+fwrite(STDOUT, "Rotated institution {$institutionId} to key v{$keyId}: fingerprint=" . CryptoService::fingerprintPublicKey($keys['public_key']) . "\n");
+fwrite(STDOUT, "Retired key remains available for existing certificates.\n");
 exit(0);
