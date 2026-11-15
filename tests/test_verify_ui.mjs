@@ -312,7 +312,15 @@ async function main() {
         await setFile(cdp, page.sessionId, '#smart_file', file);
         return await evaluate(cdp, page.sessionId, `(async () => {
           const f = document.getElementById('smart_file').files[0];
-          const out = { size: f.size, type: f.type, barcodeDetector: 'BarcodeDetector' in window };
+          const out = { size: f.size, type: f.type, barcodeDetector: 'BarcodeDetector' in window, ua: navigator.userAgent };
+          try {
+            const bmp = await createImageBitmap(f);
+            const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
+            const x = c.getContext('2d'); x.drawImage(bmp, 0, 0);
+            const px = x.getImageData(0, 0, c.width, c.height).data; let dark = 0;
+            for (let i = 0; i < px.length; i += 4) { if (px[i] < 128) dark++; }
+            out.w = c.width; out.h = c.height; out.dark = dark; out.total = px.length / 4;
+          } catch (e) { out.canvasError = String(e); }
           try {
             const d = document.createElement('div'); d.id = 'diagScan' + Date.now(); document.body.appendChild(d);
             out.text = await new Html5Qrcode(d.id).scanFile(f, false);
