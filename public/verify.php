@@ -21,6 +21,50 @@ require_once __DIR__ . '/../src/utils/qrdecoder/autoload.php';
 
 $db = Database::getInstance();
 
+// ── Rate limiting — BEFORE any certificate lookup ─────────────────────
+// At most 30 distinct lookups per IP per 10 minutes; the 31st distinct
+// one gets HTTP 429 and no certificate query, hash, QR decode or RSA check
+// runs. The key is derived from the RAW request inputs (token, typed ID,
+// browser hash, uploaded file bytes), so repeating the same lookup is free.
+/** Lookup key for the limiter, or null when the request looks nothing up. */
+function verify_rate_key(): ?string {
+    if (!empty($_GET['token'])) {
+        return 'token:' . (string)$_GET['token'];
+    }
+    if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+        return null;
+    }
+    $parts = [];
+    foreach (['smart_id', 'certificate_id', 'smart_hash', 'issuer', 'other_url'] as $field) {
+        $v = trim((string)($_POST[$field] ?? ''));
+        if ($v !== '') {
+            $parts[$field] = mb_strtolower(mb_substr($v, 0, 512));
+        }
+    }
+    foreach (['smart_file', 'qr_image'] as $field) {
+        $tmp = $_FILES[$field]['tmp_name'] ?? '';
+        if (is_string($tmp) && $tmp !== '' && is_uploaded_file($tmp)) {
+            $parts[$field] = (string)hash_file('sha256', $tmp);
+        }
+    }
+    return $parts ? 'post:' . json_encode($parts) : null;
+}
+
+$sv_rate_key = verify_rate_key();
+$sv_rate_count = 0;
+if ($sv_rate_key !== null) {
+    $ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+    $gate = VerificationService::checkAndRecordLookup($db, $ip, $sv_rate_key);
+    $sv_rate_count = $gate['count'];
+    if ($gate['limited']) {
+        error_log("[CertiVault] Rate limit exceeded for IP $ip on verify.php — returned 429.");
+        http_response_code(429);
+        header('Retry-After: ' . (VerificationService::VERIFY_RATE_WINDOW_MINUTES * 60));
+        send_security_headers(); // this exit path never reaches head.php
+        die('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Too Many Requests</title><link rel="stylesheet" href="assets/css/style.css"></head><body><div class="container" style="max-width:500px;text-align:center;margin-top:60px;"><h2>429 — Too Many Requests</h2><p>You have made too many verification lookups. Please wait a few minutes and try again.</p><a href="verify.php" class="btn">Back to Verification</a></div></body></html>');
+    }
+}
+
 const SV_NOT_FOUND_TIPS = 'A re-saved, cropped or screenshot copy will not match the original file — '
     . 'that changes its bytes. Try the Certificate ID or scan the QR code instead. You can also '
     . 'select your issuer above (Coursera, Credly, or a public link) to open their own verification page.';
@@ -434,27 +478,6 @@ if ($query_type !== null && $verdict === null) {
     if ($cert && defined('CERTIFICATE_TRANSPARENCY_ENABLED') && CERTIFICATE_TRANSPARENCY_ENABLED) $transparency = TransparencyLogService::certificateStatus($db, $cert);
 }
 
-// ── Rate limiting ─────────────────────────────────────────────────────
-// More than 30 distinct lookups from one IP in 10 minutes → HTTP 429.
-// Logged, and NO certificate query runs for that request.
-$rate_limited = false;
-if ($query_type !== null) {
-    $ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
-    $rateStmt = $db->prepare('
-        SELECT COUNT(DISTINCT query_value) as cnt
-        FROM verification_logs
-        WHERE verifier_ip = :ip AND verified_at > DATE_SUB(NOW(), INTERVAL 10 MINUTE)
-    ');
-    $rateStmt->execute(['ip' => $ip]);
-    if ((int)$rateStmt->fetchColumn() > 30) {
-        $rate_limited = true;
-        error_log("[CertiVault] Rate limit exceeded for IP $ip on verify.php — returned 429.");
-        http_response_code(429);
-        send_security_headers(); // this exit path never reaches head.php
-        die('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Too Many Requests</title><link rel="stylesheet" href="assets/css/style.css"></head><body><div class="container" style="max-width:500px;text-align:center;margin-top:60px;"><h2>429 — Too Many Requests</h2><p>You have made too many verification lookups. Please wait a few minutes and try again.</p><a href="verify.php" class="btn">Back to Verification</a></div></body></html>');
-    }
-}
-
 // ── Audit Logging ─────────────────────────────────────────────────
 if ($query_type !== null) {
     $ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
@@ -496,15 +519,9 @@ if ($query_type !== null) {
     }
 
     // ── Anti-Enumeration Awareness ────────────────────────────────────
-    $rateStmt = $db->prepare('
-        SELECT COUNT(DISTINCT query_value) as cnt
-        FROM verification_logs
-        WHERE verifier_ip = :ip AND verified_at > DATE_SUB(NOW(), INTERVAL 10 MINUTE)
-    ');
-    $rateStmt->execute(['ip' => $ip]);
-    $recent_attempts = $rateStmt->fetchColumn();
-    if ($recent_attempts > 20) {
-        error_log("[CertiVault RATE WARNING] IP $ip has made $recent_attempts distinct verification lookups in the last 10 minutes — possible enumeration attempt.");
+    // Count comes from the pre-lookup gate above (no extra query).
+    if ($sv_rate_count > VerificationService::VERIFY_ENUM_WARN) {
+        error_log("[CertiVault RATE WARNING] IP $ip has made $sv_rate_count distinct verification lookups in the last 10 minutes — possible enumeration attempt.");
     }
 }
 ?>

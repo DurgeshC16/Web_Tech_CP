@@ -694,6 +694,65 @@ function create_smtp_mailer() {
 }
 
 /**
+ * Hand a fully-built PHPMailer message to the configured transport.
+ * Returns true on success and throws on transport failure, so callers
+ * keep their existing try/catch -> 'mail_failed' behaviour.
+ *
+ *   MAIL_TRANSPORT 'smtp' (default) -> $mail->send() over SMTP.
+ *   MAIL_TRANSPORT 'file'           -> write an .eml under MAIL_FILE_DIR
+ *                                      (local dev only; refused in production).
+ */
+function deliver_mail($mail) {
+    if (mail_file_transport_enabled()) {
+        return write_mail_to_file($mail);
+    }
+    $mail->send();
+    return true;
+}
+
+/**
+ * LOCAL DEVELOPMENT transport: persist the rendered message (headers +
+ * body, including any OTP) as a .eml file under MAIL_FILE_DIR, which lives
+ * in private_data/ outside the web root. OTP verification is unchanged —
+ * codes are still hashed, stored, rate-limited and checked.
+ *
+ * @throws RuntimeException when the spool directory or file is not writable
+ */
+function write_mail_to_file($mail) {
+    $dir = defined('MAIL_FILE_DIR') ? MAIL_FILE_DIR : (__DIR__ . '/../../private_data/mail');
+    if (!is_dir($dir) && !@mkdir($dir, 0700, true) && !is_dir($dir)) {
+        throw new RuntimeException('Cannot create mail spool directory: ' . $dir);
+    }
+
+    $to = '';
+    foreach ($mail->getToAddresses() as $addr) {
+        $to = is_array($addr) ? (string)($addr[0] ?? '') : (string)$addr;
+        break;
+    }
+
+    $body = ($mail->Body !== '' ? $mail->Body : $mail->AltBody);
+    $eml = 'To: ' . $to . "
+"
+         . 'From: ' . (string)$mail->From . "
+"
+         . 'Subject: ' . (string)$mail->Subject . "
+"
+         . 'Date: ' . date('r') . "
+"
+         . "
+"
+         . $body . "
+";
+
+    $safe_to = preg_replace('/[^A-Za-z0-9._@-]/', '_', $to);
+    $file = $dir . '/' . date('Ymd-His') . '-' . bin2hex(random_bytes(4)) . '-' . $safe_to . '.eml';
+    if (@file_put_contents($file, $eml) === false) {
+        throw new RuntimeException('Cannot write mail spool file: ' . $file);
+    }
+    return true;
+}
+
+/**
  * Mask an email address for safe display (e.g. "d****@gmail.com").
  *
  * @param  string $email  Full email address.
@@ -735,6 +794,23 @@ function hash_otp($code) {
  */
 function smtp_configured() {
     return trim((string)SMTP_USERNAME) !== '' && trim((string)SMTP_PASSWORD) !== '';
+}
+
+/**
+ * True when the LOCAL DEVELOPMENT file transport is selected
+ * (MAIL_TRANSPORT === 'file'; config.php refuses it in production).
+ */
+function mail_file_transport_enabled() {
+    return defined('MAIL_TRANSPORT') && MAIL_TRANSPORT === 'file';
+}
+
+/**
+ * True when email can be handed to SOME transport: real SMTP credentials,
+ * or the dev file spool. Send paths gate on this; smtp_configured() keeps
+ * its literal meaning for the SMTP diagnostic.
+ */
+function mail_delivery_configured() {
+    return mail_file_transport_enabled() || smtp_configured();
 }
 
 /**
@@ -869,7 +945,7 @@ function create_otp($db, $user_id, $purpose = 'activation', $activate_url = null
     $dev_fallback = otp_dev_logging_enabled();
 
     // ── SMTP configuration guard (before anything is stored) ───────
-    if (!smtp_configured() && !$dev_fallback) {
+    if (!mail_delivery_configured() && !$dev_fallback) {
         error_log('CertiVault OTP: SMTP is not configured (SMTP_USERNAME/SMTP_PASSWORD empty) and no dev fallback — cannot send codes.');
         return 'smtp_not_configured';
     }
@@ -925,7 +1001,7 @@ function create_otp($db, $user_id, $purpose = 'activation', $activate_url = null
     }
 
     // ── Dev fallback path (SMTP absent or unconfigured + dev mode) ─
-    if (!smtp_configured()) {
+    if (!mail_delivery_configured()) {
         if (otp_dev_log($user_email, $purpose, $code, 'SMTP not configured — dev fallback')) {
             error_log('CertiVault OTP: SMTP not configured; dev fallback logged the code for user_id ' . $user_id . ' to private_data/dev_mail.log.');
             return 'sent';
@@ -971,7 +1047,7 @@ function create_otp($db, $user_id, $purpose = 'activation', $activate_url = null
             . $link_text . "\n"
             . "If you didn't request this, please ignore this email.";
 
-        $mail->send();
+        deliver_mail($mail);
 
         // Dev fallback on success: also mirror the delivered code into
         // private_data/dev_mail.log so the flow can run without mailbox
@@ -1070,7 +1146,7 @@ function send_notification_email($to_email, $subject, $heading, $body_text) {
     // SMTP not configured: record the would-be delivery in the dev log
     // BEFORE any send attempt (there is nothing to attempt without
     // credentials), so notification flows are testable offline too.
-    if (!smtp_configured()) {
+    if (!mail_delivery_configured()) {
         error_log('CertiVault notification email: SMTP is not configured — cannot notify ' . $to_email . '.');
         if (otp_dev_logging_enabled()) {
             otp_dev_log($to_email, 'notification (' . $subject . ')', $heading, 'SMTP not configured — dev fallback');
@@ -1094,7 +1170,7 @@ function send_notification_email($to_email, $subject, $heading, $body_text) {
 
         $mail->AltBody = $body_text . "\n\nIf you did not perform this action, please contact support immediately.";
 
-        $mail->send();
+        deliver_mail($mail);
         return true;
     } catch (\Throwable $e) {
         error_log('CertiVault notification email failed to ' . $to_email . ': ' . $e->getMessage());

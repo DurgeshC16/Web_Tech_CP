@@ -16,7 +16,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // SMTP not configured: a deterministic message for ANY submitted email.
     // Checked before the user lookup so the error itself reveals nothing
     // about whether an account exists.
-    if (!smtp_configured() && !otp_dev_logging_enabled()) {
+    if (!mail_delivery_configured() && !otp_dev_logging_enabled()) {
         $error = smtp_not_configured_message();
     } elseif (!validate_captcha($errors)) {
         $error = 'Please correct the highlighted fields below.';

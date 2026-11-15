@@ -24,10 +24,10 @@ $files = [
     'test_timezone.php',
     'test_workflow.php',
     'test_upload_http.php',   // spawns `php -S` on a local port
-    // Not yet included — they test code that is still parked in
-    // `git stash@{0}` (see docs/09_STATUS_AND_ROADMAP.md):
-    //   test_otp.php, test_config_guard.php  → MAIL_TRANSPORT=file spool
-    //   test_verify_http.php                 → tabbed scanner verify UI
+    'test_otp.php',           // OTP lifecycle via the dev file mail transport
+    'test_config_guard.php',  // production secret / mail-transport guard
+    // Not yet included: test_verify_http.php expects the tabbed scanner
+    // verify UI still parked in `git stash@{0}` (docs/09, item 2).
     // test_smtp_live.php needs a real SMTP account; run it by hand.
 ];
 

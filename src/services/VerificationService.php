@@ -26,26 +26,95 @@ class VerificationService {
     // possible enumeration attempt (warning only, never blocks).
     const VERIFY_ENUM_WARN = 20;
 
+    // ── Bounded limiter state (migration 014, table verify_rate) ─────────
+    // The limiter used to run COUNT(DISTINCT query_value) over the whole
+    // verification_logs history of an IP, whose cost grows with history
+    // (3.8 ms → 54.7 ms at 30 000 rows in the paper's measurements).
+    // verify_rate keeps at most VERIFY_RATE_MAX live rows per IP, so every
+    // check touches a tiny, constant-size slice. verification_logs remains
+    // the audit trail. Without migration 014 the legacy query is used.
+
+    /** Window as an SQL interval. Int class constant — injection-safe. */
+    private static function windowSql(): string {
+        return 'DATE_SUB(NOW(), INTERVAL ' . (int)self::VERIFY_RATE_WINDOW_MINUTES . ' MINUTE)';
+    }
+
     /**
-     * Count the distinct query values this IP has looked up inside the
-     * current window. Must be called BEFORE the current lookup is logged
-     * so the boundary is "already-seen count".
+     * Gate AND record one public lookup, BEFORE any certificate query runs.
+     *
+     * $key identifies the lookup (token, typed ID, file hash …); only its
+     * SHA-256 is stored. Repeating a key already seen in the window is free
+     * (and refreshes it); a NEW key is refused once the IP holds
+     * VERIFY_RATE_MAX keys — i.e. exactly 30 distinct lookups per window,
+     * the 31st is rejected.
+     *
+     * @return array{limited:bool, count:int} count = distinct keys in the
+     *         window after this call (for the enumeration warning).
      */
-    public static function recentLookupCount($db, $ip) {
-        // VERIFY_RATE_WINDOW_MINUTES is an int class constant (never user
-        // input), so inlining it here is injection-safe.
+    public static function checkAndRecordLookup($db, string $ip, string $key): array {
+        $hash = hash('sha256', $key);
+        try {
+            // Expire this IP's stale rows; occasionally sweep everyone's,
+            // so IPs that never return don't accumulate.
+            $db->prepare('DELETE FROM verify_rate WHERE ip = :ip AND seen_at <= ' . self::windowSql())
+               ->execute(['ip' => $ip]);
+            if (random_int(1, 200) === 1) {
+                $db->exec('DELETE FROM verify_rate WHERE seen_at <= ' . self::windowSql());
+            }
+
+            $count = self::liveKeyCount($db, $ip);
+            $seen = $db->prepare('SELECT 1 FROM verify_rate WHERE ip = :ip AND value_hash = :h');
+            $seen->execute(['ip' => $ip, 'h' => $hash]);
+            if ($seen->fetchColumn()) {
+                $db->prepare('UPDATE verify_rate SET seen_at = NOW() WHERE ip = :ip AND value_hash = :h')
+                   ->execute(['ip' => $ip, 'h' => $hash]);
+                return ['limited' => false, 'count' => $count];
+            }
+            if ($count >= self::VERIFY_RATE_MAX) {
+                return ['limited' => true, 'count' => $count];
+            }
+            $db->prepare('INSERT INTO verify_rate (ip, value_hash, seen_at) VALUES (:ip, :h, NOW())
+                          ON DUPLICATE KEY UPDATE seen_at = NOW()')
+               ->execute(['ip' => $ip, 'h' => $hash]);
+            return ['limited' => false, 'count' => $count + 1];
+        } catch (\PDOException $e) {
+            // verify_rate missing (migration 014 pending): legacy behaviour.
+            $count = self::legacyLookupCount($db, $ip);
+            return ['limited' => $count >= self::VERIFY_RATE_MAX, 'count' => $count];
+        }
+    }
+
+    /** Live (in-window) keys held for this IP in verify_rate. */
+    private static function liveKeyCount($db, string $ip): int {
+        $stmt = $db->prepare('SELECT COUNT(*) FROM verify_rate WHERE ip = :ip AND seen_at > ' . self::windowSql());
+        $stmt->execute(['ip' => $ip]);
+        return (int)$stmt->fetchColumn();
+    }
+
+    /** Pre-014 fallback: distinct values in the audit log (cost grows with history). */
+    private static function legacyLookupCount($db, string $ip): int {
         $stmt = $db->prepare(
             'SELECT COUNT(DISTINCT query_value) FROM verification_logs
-             WHERE verifier_ip = :ip
-               AND verified_at > DATE_SUB(NOW(), INTERVAL ' . (int)self::VERIFY_RATE_WINDOW_MINUTES . ' MINUTE)'
+             WHERE verifier_ip = :ip AND verified_at > ' . self::windowSql()
         );
         $stmt->execute(['ip' => $ip]);
         return (int)$stmt->fetchColumn();
     }
 
     /**
-     * True when this IP has already made VERIFY_RATE_MAX distinct lookups
-     * in the window, i.e. the request about to be served is over the limit.
+     * Distinct lookups this IP holds in the current window (read-only).
+     */
+    public static function recentLookupCount($db, $ip) {
+        try {
+            return self::liveKeyCount($db, (string)$ip);
+        } catch (\PDOException $e) {
+            return self::legacyLookupCount($db, (string)$ip);
+        }
+    }
+
+    /**
+     * True when this IP already holds VERIFY_RATE_MAX distinct lookups, i.e.
+     * a NEW lookup would be refused (read-only; repeats are still allowed).
      */
     public static function isRateLimited($db, $ip) {
         return self::recentLookupCount($db, $ip) >= self::VERIFY_RATE_MAX;

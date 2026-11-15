@@ -92,6 +92,16 @@ defined('SMTP_ENCRYPTION') || define('SMTP_ENCRYPTION', getenv('SMTP_ENCRYPTION'
 defined('SMTP_FROM_EMAIL') || define('SMTP_FROM_EMAIL', getenv('SMTP_FROM_EMAIL') ?: (defined('SMTP_USERNAME') && SMTP_USERNAME !== '' ? SMTP_USERNAME : (getenv('SMTP_USERNAME') ?: 'no-reply@certivault.local')));
 defined('SMTP_FROM_NAME') || define('SMTP_FROM_NAME', getenv('SMTP_FROM_NAME') ?: 'CertiVault');
 
+// ── Mail transport ──────────────────────────────────────────────────
+// 'smtp' (default): deliver through PHPMailer/SMTP as above.
+// 'file': LOCAL DEVELOPMENT ONLY. Each rendered message (including the
+//   OTP) is written to private_data/mail/*.eml (outside the web root) so
+//   activation/reset can be completed without an SMTP account. OTP
+//   verification is unchanged. Any value other than 'smtp' is refused
+//   while CV_ENV=production (see the guard at the end of this file).
+defined('MAIL_TRANSPORT') || define('MAIL_TRANSPORT', getenv('CV_MAIL_TRANSPORT') ?: 'smtp');
+defined('MAIL_FILE_DIR')  || define('MAIL_FILE_DIR', __DIR__ . '/../../private_data/mail');
+
 // ── Optional external certificate sources (verify.php fallback) ─────
 // OFF by default; see README "External verification sources". When on,
 // an ID not found locally is looked up in the configured source(s) and
@@ -163,5 +173,12 @@ if ($is_production) {
             http_response_code(500);
             die('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Server Error</title></head><body><h1>500 — Internal Server Error</h1><p>The service is misconfigured. Please contact the site administrator.</p></body></html>');
         }
+    }
+    // The file mail transport is a development aid; in production it would
+    // silently stop OTP delivery.
+    if (MAIL_TRANSPORT !== 'smtp') {
+        error_log("[CertiVault] FATAL: CV_MAIL_TRANSPORT='" . MAIL_TRANSPORT . "' is not allowed while CV_ENV=production. Use 'smtp'.");
+        http_response_code(500);
+        die('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Server Error</title></head><body><h1>500 — Internal Server Error</h1><p>The service is misconfigured. Please contact the site administrator.</p></body></html>');
     }
 }

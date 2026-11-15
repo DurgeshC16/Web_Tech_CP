@@ -126,6 +126,17 @@ CREATE TABLE verification_logs (
 CREATE INDEX idx_vlogs_ip_time ON verification_logs(verifier_ip, verified_at);
 CREATE INDEX idx_vlogs_cert_found ON verification_logs(certificate_id_found);
 
+-- Bounded rate-limiter state for public verification (migration 014).
+-- At most VERIFY_RATE_MAX live rows per IP; verification_logs stays the
+-- audit trail. value_hash = SHA-256 of the lookup key, never raw input.
+CREATE TABLE verify_rate (
+    ip VARCHAR(45) NOT NULL,
+    value_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    seen_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (ip, value_hash),
+    INDEX idx_verify_rate_seen (seen_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Persistent "Remember me" logins (see database/migrations/005_remember_me_tokens.sql).
 -- Cookie holds "selector:validator"; only SHA-256(validator) is stored.
 CREATE TABLE remember_tokens (
