@@ -1099,3 +1099,14 @@ img { max-width: 100%; height: auto; }
     .tablist { gap: 0; }
     .tab { flex: 1 1 auto; text-align: center; padding: var(--sp-2) var(--sp-1); font-size: 0.82rem; }
 }
+
+/* ── Smart Verify (smart-verify.js) ─────────────────────────────────────── */
+[hidden] { display: none !important; }
+.btn-block { display: block; width: 100%; }
+.privacy-toggle { margin-bottom: 10px; }
+.privacy-toggle.is-active { text-decoration: underline; border-color: var(--verified); color: var(--verified); }
+.sv-status { margin: 10px 0 0; font-size: 0.9em; color: var(--muted); text-align: center; }
+.sv-status-busy::before { content: '⏳ '; }
+.sv-status-error { color: var(--danger); }
+.qr-scanner { margin-top: 16px; }
+.qr-scanner #qrReader { max-width: 400px; margin: 0 auto; }

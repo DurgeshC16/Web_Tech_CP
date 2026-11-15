@@ -31,11 +31,15 @@ function verify_rate_key(): ?string {
     if (!empty($_GET['token'])) {
         return 'token:' . (string)$_GET['token'];
     }
+    $getId = trim((string)($_GET['certificate_id'] ?? ($_GET['id'] ?? '')));
+    if ($getId !== '' && ($_SERVER['REQUEST_METHOD'] ?? '') === 'GET') {
+        return 'id:' . mb_strtolower(mb_substr($getId, 0, 255));
+    }
     if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
         return null;
     }
     $parts = [];
-    foreach (['smart_id', 'certificate_id', 'smart_hash', 'issuer', 'other_url'] as $field) {
+    foreach (['smart_id', 'certificate_id', 'smart_hash', 'smart_qr_text', 'issuer', 'other_url'] as $field) {
         $v = trim((string)($_POST[$field] ?? ''));
         if ($v !== '') {
             $parts[$field] = mb_strtolower(mb_substr($v, 0, 512));
@@ -84,6 +88,41 @@ $sv_old_upload = false; // legacy qr_image upload path
 if (!empty($_GET['token'])) {
     $query_type  = 'token';
     $query_value = $_GET['token'];
+}
+
+// (b) Shareable direct link by ID: verify.php?certificate_id=… (alias ?id=).
+//     Same layered lookup and pre-flight format check as a typed ID.
+if ($query_type === null && $_SERVER['REQUEST_METHOD'] === 'GET') {
+    $sv_get_id = trim((string)($_GET['certificate_id'] ?? ($_GET['id'] ?? '')));
+    if ($sv_get_id !== '') {
+        $query_type  = 'certificate_id';
+        $query_value = mb_substr($sv_get_id, 0, 255);
+    }
+}
+
+// (c) QR text decoded in the visitor's browser (smart-verify.js renders PDF
+//     pages / images locally). Used only as a FALLBACK after the exact file
+//     hash; resolves local tokens / certificate IDs only.
+$sv_qr_text = (SMART_VERIFY_ENABLED && $_SERVER['REQUEST_METHOD'] === 'POST')
+    ? trim(mb_substr((string)($_POST['smart_qr_text'] ?? ''), 0, 1024)) : '';
+$sv_via_browser_qr = false;
+function sv_cert_from_qr_text($db, string $text) {
+    if ($text === '') {
+        return null;
+    }
+    foreach (SmartVerifyService::extractCandidates($text) as $cand) {
+        $value = (string)($cand['value'] ?? '');
+        if ($value === '' || strlen($value) > 255) {
+            continue;
+        }
+        $type = $cand['type'] ?? '';
+        $cert = $type === 'token' ? VerificationService::findByToken($db, $value)
+            : ($type === 'certificate_id' ? VerificationService::findByFlexibleCertificateId($db, $value) : null);
+        if ($cert) {
+            return $cert;
+        }
+    }
+    return null;
 }
 
 // ── Smart Verify input normalization — either/or, at least one input ──
@@ -212,6 +251,10 @@ if ($query_type === null && $sv_has_hash
         $found = FileVerifyService::findLocalByContentHash($db, $query_value);
         if ($found) {
             $cert = $found[0];
+        } elseif (($qrCert = sv_cert_from_qr_text($db, $sv_qr_text)) !== null) {
+            $cert = $qrCert;                // no byte match, but the QR inside it resolved
+            $sv_via_browser_qr = true;
+            $query_type = 'qr_image';
         }
     } else {
         $query_value = '(malformed hash)';
@@ -234,6 +277,11 @@ if ($query_type === null && $_SERVER['REQUEST_METHOD'] === 'POST'
     $query_type = 'file';
     $query_value = '(file upload: ' . strtolower(pathinfo($_FILES['smart_file']['name'] ?? '', PATHINFO_EXTENSION)) . ')';
     $outcome = FileVerifyService::run($db, $_FILES['smart_file']);
+    if (empty($outcome['__cert']) && !isset($outcome['__upload_error'])
+        && ($qrCert = sv_cert_from_qr_text($db, $sv_qr_text)) !== null) {
+        $outcome['__cert'] = $qrCert;
+        $outcome['__resolved'] = ['query_type' => 'qr_image', 'stage' => 'QR code read in your browser — your file is not a byte-exact copy of the issued original, so compare the details below with your copy'];
+    }
 
     if (isset($outcome['__upload_error']) && $outcome['__upload_error'] !== true) {
         $sv_file_error = $outcome['__upload_error'];
@@ -256,7 +304,7 @@ if ($query_type === null && $_SERVER['REQUEST_METHOD'] === 'POST'
         $detail = $sv_file_error;
         $query_value = '(file upload: rejected)';
     } elseif (!empty($outcome['__candidates']) && SMART_EXTERNAL_LINKS) {
-        $cand = $outcome['_candidates'][0];
+        $cand = $outcome['__candidates'][0];
         $link = SmartVerifyService::buildIssuerLink($cand['issuer'] ?? '', $cand['value'] ?? '');
         if (is_array($link)) {
             $external_ref = ['issuer_label' => $link['label'], 'url' => $link['url'], 'code' => $cand['value']];
@@ -474,6 +522,9 @@ if ($query_type !== null && $verdict === null) {
         $verdict       = $result['verdict'];
         $detail        = $result['detail'];
         $superseded_by = $result['superseded_by'];
+        if ($sv_via_browser_qr) {
+            $detail .= ' [QR code read in your browser — your file is not a byte-exact copy of the issued original, so compare the details below with your copy]';
+        }
     }
     if ($cert && defined('CERTIFICATE_TRANSPARENCY_ENABLED') && CERTIFICATE_TRANSPARENCY_ENABLED) $transparency = TransparencyLogService::certificateStatus($db, $cert);
 }
@@ -499,7 +550,8 @@ if ($query_type !== null) {
             'qv'  => mb_substr(log_safe_text((string)$query_value), 0, 255),
             'cid' => $cert ? $cert['certificate_id'] : null,
             'res' => $verdict,
-            'det' => log_safe_text(($detail ?: '') . ($sv_old_upload ? ' (via QR image upload)' : ($sv_via_hash ? ' (privacy hash lookup)' : ''))),
+            // detail is VARCHAR(255): truncate, or strict SQL drops the audit row
+            'det' => mb_substr(log_safe_text(($detail ?: '') . ($sv_old_upload ? ' (via QR image upload)' : ($sv_via_hash ? ' (privacy hash lookup)' : ''))), 0, 255),
             'ip'  => $ip,
         ]);
     } catch (PDOException $e) {
@@ -511,7 +563,7 @@ if ($query_type !== null) {
                 'qv'  => mb_substr(log_safe_text((string)$query_value), 0, 255),
                 'cid' => $cert ? $cert['certificate_id'] : null,
                 'res' => $verdict,
-                'det' => log_safe_text(('[' . $log_query_type . '] ' . $detail)),
+                'det' => mb_substr(log_safe_text(('[' . $log_query_type . '] ' . $detail)), 0, 255),
                 'ip'  => $ip,
             ]);
         } catch (Throwable $ignored) {
@@ -533,7 +585,9 @@ if ($query_type !== null) {
 
         <?php if ($verdict === null): ?>
         <!-- ── Smart Verify panel ───────────────────────────────── -->
-        <form method="POST" action="" class="card" id="smartVerifyForm" enctype="multipart/form-data">
+        <form method="POST" action="" class="card" id="smartVerifyForm" enctype="multipart/form-data"
+              data-pdf-lib="assets/js/vendor/pdf.min.js" data-pdf-worker="assets/js/vendor/pdf.worker.min.js"
+              data-pdf-max-pages="10" data-scan-max-ms="20000" data-render-max-width="1600">
             <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
             <input type="hidden" name="MAX_FILE_SIZE" value="5242880">
 
@@ -552,7 +606,7 @@ if ($query_type !== null) {
                     <option value="other">Other (public link)</option>
                 </select>
             </div>
-            <div class="form-group" id="otherUrlGroup" style="display:none;">
+            <div class="form-group" id="otherUrlGroup" hidden>
                 <label for="other_url">Public verification link</label>
                 <input type="text" id="other_url" name="other_url" placeholder="https://…">
                 <small>Only https links to public pages. CertiVault never opens or scrapes it for you.</small>
@@ -561,14 +615,15 @@ if ($query_type !== null) {
             <div class="form-group">
                 <label for="smart_file">Certificate file (optional if you entered an ID — PDF, PNG or JPG, max 5 MB)</label>
                 <input type="file" id="smart_file" name="smart_file" accept=".pdf,.png,.jpg,.jpeg" data-validate="upload_optional">
-                <small>Drop the certificate file here or pick it. We try byte match → QR decode → text scan, in that order.</small>
+                <small>Drop the certificate file here or pick it. We try the exact file fingerprint first, then the QR code inside it (read in your browser, PDFs included), then a text scan.</small>
             </div>
 
-            <button type="button" class="btn btn-ghost btn-sm" id="privacyHashToggle" aria-pressed="false" style="margin-bottom:10px;">
+            <button type="button" class="btn btn-ghost btn-sm privacy-toggle" id="privacyHashToggle" aria-pressed="false">
                 🔒 Hash in my browser (the file never leaves your device)
             </button>
 
-            <button type="submit" class="btn btn-primary" style="width:100%;">Smart Verify</button>
+            <button type="submit" class="btn btn-primary btn-block">Smart Verify</button>
+            <p id="svStatus" class="sv-status" role="status" aria-live="polite" hidden></p>
         </form>
 
         <?php if (is_post_overflow()): ?>
@@ -585,148 +640,13 @@ if ($query_type !== null) {
         <div style="text-align:center; margin-top:16px;">
             <button type="button" class="btn btn-secondary" id="scanQrBtn">Scan QR with camera</button>
         </div>
-        <div id="qrScanner" style="display:none; margin-top:16px;">
+        <div id="qrScanner" class="qr-scanner" hidden>
             <div id="qrReader" style="max-width:400px; margin:0 auto;"></div>
-            <p class="field-error" id="qrError" role="alert" style="display:none;"></p>
+            <p class="field-error" id="qrError" role="alert" hidden></p>
             <div style="text-align:center; margin-top:8px;">
                 <button type="button" class="btn btn-ghost btn-sm" id="qrStopBtn">Stop camera</button>
             </div>
         </div>
-        <script src="assets/js/html5-qrcode.min.js"></script>
-        <script>
-        (function () {
-            var btn = document.getElementById('scanQrBtn');
-            var wrap = document.getElementById('qrScanner');
-            var err = document.getElementById('qrError');
-            var stopBtn = document.getElementById('qrStopBtn');
-            var scanner = null;
-            var running = false;
-
-            function showError(msg) { err.textContent = msg; err.style.display = 'block'; }
-            function hideError() { err.textContent = ''; err.style.display = 'none'; }
-
-            // Accept what our QR codes encode (a verify.php URL or a bare
-            // token); ANY other scanned text is passed to the server as a
-            // candidate in any format — the layered server lookup decides.
-            function routeScanText(text) {
-                text = (text || '').trim();
-                if (!text) return null;
-                var m = text.match(/[?&]token=([A-Za-z0-9_\-]+)/);
-                if (m) return { type: 'token', value: m[1] };
-                if (/^[A-Za-z0-9_\-]{43}$/.test(text)) return { type: 'token', value: text };
-                return { type: 'id', value: text };
-            }
-
-            function submitAsCertificateId(value) {
-                var idInput = document.getElementById('smart_id');
-                if (idInput && idInput.form) {
-                    idInput.value = value;
-                    idInput.form.submit();
-                    return true;
-                }
-                return false;
-            }
-
-            function stop() {
-                btn.disabled = false;
-                if (scanner && running) {
-                    running = false;
-                    scanner.stop().then(function () { scanner.clear(); wrap.style.display = 'none'; })
-                        .catch(function () { wrap.style.display = 'none'; });
-                } else {
-                    wrap.style.display = 'none';
-                }
-            }
-
-            // Camera permission is requested only here, on explicit click.
-            btn.addEventListener('click', function () {
-                if (typeof Html5Qrcode === 'undefined') {
-                    showError('Scanner unavailable right now — please type the Certificate ID instead.');
-                    return;
-                }
-                hideError();
-                wrap.style.display = 'block';
-                btn.disabled = true;
-                scanner = new Html5Qrcode('qrReader');
-                scanner.start(
-                    { facingMode: 'environment' },
-                    { fps: 10, qrbox: { width: 250, height: 250 } },
-                    function (decodedText) {
-                        var route = routeScanText(decodedText);
-                        if (route && route.type === 'token') {
-                            stop();
-                            window.location.href = 'verify.php?token=' + encodeURIComponent(route.value);
-                        } else if (route && route.type === 'id' && submitAsCertificateId(route.value)) {
-                            stop();
-                        } else {
-                            showError('That QR code is not a CertiVault code — try again or type the Certificate ID.');
-                        }
-                    },
-                    function () { /* per-frame misses are normal; stay silent */ }
-                ).then(function () { running = true; })
-                .catch(function (e) {
-                    running = false;
-                    var name = (e && e.name) || '';
-                    if (name === 'NotAllowedError') showError('Camera permission was denied. Allow camera access, or type the Certificate ID instead.');
-                    else if (name === 'NotFoundError' || name === 'OverconstrainedError') showError('No camera was found on this device — please type the Certificate ID instead.');
-                    else if (name === 'NotReadableError') showError('The camera is busy in another app — close it and try again.');
-                    else showError('Could not start the camera (' + ((e && e.message) ? e.message : 'unknown error') + '). You can still type the Certificate ID.');
-                });
-            });
-            stopBtn.addEventListener('click', stop);
-        })();
-        </script>
-
-        <!-- ── Privacy-first hashing: SHA-256 via Web Crypto, then lookup by hash ── -->
-        <script>
-        (function () {
-            var form = document.getElementById('smartVerifyForm');
-            var input = document.getElementById('smart_file');
-            var toggle = document.getElementById('privacyHashToggle');
-            var issuerSel = document.getElementById('issuer');
-            var otherGroup = document.getElementById('otherUrlGroup');
-
-            issuerSel.addEventListener('change', function () {
-                otherGroup.style.display = issuerSel.value === 'other' ? 'block' : 'none';
-            });
-
-            var privacy = false;
-            toggle.addEventListener('click', function () {
-                privacy = !privacy;
-                toggle.setAttribute('aria-pressed', privacy ? 'true' : 'false');
-                toggle.style.textDecoration = privacy ? 'underline' : 'none';
-            });
-
-            form.addEventListener('submit', function (e) {
-                if (!privacy) return;                                 // normal upload path
-                var f = input.files && input.files[0];
-                if (!f) return;                                       // hashing not applicable
-                if (!(window.crypto && crypto.subtle && crypto.subtle.digest && f.arrayBuffer)) {
-                    return;                                           // fallback: upload normally
-                }
-                e.preventDefault();
-                hashAndSubmit(f, form, input);
-                async function hashAndSubmit(file, targetForm, fileInput) {
-                    try {
-                        var buf = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
-                        var view = new Uint8Array(buf);
-                        var hex = '';
-                        for (var i = 0; i < view.length; i++) hex += ('0' + view[i].toString(16)).slice(-2);
-                        var hidden = document.createElement('input');
-                        hidden.type = 'hidden';
-                        hidden.name = 'smart_hash';
-                        hidden.value = hex;
-                        targetForm.appendChild(hidden);
-                        fileInput.disabled = true;                    // never uploaded
-                        targetForm.submit();
-                    } catch (ex) {
-                        fileInput.disabled = false;
-                        targetForm.submit();                          // fallback: upload normally
-                    }
-                }
-            });
-        })();
-        </script>
 
         <?php else: ?>
         <?php
@@ -938,6 +858,10 @@ if ($query_type !== null) {
         <?php endif; ?>
 
     <script src="assets/js/validation.js"></script>
+    <?php if ($verdict === null): ?>
+    <script src="assets/js/html5-qrcode.min.js"></script>
+    <script src="assets/js/smart-verify.js"></script>
+    <?php endif; ?>
 </main>
 <?php require __DIR__ . '/../src/partials/footer.php'; ?>
 </body>

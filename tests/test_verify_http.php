@@ -5,7 +5,8 @@
 // The browser suite (test_verify_ui.mjs) proves the four input methods feed
 // the same backend; this suite proves the backend itself (verify.php) is
 // correct for every verdict through both supported entry points — ?token=
-// and ?certificate_id= — without needing a browser. It boots PHP's built-in
+// and ?certificate_id= — plus the CSRF-protected POST, the browser-decoded
+// QR fallback and the landing page's external-script-only wiring. It boots PHP's built-in
 // server against the isolated test DB, seeds one certificate per verdict,
 // and asserts the rendered verdict seal.
 //
@@ -30,7 +31,9 @@ $uploadDir = __DIR__ . '/../private_data/uploads';
 $db = test_db();
 
 // Never let repeated runs accumulate distinct lookups against the limiter.
+$db->exec(file_get_contents(__DIR__ . '/../database/migrations/014_verify_rate_limiter.sql'));
 $db->prepare("DELETE FROM verification_logs WHERE verifier_ip = '127.0.0.1'")->execute();
+$db->prepare("DELETE FROM verify_rate WHERE ip = '127.0.0.1'")->execute();
 
 // ── Seed one certificate per verdict ──────────────────────────────────
 $instName = 'Verify HTTP Fixture Uni';
@@ -136,26 +139,56 @@ t_check('token TAMPERED',   vh_verdict(h_get("$base/verify.php?token={$tampered[
 t_check('unknown token INVALID', vh_verdict(h_get("$base/verify.php?token=$unknownToken"), 'INVALID'));
 t_check('malformed token INVALID', vh_verdict(h_get("$base/verify.php?token=tooshort"), 'INVALID'));
 
-// ── Certificate-id entry point (manual tab / direct link) ─────────────
+// ── Shareable direct link by certificate ID (GET) ────────────────────
 t_check('id VALID (GET)',        vh_verdict(h_get("$base/verify.php?certificate_id={$valid['certId']}"), 'VALID'));
 t_check('id REVOKED (GET)',      vh_verdict(h_get("$base/verify.php?certificate_id={$revoked['certId']}"), 'REVOKED'));
 t_check('id EXPIRED (GET)',      vh_verdict(h_get("$base/verify.php?certificate_id={$expired['certId']}"), 'EXPIRED'));
+t_check('id alias ?id= VALID',   vh_verdict(h_get("$base/verify.php?id=" . strtolower($valid['certId'])), 'VALID'));
 t_check('unknown id INVALID',    vh_verdict(h_get("$base/verify.php?certificate_id=CV-2026-999999"), 'INVALID'));
-t_check('malformed id INVALID',  vh_verdict(h_get("$base/verify.php?certificate_id=CV-2026-1"), 'INVALID'));
+$mal = h_get("$base/verify.php?certificate_id=" . rawurlencode('<script>x</script>'));
+t_check('malformed id INVALID',  vh_verdict($mal, 'INVALID'));
+t_check('malformed id not reflected raw', $mal !== null && !str_contains($mal, '<script>x</script>'));
 
-// ── POST certificate_id still works (backward compatibility) ──────────
-$ch = curl_init("$base/verify.php");
-curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_POST => true, CURLOPT_POSTFIELDS => ['certificate_id' => $valid['certId']], CURLOPT_TIMEOUT => 20]);
-$post = curl_exec($ch);
-curl_close($ch);
-t_check('POST certificate_id (backward compat) VALID', vh_verdict($post === false ? null : $post, 'VALID'));
+// ── POST needs a CSRF token (session cookie + token from the form) ────
+$jar = tempnam(sys_get_temp_dir(), 'cvjar');
+function h_session($url, $jar, $post = null) {
+    $ch = curl_init($url);
+    $opts = [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 30, CURLOPT_COOKIEJAR => $jar, CURLOPT_COOKIEFILE => $jar];
+    if ($post !== null) { $opts[CURLOPT_POST] = true; $opts[CURLOPT_POSTFIELDS] = $post; }
+    curl_setopt_array($ch, $opts);
+    $body = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    return [$code, $body === false ? null : $body];
+}
+[, $land] = h_session("$base/verify.php", $jar);
+preg_match('/name="csrf_token" value="([^"]+)"/', (string)$land, $m);
+$csrf = $m[1] ?? '';
+t_check('landing renders a CSRF token', $csrf !== '');
+[, $post] = h_session("$base/verify.php", $jar, ['csrf_token' => $csrf, 'certificate_id' => $valid['certId']]);
+t_check('POST certificate_id with CSRF VALID', vh_verdict($post, 'VALID'));
+[$noCsrfCode, $noCsrf] = h_session("$base/verify.php", $jar, ['csrf_token' => 'forged', 'smart_id' => $valid['certId']]);
+t_check('POST with a forged CSRF token refused (403)', $noCsrfCode === 403 && !vh_verdict($noCsrf, 'VALID'));
 
-// ── The landing page exposes all four input methods ───────────────────
-$land = h_get("$base/verify.php");
-foreach (['tab-camera', 'tab-image', 'tab-pdf', 'tab-id', 'qrImageInput', 'pdfInput', 'certificate_id'] as $needle) {
+// ── Browser-decoded QR fallback (privacy mode: hash + QR text only) ──
+$qrText = "$base/verify.php?token={$valid['token']}";
+[, $qr] = h_session("$base/verify.php", $jar, ['csrf_token' => $csrf, 'smart_hash' => str_repeat('0', 64), 'smart_qr_text' => $qrText]);
+t_check('privacy hash miss + browser QR -> VALID', vh_verdict($qr, 'VALID'));
+t_check('browser-QR result says the file is not byte-exact', $qr !== null && str_contains($qr, 'not a byte-exact copy'));
+[, $qrNone] = h_session("$base/verify.php", $jar, ['csrf_token' => $csrf, 'smart_hash' => str_repeat('1', 64), 'smart_qr_text' => 'https://evil.example/not-ours']);
+t_check('privacy hash miss + foreign QR -> INVALID', vh_verdict($qrNone, 'INVALID'));
+@unlink($jar);
+
+// ── Landing page: Smart Verify panel + external scripts only ─────────
+foreach (['id="smartVerifyForm"', 'id="smart_id"', 'id="smart_file"', 'id="scanQrBtn"', 'id="privacyHashToggle"',
+          'assets/js/smart-verify.js', 'assets/js/html5-qrcode.min.js', 'data-pdf-worker="assets/js/vendor/pdf.worker.min.js"'] as $needle) {
     t_check("landing exposes $needle", $land !== null && str_contains($land, $needle));
 }
-t_check('landing serves pdf.js worker path', $land !== null && str_contains($land, 'verify-scan.js'));
+t_check('landing has no inline <script> blocks', $land !== null && preg_match('/<script\b(?![^>]*\bsrc\s*=)[^>]*>/i', $land) === 0);
+foreach (['assets/js/smart-verify.js', 'assets/js/vendor/pdf.min.js', 'assets/js/vendor/pdf.worker.min.js'] as $asset) {
+    [$code] = h_session("$base/$asset", $jar);
+    t_check("asset served: $asset", $code === 200);
+}
 
 // ── Cleanup ───────────────────────────────────────────────────────────
 proc_terminate($proc);
@@ -166,6 +199,7 @@ $db->prepare('DELETE FROM certificates WHERE institution_id = :i')->execute(['i'
 $db->prepare('DELETE FROM institutions WHERE id = :i')->execute(['i' => $instId]);
 $db->prepare('DELETE FROM students WHERE id = :i')->execute(['i' => $studentId]);
 $db->prepare('DELETE FROM users WHERE id IN (:a, :s)')->execute(['a' => $adminUid, 's' => $studentUid]);
+$db->prepare("DELETE FROM verify_rate WHERE ip = '127.0.0.1'")->execute();
 foreach ($createdFiles as $f) { @unlink($f); }
 
 exit(t_summary('test_verify_http') ? 0 : 1);

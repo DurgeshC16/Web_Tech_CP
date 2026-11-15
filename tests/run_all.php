@@ -26,8 +26,8 @@ $files = [
     'test_upload_http.php',   // spawns `php -S` on a local port
     'test_otp.php',           // OTP lifecycle via the dev file mail transport
     'test_config_guard.php',  // production secret / mail-transport guard
-    // Not yet included: test_verify_http.php expects the tabbed scanner
-    // verify UI still parked in `git stash@{0}` (docs/09, item 2).
+    'test_verify_http.php',   // verify.php over real HTTP (php -S)
+    // Browser suite (needs Chrome/Edge + Node >= 21): node tests/test_verify_ui.mjs
     // test_smtp_live.php needs a real SMTP account; run it by hand.
 ];
 

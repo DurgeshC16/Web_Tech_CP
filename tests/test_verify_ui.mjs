@@ -1,14 +1,17 @@
 // tests/test_verify_ui.mjs
-// End-to-end test of the multi-input verification UI on verify.php.
+// End-to-end test of the Smart Verify panel on verify.php in a REAL browser.
 //
-// Drives a real Chrome/Edge through the DevTools Protocol (no npm deps;
-// Node >= 21 provides a global WebSocket) and exercises all four input
-// methods against the isolated test database:
-//   1. camera      — a synthetic MediaStream showing a real QR image
-//   2. QR image    — PNG upload decoded in the browser
-//   3. PDF         — single + multi-page PDFs rendered by pdf.js
-//   4. certificate id — the manual GET form
-// plus direct links and the extraction/origin-validation rules.
+// Drives Chrome/Edge through the DevTools Protocol (no npm deps; Node >= 21
+// provides a global WebSocket) against the isolated test database:
+//   A. in-page QR decoding (smart-verify.js): PDF pages rendered by pdf.js
+//      (QR on page 1 and on page 3), QR PNG, PDF without QR, corrupt PDF
+//   B. upload flow: PDF whose bytes differ from the issued file -> resolved
+//      by the browser-decoded QR -> VALID with the "not byte-exact" note
+//   C. privacy mode: only hash + QR text are posted (checked in the log)
+//   D. PDF without a QR -> INVALID
+//   E. shareable GET links (?certificate_id=, ?token=)
+//   F. camera button starts / stops the scanner (fake media stream)
+//   G. no CSP violations or uncaught exceptions on the page
 //
 // The script is self-contained: it starts `php -S` on a free port, builds
 // fixtures (tests/fixtures/make_verify_fixtures.php) for that origin, runs
@@ -167,11 +170,11 @@ async function navigate(cdp, sessionId, url) {
   await ensureScripts(cdp, sessionId);
 }
 
-// The page is only meaningful once verify-scan.js and html5-qrcode have run.
+// The page is only meaningful once smart-verify.js and html5-qrcode have run.
 // On a slow/() dev server an asset can occasionally miss its first load, so
 // poll for the globals and reload a couple of times before giving up.
 async function ensureScripts(cdp, sessionId, attempts = 3) {
-  const probe = `!!(window.CertiVaultVerify && typeof window.Html5Qrcode === 'function')`;
+  const probe = `!!(window.CertiVaultSmartVerify && typeof window.Html5Qrcode === 'function')`;
   for (let i = 0; i < attempts; i++) {
     const ok = await evaluate(cdp, sessionId, probe).catch(() => false);
     if (ok) return true;
@@ -190,41 +193,22 @@ async function setFile(cdp, sessionId, selector, filePath) {
   await cdp.send('DOM.setFileInputFiles', { files: [normalize(filePath)], nodeId }, sessionId);
 }
 
-function stateExpr() {
-  return `(() => {
-    const st = document.getElementById('verifyStatus');
-    const ch = document.getElementById('verifyChooser');
-    return {
-      url: location.pathname + location.search,
-      status: st && !st.hidden ? st.textContent : '',
-      statusClass: st ? st.className : '',
-      chooser: ch && !ch.hidden ? ch.textContent : ''
-    };
-  })()`;
-}
-
-// Poll until the page either navigated (token/certificate_id in the URL),
-// showed an error status, or surfaced the multi-QR chooser.
-async function waitOutcome(cdp, sessionId, timeoutMs = 20000) {
+// Poll until the result view (verdict seal) is rendered after a submit.
+async function waitVerdict(cdp, sessionId, timeoutMs = 30000) {
   const start = Date.now();
-  let last = null;
   while (Date.now() - start < timeoutMs) {
     try {
-      last = await evaluate(cdp, sessionId, stateExpr());
-      if (last) {
-        if (/[?&](token|certificate_id)=/.test(last.url)) return { kind: 'nav', ...last };
-        if (/scan-status-error/.test(last.statusClass)) return { kind: 'error', ...last };
-        if (last.chooser) return { kind: 'chooser', ...last };
-      }
+      const v = await evaluate(cdp, sessionId, `(() => {
+        const seal = document.querySelector('[class*="verdict-seal-"]');
+        if (!seal) return null;
+        const m = seal.className.match(/verdict-seal-([a-z]+)/);
+        return { verdict: m ? m[1].toUpperCase() : '', text: document.body.innerText };
+      })()`);
+      if (v) return v;
     } catch { /* context swapping during navigation */ }
-    await sleep(150);
+    await sleep(200);
   }
-  return { kind: 'timeout', ...(last || {}) };
-}
-
-async function readVerdict(cdp, sessionId) {
-  return await evaluate(cdp, sessionId,
-    `(() => { const el = document.querySelector('.verdict-seal'); return el ? el.textContent.trim() : ''; })()`);
+  return { verdict: 'TIMEOUT', text: '' };
 }
 
 // ── Test bookkeeping ────────────────────────────────────────────────────
@@ -291,289 +275,126 @@ async function main() {
   const QR = manifest.qr;
   const PDF = manifest.pdf;
 
+  // Collect CSP violations / uncaught exceptions from every page.
+  const pageProblems = [];
+  cdp.listeners.set('Runtime.exceptionThrown', [(m) => pageProblems.push('exception: ' + (m.params.exceptionDetails.text || ''))]);
+  cdp.listeners.set('Log.entryAdded', [(m) => {
+    const t = m.params.entry.text || '';
+    if (/Content Security Policy|Refused to/i.test(t)) pageProblems.push('csp: ' + t);
+  }]);
+  // Fresh limiter window for 127.0.0.1 (many lookups below).
+  phpRun(['tests/support/ui_db.php', 'reset-limiter']);
+
+  async function freshPage(init) {
+    const page = await newPage(cdp, init ? { initScript: init } : {});
+    await cdp.send('Log.enable', {}, page.sessionId);
+    await navigate(cdp, page.sessionId, `${BASE}/verify.php`);
+    return page;
+  }
+  async function submitForm(sessionId) {
+    await evaluate(cdp, sessionId, `document.querySelector('#smartVerifyForm button[type=submit]').click()`);
+    return await waitVerdict(cdp, sessionId);
+  }
+
   try {
-    // ── A. extractIdentifier unit rules (deterministic, in-page) ────────
+    // ── A. In-page decoding ──────────────────────────────────────────
     {
-      const page = await newPage(cdp);
-      await navigate(cdp, page.sessionId, `${BASE}/verify.php`);
-      const checks = await evaluate(cdp, page.sessionId, `(() => {
-        const ex = window.CertiVaultVerify.extractIdentifier;
-        const tok = ${JSON.stringify(T.valid)};
-        const t = (x) => { const r = ex(x); return r ? r.type + ':' + r.value : null; };
-        return {
-          bare: t(tok),
-          spaced: t('\\n  ' + tok + '  \\n'),
-          urlsame: t(location.origin + '/verify.php?token=' + tok),
-          urlrelative: t('verify.php?token=' + tok),
-          foreign: t('https://evil.example/verify.php?token=' + tok),
-          wrongpath: t(location.origin + '/index.php?token=' + tok),
-          javascript: t('javascript:alert(1)'),
-          certid: t('CV-2026-880001'),
-          malformedShort: t('tooshort'),
-          empty: t(''),
-          httpForeign: t('http://attacker.test/verify.php?token=' + tok)
-        };
-      })()`);
-      ok('extract: bare 43-char token', checks.bare === 'token:' + T.valid);
-      ok('extract: surrounding whitespace trimmed', checks.spaced === 'token:' + T.valid);
-      ok('extract: same-origin verify URL', checks.urlsame === 'token:' + T.valid);
-      ok('extract: relative verify URL', checks.urlrelative === 'token:' + T.valid);
-      ok('extract: foreign origin rejected', checks.foreign === null);
-      ok('extract: same-origin wrong path rejected', checks.wrongpath === null);
-      ok('extract: javascript: scheme rejected', checks.javascript === null);
-      ok('extract: certificate id accepted', checks.certid === 'certificate_id:CV-2026-880001');
-      ok('extract: malformed token rejected', checks.malformedShort === null);
-      ok('extract: empty rejected', checks.empty === null);
-      ok('extract: http foreign origin rejected', checks.httpForeign === null);
+      const page = await freshPage();
+      const decode = async (file) => {
+        await setFile(cdp, page.sessionId, '#smart_file', file);
+        return await evaluate(cdp, page.sessionId,
+          `window.CertiVaultSmartVerify.decodeFile(document.getElementById('smart_file').files[0]).then((t) => t, () => 'THREW')`);
+      };
+      const one = await decode(PDF.one);
+      ok('decode: PDF with QR on page 1', typeof one === 'string' && one.includes(T.valid), String(one));
+      const multi = await decode(PDF.multi);
+      ok('decode: PDF with QR on page 3', typeof multi === 'string' && multi.includes(T.valid), String(multi));
+      const png = await decode(QR.valid);
+      ok('decode: QR PNG image', typeof png === 'string' && png.includes(T.valid), String(png));
+      const none = await decode(PDF.noqr);
+      ok('decode: PDF without QR -> null', none === null, String(none));
+      const broken = await decode(PDF.broken);
+      ok('decode: corrupt PDF -> rejected cleanly (THREW is caught by submit)', broken === null || broken === 'THREW', String(broken));
       await closePage(cdp, page);
     }
 
-    // Helper: run an upload-style test on a fresh page.
-    async function uploadTest(tabId, selector, btnId, filePath, expect) {
-      const page = await newPage(cdp);
-      try {
-        await navigate(cdp, page.sessionId, `${BASE}/verify.php`);
-        await evaluate(cdp, page.sessionId, `document.getElementById(${JSON.stringify(tabId)}).click()`);
-        await setFile(cdp, page.sessionId, selector, filePath);
-        await evaluate(cdp, page.sessionId, `document.getElementById(${JSON.stringify(btnId)}).click()`);
-        const out = await waitOutcome(cdp, page.sessionId);
-        if (expect === 'valid') {
-          return { ok: out.kind === 'nav' && out.url.includes('token=' + T.valid), out };
-        }
-        return { ok: out.kind === 'error', out };
-      } finally {
-        await closePage(cdp, page);
-      }
-    }
-
-    // ── B. QR image uploads ─────────────────────────────────────────────
+    // ── B. Upload flow resolved by the browser-decoded QR ─────────────
     {
-      const r = await uploadTest('tab-image', '#qrImageInput', 'qrImageBtn', QR.valid, 'valid');
-      ok('image: valid QR navigates to token', r.ok, JSON.stringify(r.out));
-      const page = await newPage(cdp);
-      await navigate(cdp, page.sessionId, `${BASE}/verify.php?token=${T.valid}`);
-      ok('image: resulting verdict is VALID', (await readVerdict(cdp, page.sessionId)) === 'VALID');
+      const page = await freshPage();
+      await setFile(cdp, page.sessionId, '#smart_file', PDF.one);
+      const v = await submitForm(page.sessionId);
+      ok('upload PDF (not byte-exact) -> VALID via browser QR', v.verdict === 'VALID', v.verdict);
+      ok('upload result warns the copy is not byte-exact', v.text.includes('not a byte-exact copy'));
       await closePage(cdp, page);
     }
+
+    // ── C. Privacy mode: hash + QR text only ──────────────────────────
     {
-      const r = await uploadTest('tab-image', '#qrImageInput', 'qrImageBtn', QR.bare, 'valid');
-      ok('image: bare-token QR navigates to token', r.ok, JSON.stringify(r.out));
-    }
-    {
-      const r = await uploadTest('tab-image', '#qrImageInput', 'qrImageBtn', QR.foreign, 'error');
-      ok('image: foreign-origin QR is rejected (no navigation)', r.ok && !/token=/.test(r.out.url), JSON.stringify(r.out));
-    }
-    {
-      const r = await uploadTest('tab-image', '#qrImageInput', 'qrImageBtn', QR.malformed, 'error');
-      ok('image: malformed-token QR is rejected', r.ok, JSON.stringify(r.out));
-    }
-    {
-      const r = await uploadTest('tab-image', '#qrImageInput', 'qrImageBtn', QR.noqr, 'error');
-      ok('image: valid PNG without a QR shows an error', r.ok, JSON.stringify(r.out));
-    }
-    {
-      const r = await uploadTest('tab-image', '#qrImageInput', 'qrImageBtn', QR.garbage, 'error');
-      ok('image: unreadable/corrupted image shows an error', r.ok, JSON.stringify(r.out));
+      const page = await freshPage();
+      await evaluate(cdp, page.sessionId, `document.getElementById('privacyHashToggle').click()`);
+      const pressed = await evaluate(cdp, page.sessionId, `document.getElementById('privacyHashToggle').getAttribute('aria-pressed')`);
+      ok('privacy toggle reports aria-pressed=true', pressed === 'true');
+      await setFile(cdp, page.sessionId, '#smart_file', PDF.multi);
+      const v = await submitForm(page.sessionId);
+      ok('privacy mode PDF -> VALID via browser QR', v.verdict === 'VALID', v.verdict);
+      const log = phpRun(['tests/support/ui_db.php', 'last-log']);
+      let row = {};
+      try { row = JSON.parse(log.stdout || '{}') || {}; } catch { /* keep {} */ }
+      ok('privacy mode logged as a hash lookup (file never uploaded)',
+        /^[a-f0-9]{64}$/.test(row.query_value || '') && (row.detail || '').includes('privacy hash lookup'), JSON.stringify(row));
+      await closePage(cdp, page);
     }
 
-    // ── C. PDF uploads ──────────────────────────────────────────────────
+    // ── D. PDF with no QR -> INVALID ──────────────────────────────────
     {
-      const r = await uploadTest('tab-pdf', '#pdfInput', 'pdfBtn', PDF.one, 'valid');
-      ok('pdf: single-page certificate navigates to token', r.ok, JSON.stringify(r.out));
-    }
-    {
-      const r = await uploadTest('tab-pdf', '#pdfInput', 'pdfBtn', PDF.multi, 'valid');
-      ok('pdf: multi-page certificate (QR on page 3) navigates to token', r.ok, JSON.stringify(r.out));
-    }
-    {
-      const r = await uploadTest('tab-pdf', '#pdfInput', 'pdfBtn', PDF.noqr, 'error');
-      ok('pdf: multi-page PDF without a QR shows an error', r.ok, JSON.stringify(r.out));
-    }
-    {
-      const r = await uploadTest('tab-pdf', '#pdfInput', 'pdfBtn', PDF.broken, 'error');
-      ok('pdf: corrupted PDF shows an error', r.ok, JSON.stringify(r.out));
+      const page = await freshPage();
+      await setFile(cdp, page.sessionId, '#smart_file', PDF.noqr);
+      const v = await submitForm(page.sessionId);
+      ok('upload PDF without QR -> INVALID', v.verdict === 'INVALID', v.verdict);
+      await closePage(cdp, page);
     }
 
-    // ── D. Manual certificate id ────────────────────────────────────────
+    // ── E. Shareable links ────────────────────────────────────────────
     {
       const page = await newPage(cdp);
-      try {
-        await navigate(cdp, page.sessionId, `${BASE}/verify.php`);
-        await evaluate(cdp, page.sessionId, `document.getElementById('tab-id').click()`);
-        await evaluate(cdp, page.sessionId, `(() => {
-          const i = document.getElementById('certificate_id');
-          i.value = ${JSON.stringify(C.valid)};
-          i.form.querySelector('button[type=submit]').click();
-        })()`);
-        const out = await waitOutcome(cdp, page.sessionId);
-        ok('manual: valid certificate id verifies', out.kind === 'nav' && out.url.includes('certificate_id=' + C.valid), JSON.stringify(out));
-        ok('manual: verdict is VALID', (await readVerdict(cdp, page.sessionId)) === 'VALID');
-      } finally { await closePage(cdp, page); }
-    }
-    {
-      // Client-side validation must block a malformed id BEFORE any request.
-      const page = await newPage(cdp);
-      try {
-        await navigate(cdp, page.sessionId, `${BASE}/verify.php`);
-        await evaluate(cdp, page.sessionId, `document.getElementById('tab-id').click()`);
-        await evaluate(cdp, page.sessionId, `(() => {
-          const i = document.getElementById('certificate_id');
-          i.value = 'not-a-cert-id';
-          i.form.querySelector('button[type=submit]').click();
-        })()`);
-        await sleep(600);
-        const st = await evaluate(cdp, page.sessionId, `(() => {
-          const i = document.getElementById('certificate_id');
-          const err = i.closest('.form-group').querySelector('.field-error');
-          return { url: location.pathname + location.search, invalid: i.getAttribute('aria-invalid'), err: err ? err.textContent : '' };
-        })()`);
-        ok('manual: malformed id is blocked client-side (no request)',
-          !/certificate_id=/.test(st.url) && st.invalid === 'true' && !!st.err, JSON.stringify(st));
-      } finally { await closePage(cdp, page); }
-    }
-    {
-      // Bypass client validation to prove the server also rejects it (INVALID).
-      const page = await newPage(cdp);
-      try {
-        await navigate(cdp, page.sessionId, `${BASE}/verify.php`);
-        await evaluate(cdp, page.sessionId, `(() => {
-          const i = document.getElementById('certificate_id');
-          i.value = 'not-a-cert-id';
-          i.form.submit();
-        })()`);
-        await cdp.waitEvent('Page.loadEventFired', page.sessionId, 12000);
-        await sleep(200);
-        ok('manual: server rejects malformed id with INVALID', (await readVerdict(cdp, page.sessionId)) === 'INVALID');
-      } finally { await closePage(cdp, page); }
+      await cdp.send('Page.navigate', { url: `${BASE}/verify.php?certificate_id=${encodeURIComponent(C.valid)}` }, page.sessionId);
+      let v = await waitVerdict(cdp, page.sessionId);
+      ok('GET ?certificate_id= -> VALID', v.verdict === 'VALID', v.verdict);
+      await cdp.send('Page.navigate', { url: `${BASE}/verify.php?token=${T.revoked}` }, page.sessionId);
+      await sleep(500);
+      v = await waitVerdict(cdp, page.sessionId);
+      ok('GET ?token= (revoked) -> REVOKED', v.verdict === 'REVOKED', v.verdict);
+      await closePage(cdp, page);
     }
 
-    // ── E. Direct verification links (all six verdicts) ─────────────────
+    // ── F. Camera start / stop with a fake stream ─────────────────────
     {
-      const cases = [
-        ['VALID', `token=${T.valid}`],
-        ['EXPIRED', `token=${T.expired}`],
-        ['REVOKED', `token=${T.revoked}`],
-        ['SUPERSEDED', `token=${T.superseded}`],
-        ['TAMPERED', `token=${T.tampered}`],
-        ['INVALID', `token=${T.unknown}`],
-      ];
-      const page = await newPage(cdp);
-      try {
-        for (const [want, qs] of cases) {
-          await navigate(cdp, page.sessionId, `${BASE}/verify.php?${qs}`);
-          const got = await readVerdict(cdp, page.sessionId);
-          ok(`direct link: ${want} verdict`, got === want, `got ${got}`);
-        }
-        // certificate-id direct link
-        await navigate(cdp, page.sessionId, `${BASE}/verify.php?certificate_id=${C.valid}`);
-        ok('direct link: certificate_id param works', (await readVerdict(cdp, page.sessionId)) === 'VALID');
-        // unknown cert id
-        await navigate(cdp, page.sessionId, `${BASE}/verify.php?certificate_id=${C.unknown}`);
-        ok('direct link: unknown certificate id is INVALID', (await readVerdict(cdp, page.sessionId)) === 'INVALID');
-      } finally { await closePage(cdp, page); }
-    }
-
-    // ── F. Camera — synthetic MediaStream showing the real QR ───────────
-    {
-      const buf = readFileSync(normalize(QR.valid)).toString('base64');
-      const init = `(() => {
-        const DATA = 'data:image/png;base64,${buf}';
-        const img = new Image();
-        img.src = DATA;
-        const ready = new Promise((res) => { img.onload = res; img.onerror = res; });
-        const md = navigator.mediaDevices;
-        if (md) {
-          md.enumerateDevices = () => Promise.resolve([{ deviceId: 'fake', kind: 'videoinput', label: 'fake', groupId: 'fake' }]);
-          md.getUserMedia = () => ready.then(() => {
-            // Draw the QR well inside the scanner's 250x250 qrbox: a 640x640
-            // frame with a 200x200 QR centred, so the box never crops it.
-            const c = document.createElement('canvas');
-            c.width = 640; c.height = 640;
-            const ctx = c.getContext('2d');
-            const draw = () => {
-              ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 640, 640);
-              ctx.drawImage(img, 220, 220, 200, 200);
-            };
-            draw(); setInterval(draw, 120);
-            return c.captureStream(12);
-          });
-        }
-      })();`;
-      const page = await newPage(cdp, { initScript: init });
-      try {
-        await navigate(cdp, page.sessionId, `${BASE}/verify.php`);
-        await evaluate(cdp, page.sessionId, `document.getElementById('tab-camera').click()`);
-        await evaluate(cdp, page.sessionId, `document.getElementById('cameraStartBtn').click()`);
-        const out = await waitOutcome(cdp, page.sessionId, 25000);
-        ok('camera: decodes a live QR frame and verifies',
-          out.kind === 'nav' && out.url.includes('token=' + T.valid), JSON.stringify(out));
-      } finally { await closePage(cdp, page); }
-    }
-    {
-      // Camera unavailable / permission denied paths must show guidance.
       const init = `(() => {
         const md = navigator.mediaDevices;
         if (md) {
-          md.enumerateDevices = () => Promise.resolve([]);
-          md.getUserMedia = () => Promise.reject(new DOMException('Permission denied', 'NotAllowedError'));
-        }
-      })();`;
-      const page = await newPage(cdp, { initScript: init });
-      try {
-        await navigate(cdp, page.sessionId, `${BASE}/verify.php`);
-        await evaluate(cdp, page.sessionId, `document.getElementById('tab-camera').click()`);
-        await evaluate(cdp, page.sessionId, `document.getElementById('cameraStartBtn').click()`);
-        const out = await waitOutcome(cdp, page.sessionId, 12000);
-        ok('camera: permission denial shows guidance',
-          out.kind === 'error' && /denied|no camera|camera is busy|could not start/i.test(out.status), JSON.stringify(out));
-      } finally { await closePage(cdp, page); }
-    }
-
-    // ── G. Camera stop control is visible while scanning ────────────────
-    {
-      // A synthetic stream with NO QR code, so the scanner keeps running and
-      // we can observe the start/stop controls instead of navigating away.
-      const init = `(() => {
-        const md = navigator.mediaDevices;
-        if (md) {
-          md.enumerateDevices = () => Promise.resolve([{ deviceId: 'fake', kind: 'videoinput', label: 'fake', groupId: 'fake' }]);
           md.getUserMedia = () => Promise.resolve((() => {
             const c = document.createElement('canvas'); c.width = 320; c.height = 320;
             const ctx = c.getContext('2d');
-            const draw = () => {
-              const g = ctx.createLinearGradient(0, 0, 320, 320);
-              g.addColorStop(0, '#ddd'); g.addColorStop(1, '#aaa');
-              ctx.fillStyle = g; ctx.fillRect(0, 0, 320, 320);
-            };
+            const draw = () => { ctx.fillStyle = '#bbb'; ctx.fillRect(0, 0, 320, 320); };
             draw(); setInterval(draw, 200);
             return c.captureStream(8);
           })());
         }
       })();`;
-      const page = await newPage(cdp, { initScript: init });
-      try {
-        await navigate(cdp, page.sessionId, `${BASE}/verify.php`);
-        await evaluate(cdp, page.sessionId, `document.getElementById('tab-camera').click()`);
-        await evaluate(cdp, page.sessionId, `document.getElementById('cameraStartBtn').click()`);
-        await sleep(2000);
-        const vis = await evaluate(cdp, page.sessionId, `(() => {
-          const stop = document.getElementById('cameraStopBtn');
-          const start = document.getElementById('cameraStartBtn');
-          return { stopShown: stop && !stop.hidden, startHidden: start && start.hidden };
-        })()`);
-        ok('camera: stop control visible while scanning',
-          vis.stopShown && vis.startHidden, JSON.stringify(vis));
-        // Press stop and confirm the scanner UI is torn down.
-        await evaluate(cdp, page.sessionId, `document.getElementById('cameraStopBtn').click()`);
-        await sleep(800);
-        const after = await evaluate(cdp, page.sessionId, `(() => {
-          const stop = document.getElementById('cameraStopBtn');
-          const reader = document.getElementById('qrReader');
-          return { stopHidden: stop && stop.hidden, readerHidden: reader && reader.hidden };
-        })()`);
-        ok('camera: stop hides the scanner', after.stopHidden && after.readerHidden, JSON.stringify(after));
-      } finally { await closePage(cdp, page); }
+      const page = await freshPage(init);
+      await evaluate(cdp, page.sessionId, `document.getElementById('scanQrBtn').click()`);
+      await sleep(2000);
+      const on = await evaluate(cdp, page.sessionId, `({ shown: !document.getElementById('qrScanner').hidden, btnDisabled: document.getElementById('scanQrBtn').disabled })`);
+      ok('camera: scanner shown while running', on.shown && on.btnDisabled, JSON.stringify(on));
+      await evaluate(cdp, page.sessionId, `document.getElementById('qrStopBtn').click()`);
+      await sleep(900);
+      const off = await evaluate(cdp, page.sessionId, `({ hidden: document.getElementById('qrScanner').hidden, btnEnabled: !document.getElementById('scanQrBtn').disabled })`);
+      ok('camera: stop hides the scanner', off.hidden && off.btnEnabled, JSON.stringify(off));
+      await closePage(cdp, page);
     }
+
+    // ── G. Page hygiene ───────────────────────────────────────────────
+    ok('no CSP violations or uncaught exceptions', pageProblems.length === 0, pageProblems.slice(0, 3).join(' | '));
   } catch (e) {
     fail++;
     console.log('FAIL verify-ui exception — ' + e.message);
