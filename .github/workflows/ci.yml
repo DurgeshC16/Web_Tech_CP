@@ -1,0 +1,101 @@
+# Continuous integration for CertiVault.
+# Runs on every push and pull request:
+#   1. php     — lint every first-party PHP file + the full CLI suite
+#                (tests/run_all.php) against a MariaDB service container
+#   2. browser — the headless-Chrome suites (Smart Verify + whole-app CSP audit)
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CV_DB_HOST: 127.0.0.1
+  CV_DB_USER: root
+  CV_DB_PASS: ci-root-password
+  CV_TEST_DB: certivault_test
+
+jobs:
+  php:
+    name: PHP suite (lint + run_all)
+    runs-on: ubuntu-24.04
+    services:
+      mariadb:
+        image: mariadb:10.11
+        env:
+          MARIADB_ROOT_PASSWORD: ci-root-password
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: pdo_mysql, openssl, gd, fileinfo, mbstring, curl, zip
+          coverage: none
+          tools: composer:v2
+
+      - name: Install Composer dependencies
+        run: composer install --no-dev --no-interaction --no-progress --prefer-dist
+
+      - name: Lint first-party PHP
+        run: |
+          git ls-files '*.php' | grep -v -e '^src/utils/phpqrcode/' -e '^src/utils/PHPMailer/' -e '^src/utils/qrdecoder/' \
+            | xargs -n1 -P4 php -l > /tmp/lint.txt || { grep -v '^No syntax errors' /tmp/lint.txt; exit 1; }
+          echo "Linted $(wc -l < /tmp/lint.txt) files."
+
+      - name: Run the CLI test suite
+        run: php tests/run_all.php
+
+  browser:
+    name: Browser suite (headless Chrome)
+    runs-on: ubuntu-24.04
+    needs: php
+    services:
+      mariadb:
+        image: mariadb:10.11
+        env:
+          MARIADB_ROOT_PASSWORD: ci-root-password
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      CV_CHROME: /usr/bin/google-chrome
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: pdo_mysql, openssl, gd, fileinfo, mbstring, curl, zip
+          coverage: none
+          tools: composer:v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Composer dependencies
+        run: composer install --no-dev --no-interaction --no-progress --prefer-dist
+
+      - name: Create the test database
+        run: php tests/support/ui_db.php reset-limiter
+
+      - name: Smart Verify in the browser
+        run: node tests/test_verify_ui.mjs
+
+      - name: Whole-app CSP audit
+        run: node tests/test_pages_browser.mjs

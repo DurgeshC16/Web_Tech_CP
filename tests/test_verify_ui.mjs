@@ -41,6 +41,7 @@ const CHROME = [
   'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
   'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
   'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
+  '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser',
 ].filter(Boolean).find((p) => existsSync(p));
 if (!CHROME) {
   console.log('SKIP verify-ui: no Chrome/Edge found (set CV_CHROME).');
@@ -63,7 +64,7 @@ const OPENSSL_CONF = process.env.OPENSSL_CONF
 const phpEnv = {
   ...process.env,
   CV_TEST_DB: process.env.CV_TEST_DB || 'certivault_test',
-  OPENSSL_CONF,
+  ...(OPENSSL_CONF ? { OPENSSL_CONF } : {}),
 };
 
 function phpRun(args) {
@@ -254,7 +255,7 @@ async function main() {
   const CDP_PORT = await pickPort(Number(process.env.CV_CDP_PORT || 9333));
   const chrome = spawn(CHROME, [
     '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
-    '--disable-extensions', '--mute-audio',
+    '--disable-extensions', '--mute-audio', ...(process.env.CI ? ['--no-sandbox'] : []),
     '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream',
     `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${userDir}`, 'about:blank',
   ], { stdio: 'ignore' });

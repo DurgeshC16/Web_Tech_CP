@@ -109,7 +109,7 @@ async function main() {
   const cdpPort = await freePort(Number(process.env.CV_CDP_PORT || 9351));
   const userDir = mkdtempSync(join(tmpdir(), 'cv-pages-chrome-'));
   const chrome = spawn(CHROME, ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
-    '--disable-extensions', '--mute-audio', `--remote-debugging-port=${cdpPort}`, `--user-data-dir=${userDir}`, 'about:blank'], { stdio: 'ignore' });
+    '--disable-extensions', '--mute-audio', ...(process.env.CI ? ['--no-sandbox'] : []), `--remote-debugging-port=${cdpPort}`, `--user-data-dir=${userDir}`, 'about:blank'], { stdio: 'ignore' });
   let wsUrl = null;
   for (let i = 0; i < 100 && !wsUrl; i++) {
     try { const r = await fetch(`http://127.0.0.1:${cdpPort}/json/version`); if (r.ok) wsUrl = (await r.json()).webSocketDebuggerUrl; } catch { /* starting */ }
