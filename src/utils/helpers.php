@@ -106,13 +106,15 @@ function send_no_store_headers() {
  * every rendered page gets them) and directly by responses that never
  * include head.php (file downloads, the verify.php 429 page).
  *
- * CSP notes: 'unsafe-inline' stays ONLY because pages currently require
- * it — inline <script> helpers (issue/supersede/view_certificate),
- * inline on* handlers, and 30+ style="..." attributes. Dropping it
- * needs a nonce refactor (tracked follow-up), so the policy instead
- * allowlists exactly the external hosts the app uses: Google Fonts
- * always, plus google.com/gstatic.com for reCAPTCHA when its keys are
- * configured (tighter when the offline fallback is active).
+ * CSP notes: scripts are external files only — script-src 'self' (plus
+ * the reCAPTCHA hosts when its keys are configured) and
+ * script-src-attr 'none', so injected <script> blocks and on*="" handlers
+ * do not run. Page behaviour lives in assets/js/ui.js (data attributes)
+ * and assets/js/smart-verify.js. style-src still allows 'unsafe-inline'
+ * because templates carry style="..." attributes (lower risk: CSS cannot
+ * execute script); moving them into classes is a tracked follow-up.
+ * External hosts are allow-listed exactly: Google Fonts always, plus
+ * google.com/gstatic.com for reCAPTCHA when enabled.
  */
 function send_security_headers() {
     header('X-Content-Type-Options: nosniff');
@@ -125,7 +127,8 @@ function send_security_headers() {
         . "object-src 'none'; frame-ancestors 'self'; img-src 'self' blob:; "
         . 'font-src \'self\' https://fonts.gstatic.com; '
         . 'style-src \'self\' \'unsafe-inline\' https://fonts.googleapis.com' . $extra . '; '
-        . 'script-src \'self\' \'unsafe-inline\'' . $extra . '; '
+        . 'script-src \'self\'' . $extra . '; '
+        . "script-src-attr 'none'; "
         . 'frame-src' . $frame . '; '
         . 'connect-src \'self\'' . $extra;
     header('Content-Security-Policy: ' . $csp);

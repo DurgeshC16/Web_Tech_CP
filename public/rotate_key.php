@@ -54,7 +54,7 @@ $activeKey = $stmt->fetch(PDO::FETCH_ASSOC);
     <?php if ($message): ?><div class="alert alert-info"><?= htmlspecialchars($message) ?></div><?php endif; ?>
     <?php if ($error): ?><div class="alert alert-danger"><?= htmlspecialchars($error) ?></div><?php endif; ?>
     <?php if ($activeKey): ?><div class="card"><strong>Current key v<?= (int)$activeKey['key_id'] ?></strong><p>SHA-256: <?= htmlspecialchars(CryptoService::fingerprintPublicKey($activeKey['public_key'])) ?></p></div><?php endif; ?>
-    <form method="POST" class="card" onsubmit="return confirm('Generate a new signing key? Old certificates will continue using their recorded key version.');">
+    <form method="POST" class="card" data-confirm="Generate a new signing key? Old certificates will continue using their recorded key version.">
         <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
         <p>The new private key is encrypted at rest. Download or publish its fingerprint after rotation so verifiers can pin it independently.</p>
         <button type="submit" class="btn btn-warn">Rotate key</button>

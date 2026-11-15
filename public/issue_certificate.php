@@ -335,36 +335,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <div class="form-group">
                 <label>Certificate File (PDF, PNG, JPG - Max 5MB):</label>
                 <input type="hidden" name="MAX_FILE_SIZE" value="5242880">
-                <input type="file" name="certificate_file" id="certificate_file" accept=".pdf, .png, .jpg, .jpeg" data-validate="upload" required>
+                <input type="file" name="certificate_file" id="certificate_file" data-filename-target="file_name_display" accept=".pdf, .png, .jpg, .jpeg" data-validate="upload" required>
                 <small class="file-name-display" id="file_name_display"></small>
                 <?php render_field_error($errors, 'certificate_file'); ?>
             </div>
-            <script>
-            document.getElementById('certificate_file').addEventListener('change', function (e) {
-                var f = e.target.files[0];
-                var el = document.getElementById('file_name_display');
-                if (f) { el.textContent = f.name + ' — ' + (f.size / 1024).toFixed(1) + ' KB'; } else { el.textContent = ''; }
-            });
-            // UX mirror of the server-side validity auto-fill: when a validity
-            // is entered and expiry is empty, suggest issue_date + N years.
-            // The server recomputes authoritatively on submit.
-            (function () {
-                var y = document.getElementById('validity_years');
-                var i = document.getElementById('issue_date');
-                var e = document.querySelector('[name="expiry_date"]');
-                if (!y || !i || !e) return;
-                y.addEventListener('change', function () {
-                    var n = parseInt(y.value, 10);
-                    if (!e.value && i.value && !isNaN(n) && n >= 1 && n <= 50) {
-                        var d = new Date(i.value + 'T00:00:00');
-                        if (!isNaN(d.getTime())) {
-                            d.setFullYear(d.getFullYear() + n);
-                            e.value = d.toISOString().slice(0, 10);
-                        }
-                    }
-                });
-            })();
-            </script>
 
             <button type="submit" class="btn btn-primary">Issue Certificate</button>
         </form>

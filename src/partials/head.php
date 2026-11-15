@@ -14,5 +14,6 @@ $page_title = $page_title ?? 'CertiVault';
     <link rel="stylesheet" href="assets/css/style.css">
     <?php require __DIR__ . '/head_fonts.php'; ?>
     <script src="assets/js/theme.js"></script>
+    <script src="assets/js/ui.js" defer></script>
 </head>
 <body>

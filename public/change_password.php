@@ -150,7 +150,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['cancel'])) {
             <div class="brand-name">CertiVault</div>
         </div>
         <h2>Change Password</h2>
-            <a href="javascript:history.back()" class="btn btn-secondary">Back</a>
+            <a href="index.php" data-history-back class="btn btn-secondary">Back</a>
         </div>
         <?php if ($error): ?>
             <div class="alert alert-danger"><?= htmlspecialchars($error) ?></div>

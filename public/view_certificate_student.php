@@ -129,22 +129,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['generate_share'])) {
                 <div class="alert alert-success">
                     <strong>Share Link:</strong><br>
                     <div class="copy-field">
-                        <input type="text" id="shareLinkInput" value="<?= htmlspecialchars($share_link) ?>" readonly onclick="this.select();">
+                        <input type="text" id="shareLinkInput" value="<?= htmlspecialchars($share_link) ?>" readonly data-select-on-click>
                         <button type="button" class="btn btn-secondary" id="copyShareBtn">Copy</button>
                     </div>
                     <small>This link is valid for 24 hours.</small>
                 </div>
-                <div class="toast toast-success" id="copiedToast" style="display:none;">Link copied to clipboard!</div>
-                <script>
-                document.getElementById('copyShareBtn').addEventListener('click', function () {
-                    var input = document.getElementById('shareLinkInput');
-                    input.select();
-                    document.execCommand('copy');
-                    var t = document.getElementById('copiedToast');
-                    t.style.display = 'block';
-                    setTimeout(function () { t.style.display = 'none'; }, 2500);
-                });
-                </script>
+                <div class="toast toast-success" id="copiedToast" role="status" hidden>Link copied to clipboard!</div>
             <?php endif; ?>
         </div>
     </div>

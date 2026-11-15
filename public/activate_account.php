@@ -141,34 +141,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </form>
     </div>
     <script src="assets/js/validation.js"></script>
-    <script>
-    (function () {
-        var btn = document.getElementById('resendBtn');
-        if (!btn) return;
-        var seconds = parseInt(btn.getAttribute('data-wait') || '0', 10);
-        if (!(seconds > 0)) return;
-        var label = btn.textContent;
-        var note = document.getElementById('resendCountdown');
-        var t = setInterval(function () {
-            seconds--;
-            if (seconds <= 0) {
-                clearInterval(t);
-                btn.disabled = false;
-                btn.textContent = label;
-                btn.removeAttribute('aria-disabled');
-                if (note) note.textContent = '';
-                return;
-            }
-            btn.disabled = true;
-            btn.setAttribute('aria-disabled', 'true');
-            btn.textContent = 'Try again in ' + seconds + ' second' + (seconds === 1 ? '' : 's');
-            if (note) note.textContent = 'You can resend after the cooldown — a code was just sent.';
-        }, 1000);
-        btn.disabled = true;
-        btn.setAttribute('aria-disabled', 'true');
-        btn.textContent = 'Try again in ' + seconds + ' second' + (seconds === 1 ? '' : 's');
-    })();
-    </script>
 </div>
 </main>
 <?php require __DIR__ . '/../src/partials/footer.php'; ?>

@@ -239,12 +239,12 @@ $filtered_institutions = $stmt->fetchAll();
                             <?php endif; ?>
                             <td>
                                 <?php if ($active_filter === 'pending'): ?>
-                                <form method="POST" action="" class="inline-form" onsubmit="return confirm('Approve this institution and generate its RSA keys?');">
+                                <form method="POST" action="" class="inline-form" data-confirm="Approve this institution and generate its RSA keys?">
                                     <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
                                     <input type="hidden" name="approve_id" value="<?= (int)$inst['id'] ?>">
                                     <button type="submit" class="btn btn-primary">Approve</button>
                                 </form>
-                                <form method="POST" action="" class="inline-form" style="margin-top:6px;" onsubmit="return confirm('Reject this institution?');">
+                                <form method="POST" action="" class="inline-form" style="margin-top:6px;" data-confirm="Reject this institution?">
                                     <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
                                     <input type="hidden" name="reject_id" value="<?= (int)$inst['id'] ?>">
                                     <input type="text" name="rejection_reason" placeholder="Reason (required)" data-validate="required|min:3|max:500" required>

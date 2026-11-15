@@ -255,17 +255,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error)) {
             <div class="form-group">
                 <label>Updated Certificate File (PDF, PNG, JPG - Max 5MB):</label>
                 <input type="hidden" name="MAX_FILE_SIZE" value="5242880">
-                <input type="file" name="certificate_file" id="certificate_file" accept=".pdf, .png, .jpg, .jpeg" data-validate="upload" required>
+                <input type="file" name="certificate_file" id="certificate_file" data-filename-target="file_name_display" accept=".pdf, .png, .jpg, .jpeg" data-validate="upload" required>
                 <small class="file-name-display" id="file_name_display"></small>
                 <?php render_field_error($errors, 'certificate_file'); ?>
             </div>
-            <script>
-            document.getElementById('certificate_file').addEventListener('change', function (e) {
-                var f = e.target.files[0];
-                var el = document.getElementById('file_name_display');
-                if (f) { el.textContent = f.name + ' — ' + (f.size / 1024).toFixed(1) + ' KB'; } else { el.textContent = ''; }
-            });
-            </script>
 
             <button type="submit" class="btn btn-warn btn-block">Issue Corrected Version</button>
         </form>

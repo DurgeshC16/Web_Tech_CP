@@ -57,13 +57,13 @@ unset($record);
             <a href="external_credential.php?token=<?= rawurlencode($record['public_token']) ?>" class="btn btn-ghost">Public record</a>
             <?php if (!empty($record['file_path'])): ?> <a href="external_credential_file.php?id=<?= (int)$record['id'] ?>" class="btn btn-ghost">Download student PDF</a><?php endif; ?>
             <?php if ($record['verdict'] === 'SELF_DECLARED'): ?>
-            <form method="POST" class="inline-form" style="margin-top:10px;" onsubmit="return confirm('You checked this credential at the issuer. This records your institution’s attestation, not CertiVault verification. Continue?');">
+            <form method="POST" class="inline-form" style="margin-top:10px;" data-confirm="You checked this credential at the issuer. This records your institution’s attestation, not CertiVault verification. Continue?">
                 <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>"><input type="hidden" name="credential_id" value="<?= (int)$record['id'] ?>">
                 <button class="btn btn-primary" name="attest" value="1">Attest after checking</button>
             </form>
             <?php elseif ($record['attesting_institution_id'] == $institutionId && $record['verdict'] === 'ATTESTED'): ?>
                 <p><small>Attested <?= htmlspecialchars((string)$record['attested_at']) ?> by <?= htmlspecialchars((string)$record['attesting_name']) ?></small></p>
-                <form method="POST" class="inline-form" onsubmit="return confirm('Withdraw your institution’s attestation?');">
+                <form method="POST" class="inline-form" data-confirm="Withdraw your institution’s attestation?">
                     <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>"><input type="hidden" name="credential_id" value="<?= (int)$record['id'] ?>">
                     <button class="btn btn-danger" name="withdraw" value="1">Withdraw attestation</button>
                 </form>
