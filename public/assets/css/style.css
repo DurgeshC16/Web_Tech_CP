@@ -1128,3 +1128,8 @@ img { max-width: 100%; height: auto; }
 .credential-warn { color: var(--warn); }
 .credential-fail { color: var(--danger); }
 .btn-row { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 8px; }
+
+/* ── Two-factor authentication (two_factor.php) ─────────────────────── */
+.recovery-codes { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 6px; padding: 0; list-style: none; }
+.recovery-codes code { display: block; padding: 6px 8px; background: var(--paper); border-radius: 4px; text-align: center; font-size: 1.05em; }
+.totp-qr { border: 8px solid #fff; border-radius: 4px; image-rendering: pixelated; }

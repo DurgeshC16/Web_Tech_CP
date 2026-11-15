@@ -1,4 +1,5 @@
-CREATE DATABASE IF NOT EXISTS certivault;
+-- One charset/collation everywhere (see migration 016).
+CREATE DATABASE IF NOT EXISTS certivault CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE certivault;
 
 CREATE TABLE users (
@@ -9,8 +10,12 @@ CREATE TABLE users (
     is_verified TINYINT(1) NOT NULL DEFAULT 0,
     failed_login_attempts INT NOT NULL DEFAULT 0,
     locked_until DATETIME NULL,
+    -- Optional TOTP two-factor authentication (migration 015)
+    totp_secret TEXT NULL DEFAULT NULL,          -- encrypted (CryptoService CFG1)
+    totp_enabled TINYINT(1) NOT NULL DEFAULT 0,
+    totp_last_step BIGINT NULL DEFAULT NULL,     -- last accepted step (no replay)
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE otp_codes (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -22,7 +27,7 @@ CREATE TABLE otp_codes (
     attempts TINYINT NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE institutions (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -31,7 +36,7 @@ CREATE TABLE institutions (
     status ENUM('pending', 'approved', 'rejected') DEFAULT 'pending',
     rejection_reason VARCHAR(500) DEFAULT NULL,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE students (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -39,7 +44,7 @@ CREATE TABLE students (
     full_name VARCHAR(255) NOT NULL,
     enrollment_number VARCHAR(100),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Versioned institution signing keys. Fingerprints are also published through
 -- institutions.php and /.well-known/certivault-keys.json for external pinning.
@@ -97,7 +102,7 @@ CREATE TABLE certificates (
     FOREIGN KEY (student_id) REFERENCES students(id),
     FOREIGN KEY (previous_version_id) REFERENCES certificates(id),
     FOREIGN KEY (superseded_by_id) REFERENCES certificates(id)
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Indexes (kept in sync with database/migrations/003_verification_integrity_indexes.sql)
 CREATE INDEX idx_certificates_student_id ON certificates(student_id);
@@ -124,7 +129,7 @@ CREATE TABLE verification_logs (
     detail VARCHAR(255) NULL,
     verifier_ip VARCHAR(45) NOT NULL,
     verified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 CREATE INDEX idx_vlogs_ip_time ON verification_logs(verifier_ip, verified_at);
 CREATE INDEX idx_vlogs_cert_found ON verification_logs(certificate_id_found);
 
@@ -148,9 +153,20 @@ CREATE TABLE remember_tokens (
     expires_at DATETIME NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 CREATE INDEX idx_remember_tokens_user_id ON remember_tokens(user_id);
 CREATE INDEX idx_remember_tokens_expires_at ON remember_tokens(expires_at);
+
+-- Single-use 2FA recovery codes, HMAC-SHA-256 hashes only (migration 015).
+CREATE TABLE user_recovery_codes (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    code_hash CHAR(64) NOT NULL,
+    used_at DATETIME NULL DEFAULT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_recovery_user (user_id),
+    CONSTRAINT fk_recovery_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Login rate limiting per email + IP (see database/migrations/006_login_rate_limit.sql).
 CREATE TABLE login_attempts (
@@ -158,7 +174,7 @@ CREATE TABLE login_attempts (
     email VARCHAR(255) NOT NULL,
     ip VARCHAR(45) NOT NULL,
     attempted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 CREATE INDEX idx_login_attempts_email_ip_time ON login_attempts(email, ip, attempted_at);
 
 -- Managed external registry (migration 010); rows are disabled by default.

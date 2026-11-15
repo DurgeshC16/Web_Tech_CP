@@ -30,6 +30,7 @@ $files = [
     'test_key_pinning.php',   // key fingerprint pins vs the S6 key-swap attack
     'test_credentials.php',   // portable signed credentials + OpenSSL interop
     'test_bulk_issuance.php', // shared issuance pipeline, generated PDFs, CSV
+    'test_two_factor.php',    // TOTP 2FA: RFC vectors, replay, recovery codes, HTTP login
     // Browser suite (needs Chrome/Edge + Node >= 21): node tests/test_verify_ui.mjs
     // test_smtp_live.php needs a real SMTP account; run it by hand.
 ];

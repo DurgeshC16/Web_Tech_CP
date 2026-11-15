@@ -145,6 +145,35 @@ function send_security_headers() {
  * records identity + fresh lifetime tracking. Call this — and only this —
  * whenever authentication state or privileges are (re-)granted.
  */
+/**
+ * Complete a successful login (password, and the 2FA step when enabled):
+ * rotate the session, optionally issue the remember-me token and the
+ * remember-email cookie, then redirect to the role's dashboard.
+ */
+function finish_login($db, array $user, string $email, bool $rememberMe, bool $rememberEmail) {
+    // Prevent session fixation + start fresh lifetime tracking.
+    establish_authenticated_session($user);
+
+    // Persistent login (selector + hashed token in DB — never the user id
+    // or password in the cookie).
+    if ($rememberMe) {
+        create_remember_token($db, $user['id']);
+    } else {
+        clear_remember_token($db);
+    }
+
+    // Remember-my-email cookie (email only, never a token).
+    $secure = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
+    setcookie('cv_email', $rememberEmail ? $email : '', [
+        'expires'  => $rememberEmail ? time() + 30 * 24 * 3600 : time() - 3600,
+        'path'     => '/',
+        'secure'   => $secure,
+        'httponly' => true,
+        'samesite' => 'Strict',
+    ]);
+    redirect_to_dashboard($user['role']);
+}
+
 function establish_authenticated_session($user) {
     session_regenerate_id(true);
     $_SESSION['user_id'] = (int)$user['id'];

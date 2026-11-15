@@ -144,7 +144,10 @@ try {
         @unlink($uploads . $c['file_path']);
         @unlink($qrDir . $c['qr_token'] . '.png');
     }
-    $db->exec('DELETE FROM tlog_entries WHERE certificate_id IN (SELECT certificate_id FROM certificates WHERE institution_id = ' . $instId . ')');
+    $delTlog = $db->prepare('DELETE FROM tlog_entries WHERE certificate_id = :c');
+    foreach ($db->query('SELECT certificate_id FROM certificates WHERE institution_id = ' . $instId)->fetchAll(PDO::FETCH_COLUMN) as $cidDel) {
+        $delTlog->execute(['c' => $cidDel]);
+    }
     $db->exec('DELETE FROM certificates WHERE institution_id = ' . $instId);
     $db->exec('DELETE FROM institution_keys WHERE institution_id = ' . $instId);
     $db->exec('DELETE FROM institutions WHERE id = ' . $instId);

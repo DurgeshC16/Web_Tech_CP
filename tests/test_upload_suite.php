@@ -228,7 +228,7 @@ try {
             return;
         }
         $r = VerificationService::verify($db, $cert);
-        t_check("$label => $want (got {$r['verdict']})", $r['verdict'] === $want);
+        t_check("$label => $want (got {$r['verdict']}" . ($r['verdict'] === $want ? '' : ': ' . $r['detail']) . ')', $r['verdict'] === $want);
     };
 
     $vc_check('cascade: fresh certificate', $vc_qr, 'VALID');

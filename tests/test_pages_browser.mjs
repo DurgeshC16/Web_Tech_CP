@@ -343,6 +343,47 @@ async function main() {
     for (const p of ['/student_dashboard.php', '/change_password.php', `/view_certificate_student.php?id=${fx.CERT_DB_ID}`]) {
       await audit(student, p);
     }
+    // ── Two-factor setup in the browser (QR + confirm + recovery codes) ──
+    await audit(student, '/two_factor.php');
+    {
+      const started = cdp.once('Page.loadEventFired', student.sessionId);
+      await ev(student, `document.getElementById('startTotp').click()`);
+      await started; await sleep(400);
+      const qrOk = await ev(student, `(() => { const i = document.querySelector('img.totp-qr'); return !!i && i.complete && i.naturalWidth > 100; })()`);
+      ok('2FA setup: QR image loads (same-origin, CSP-clean)', qrOk === true);
+      const totpJs = `async (b32, offset) => {
+        const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'; let bits = '';
+        for (const c of b32.replace(/\\s+/g, '')) bits += A.indexOf(c).toString(2).padStart(5, '0');
+        const key = new Uint8Array(bits.match(/.{8}/g).map((b) => parseInt(b, 2)));
+        const ctr = Math.floor(Date.now() / 1000 / 30) + (offset || 0);
+        const msg = new ArrayBuffer(8); new DataView(msg).setUint32(4, ctr);
+        const k = await crypto.subtle.importKey('raw', key, { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
+        const mac = new Uint8Array(await crypto.subtle.sign('HMAC', k, msg));
+        const o = mac[19] & 15;
+        const n = ((mac[o] & 127) << 24 | mac[o + 1] << 16 | mac[o + 2] << 8 | mac[o + 3]) % 1000000;
+        return String(n).padStart(6, '0'); }`;
+      const code = await ev(student, `(${totpJs})(document.getElementById('totpSecret').textContent, 0)`);
+      const confirmed = cdp.once('Page.loadEventFired', student.sessionId);
+      await ev(student, `(() => { document.getElementById('confirmCode').value = ${JSON.stringify(code)};
+        document.getElementById('confirmCode').form.querySelector('button[type=submit]').click(); return true; })()`);
+      await confirmed; await sleep(300);
+      const codes = await ev(student, `document.querySelectorAll('#recoveryCodes .recovery-codes li').length`);
+      ok('2FA setup: browser-computed TOTP accepted, 10 recovery codes shown', codes === 10, String(codes));
+      // Turn it off again with the password + a recovery code (a TOTP code
+      // from the same 30-s step would be rejected as a replay).
+      const recovery = await ev(student, `document.querySelector('#recoveryCodes .recovery-codes li code').textContent`);
+      const dlg = cdp.once('Page.javascriptDialogOpening', student.sessionId, 8000);
+      const off = cdp.once('Page.loadEventFired', student.sessionId);
+      await ev(student, `(() => { document.getElementById('disablePassword').value = ${JSON.stringify(fx.PASSWORD)};
+        document.getElementById('disableCode').value = ${JSON.stringify(recovery)};
+        setTimeout(() => document.getElementById('disableCode').form.querySelector('button[type=submit]').click(), 0); return true; })()`);
+      const d = await dlg;
+      if (d) await cdp.send('Page.handleJavaScriptDialog', { accept: true }, student.sessionId);
+      await off; await sleep(300);
+      const offText = await ev(student, `document.body.innerText`);
+      ok('2FA turned off with password + recovery code (after confirm dialog)', !!d && /Two-factor authentication is off/.test(offText), offText.slice(0, 160));
+    }
+
     await go(student, `${BASE}/view_certificate_student.php?id=${fx.CERT_DB_ID}`);
     // Generate a share link through the real (CSRF-protected) form.
     const genLoaded = cdp.once('Page.loadEventFired', student.sessionId);

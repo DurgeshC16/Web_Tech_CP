@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../src/config/Database.php';
 require_once __DIR__ . '/../src/utils/helpers.php';
+require_once __DIR__ . '/../src/services/TotpService.php';
 
 $error = '';
 $errors = [];
@@ -42,6 +43,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['password_reset'])) {
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['expired'])) {
     $error = 'Your session expired. Please log in again.';
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['2fa_failed'])) {
+    $error = 'Too many invalid two-factor codes. Please sign in again.';
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['denied'])) {
@@ -132,39 +137,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                    ->execute(['id' => $user['id']]);
                 clear_login_attempts($db, $email, $client_ip);
 
-                // Prevent session fixation + start fresh lifetime tracking.
-                // This same helper must be used on any role/privilege change.
-                establish_authenticated_session($user);
-
-                // Persistent login (selector + hashed token in DB — never
-                // the user id or password in the cookie).
-                if (!empty($_POST['remember_me'])) {
-                    create_remember_token($db, $user['id']);
-                } else {
-                    clear_remember_token($db);
+                // Two-factor step: accounts with TOTP enabled must also
+                // pass login_2fa.php before a session is established.
+                if (TotpService::enabledFor($db, (int)$user['id'])) {
+                    session_regenerate_id(true);
+                    $_SESSION['2fa_pending'] = [
+                        'user_id' => (int)$user['id'], 'role' => $user['role'], 'email' => $email,
+                        'remember_me' => !empty($_POST['remember_me']), 'remember_email' => !empty($_POST['remember_email']),
+                        'expires' => time() + 300, 'attempts' => 0,
+                    ];
+                    redirect('login_2fa.php');
                 }
-
-                // Remember-my-email cookie (email only, never a token)
-                $secure = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
-                if (!empty($_POST['remember_email'])) {
-                    setcookie('cv_email', $email, [
-                        'expires'  => time() + 30 * 24 * 3600,
-                        'path'     => '/',
-                        'secure'   => $secure,
-                        'httponly' => true,
-                        'samesite' => 'Strict',
-                    ]);
-                } else {
-                    setcookie('cv_email', '', [
-                        'expires'  => time() - 3600,
-                        'path'     => '/',
-                        'secure'   => $secure,
-                        'httponly' => true,
-                        'samesite' => 'Strict',
-                    ]);
-                }
-
-                redirect_to_dashboard($user['role']);
+                finish_login($db, $user, $email, !empty($_POST['remember_me']), !empty($_POST['remember_email']));
             }
         } else {
             $error = 'Invalid email or password.';

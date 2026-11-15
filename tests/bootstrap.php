@@ -33,6 +33,14 @@ if (PHP_OS_FAMILY === 'Windows' && !getenv('OPENSSL_CONF')) {
     }
 }
 
+// Tests must never read or write the DEV database's key pins: the app's
+// DB_NAME stays 'certivault' in test processes (they connect to the test
+// DB through test_db()), so point KeyPinService at a test-only file. Child
+// processes (php -S servers) inherit this through the environment.
+if (!getenv('CV_KEY_PINS_FILE')) {
+    putenv('CV_KEY_PINS_FILE=' . sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'certivault_test_pins_' . (getenv('CV_TEST_DB') ?: 'certivault_test') . '.json');
+}
+
 $GLOBALS['__t_pass'] = 0;
 $GLOBALS['__t_fail'] = 0;
 

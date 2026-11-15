@@ -28,7 +28,10 @@ switch ($argv[1] ?? '') {
             @unlink(__DIR__ . '/../../private_data/uploads/' . basename($r['file_path']));
             @unlink(__DIR__ . '/../../public/qrcodes/' . basename((string)$r['qr_token']) . '.png');
         }
-        $db->exec("DELETE FROM tlog_entries WHERE certificate_id IN (SELECT c.certificate_id FROM certificates c JOIN institutions i ON i.id = c.institution_id WHERE i.name = 'Browser Fixture Uni')");
+        $delTlog = $db->prepare('DELETE FROM tlog_entries WHERE certificate_id = :c');
+        foreach ($rows as $r) {
+            $delTlog->execute(['c' => $r['certificate_id']]);
+        }
         $ids = $db->query("SELECT id FROM users WHERE email LIKE 'bulk-ui-%@example.com'")->fetchAll(PDO::FETCH_COLUMN);
         foreach ($ids as $u) {
             $db->prepare('DELETE FROM otp_codes WHERE user_id = :u')->execute(['u' => $u]);
