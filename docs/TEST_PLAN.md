@@ -40,7 +40,7 @@ Each case lists steps + expected result, and whether it has been verified by cod
 Legend: *verified* = reproduced against the running app during development; *verified by code reading* = traced in source; *manual* = execute in browser.
 
 ## Automated CLI tests
-The automated suites (347 checks, 10 suites) and how to run them are
+The automated suites (512 PHP checks in 16 suites, plus 78 browser checks) and how to run them are
 documented in [07_TESTING.md](07_TESTING.md):
 
 ```

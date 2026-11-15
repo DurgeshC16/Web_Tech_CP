@@ -1,71 +1,97 @@
 # 07 — Testing
 
-CertiVault uses plain-PHP CLI test scripts (no framework) plus two Node.js
-browser scripts. Manual end-to-end cases are in [TEST_PLAN.md](TEST_PLAN.md).
+CertiVault has three layers of automated tests plus a manual plan
+([TEST_PLAN.md](TEST_PLAN.md)):
 
-## 1. Running the automated suite
+| Layer | Command | Size |
+|-------|---------|------|
+| PHP CLI suites (unit + HTTP via `php -S`) | `php tests/run_all.php` | 16 suites, 512 checks |
+| Browser — Smart Verify | `node tests/test_verify_ui.mjs` | 17 checks |
+| Browser — whole app under CSP | `node tests/test_pages_browser.mjs` | 61 checks |
+| CI (GitHub Actions) | every push / PR to `main` | all of the above on Linux |
 
-Prerequisites: MySQL/MariaDB running; `php` on PATH (XAMPP:
-`C:\xampp\php\php.exe`).
+## 1. Running locally
+
+Prerequisites: MySQL/MariaDB running, PHP 8.2 with `pdo_mysql`, `openssl`,
+`gd`, `fileinfo`, `mbstring`, `curl`; `composer install`; Node 21+ and
+Chrome/Edge for the browser suites.
 
 ```sh
-php tests/run_all.php
+php tests/run_all.php            # PHP suites (exit 1 on any failure)
+node tests/test_verify_ui.mjs    # Smart Verify in headless Chrome
+node tests/test_pages_browser.mjs
 ```
 
-* Uses an **isolated database `certivault_test`** (override with
-  `CV_TEST_DB`); the dev database is never touched. It is created and
-  loaded from `database/schema.sql` automatically.
-* Connection via `CV_DB_HOST` / `CV_DB_USER` / `CV_DB_PASS` (default
-  `localhost` / `root` / empty).
-* On Windows the harness relaunches itself with `OPENSSL_CONF` set so RSA
-  key generation works.
-* Every test file can also be run on its own: `php tests/test_crypto.php`.
+* Tests use the isolated **`certivault_test`** database (override
+  `CV_TEST_DB`), created from `schema.sql` on first use — drop it to start
+  fresh. The dev database is never touched.
+* Tests use their **own key-pin file** (`CV_KEY_PINS_FILE` is pointed at a
+  temp file), never the dev pins.
+* The harness and the app both use **strict SQL mode**, so invalid data fails
+  locally exactly as it would in production.
+* Connection: `CV_DB_HOST` / `CV_DB_USER` / `CV_DB_PASS` (default localhost /
+  root / empty). On Windows the harness sets `OPENSSL_CONF` itself.
+* `CV_SCREENSHOT_DIR=… node tests/test_pages_browser.mjs` also saves the
+  analytics page in light, dark and mobile.
 
-## 2. Suites in `run_all.php`
+## 2. PHP suites (`run_all.php`)
 
-Results from the run on 2026-11-15 (XAMPP PHP 8.2.12, MariaDB 10.4.32, Composer packages installed):
+Run on a fresh test database, 2026-11-15 (XAMPP PHP 8.2.12, MariaDB 10.4.32):
 
 | Suite | Checks | Covers |
 |-------|-------:|--------|
-| `test_upload_suite.php` | 212 | `v_upload()` matrix; all validators; flexible certificate-ID lookup; verification cascade; external-source adapters + SSRF guard; Smart Verify text/file pipelines; trust score; PDF report; status API; student stats; either/or input planning |
-| `test_crypto.php` | 11 | RSA keygen, GCM wrap/unwrap, sign/verify, tamper and wrong-key failures |
-| `test_attested_credentials.php` | 31 | Exact-host URL validation (incl. malformed-URL regression), canonical payload, attestation/withdrawal verdicts, trust-score cap |
-| `test_transparency_log.php` | 17 | Merkle root, inclusion proofs, leaf hashing, checkpoint signing |
-| `test_rate_limit.php` | 20 | Verify rate limiter: 30/31 boundary, free repeats, expiry/pruning, bounded state under a flood, legacy fallback, timing vs the old query |
-| `test_timezone.php` | 2 | PHP ↔ MySQL session time-zone alignment |
-| `test_workflow.php` | 25 | End-to-end register → approve → issue → verify → revoke/supersede |
-| `test_upload_http.php` | 7 | Real multipart uploads through `php -S` |
-| `test_otp.php` | 17 | OTP create/verify, hashing, cooldown, hourly cap, attempt lockout, single use — via the `MAIL_TRANSPORT=file` spool |
-| `test_config_guard.php` | 5 | Production guard: default secrets and the file mail transport are refused |
-| **Total** | **347** | **10/10 suites green** |
+| `test_upload_suite.php` | 213 | upload validation; validators; flexible IDs; verification cascade; external sources + SSRF guard; Smart Verify text/file pipelines; trust score; PDF report; status API (incl. its own request budget); student stats |
+| `test_crypto.php` | 11 | RSA, AES-GCM, sign/verify |
+| `test_attested_credentials.php` | 31 | external-credential attestation |
+| `test_transparency_log.php` | 17 | Merkle log + checkpoints |
+| `test_rate_limit.php` | 20 | pre-lookup limiter: 30/31 boundary, free repeats, pruning, bounded state, legacy fallback, timing |
+| `test_timezone.php` | 2 | PHP ↔ MySQL time zone |
+| `test_workflow.php` | 25 | end-to-end lifecycle |
+| `test_upload_http.php` | 7 | multipart uploads over HTTP |
+| `test_otp.php` | 17 | OTP lifecycle via the dev mail spool |
+| `test_config_guard.php` | 5 | production guard |
+| `test_verify_http.php` | 32 | every verdict via token + GET ID, CSRF, browser-QR fallback, no inline scripts |
+| `test_key_pinning.php` | 20 | the S6 key-swap attack (TAMPERED with pins, VALID without), append-only, fail-closed, strict mode, operator script |
+| `test_credentials.php` | 28 | credential export, tampering, attacker key, no secrets, **OpenSSL CLI "Verified OK"**, HTTP endpoint |
+| `test_bulk_issuance.php` | 33 | shared issuance pipeline, generated PDFs (hash / text / credential), rollback leaves nothing behind, issuance email, CSV parsing edge cases, formula injection |
+| `test_two_factor.php` | 36 | RFC 6238 test vectors, window, replay, encrypted secret, recovery codes, real two-step login over HTTP |
+| `test_analytics.php` | 15 | DST-safe day series, scoping, counts, scales |
+| **Total** | **512** | **16/16** |
 
-## 3. Tests not yet in `run_all.php`
+`test_smtp_live.php` needs real SMTP credentials and is run by hand.
 
-| Test | Status | Why |
-|------|--------|-----|
-| `test_verify_http.php` | 7 pass / 14 fail | Expects the tabbed scanner UI and `GET ?id=` lookups from the same stash |
-| `test_smtp_live.php` | not run | Needs real SMTP credentials (`tests/support/smtp_capture_server.py` provides a local capture server) |
+## 3. Browser suites
 
-## 4. Browser tests (Node.js)
+**`test_verify_ui.mjs` (17)** — real headless Chrome against `php -S`:
+QR decoding of PDFs (page 1 and page 3), a bulk-generated certificate PDF, a
+PNG; PDF without QR / corrupt PDF; upload and privacy flows resolved by the
+browser-decoded QR; GET links; camera start/stop (fake stream); zero CSP
+violations or exceptions.
 
-| Script | Purpose |
-|--------|---------|
-| `tests/test_verify_ui.mjs` | Drives `verify.php` in headless Chromium (QR image, PDF, ID flows). Seed fixtures first with `php tests/seed_browser_fixtures.php` |
-| `tests/support/responsive_check.mjs` | 19 pages × 4 widths (360/768/1024/1280): no overflow, ≥ 44 px touch targets, table wrapping |
+**`test_pages_browser.mjs` (61)** — logs in through the real form (CAPTCHA
+solved) as admin and student in isolated contexts and loads ~25 pages,
+failing on any CSP violation, exception or unexpected redirect. Also: an
+injected inline script must be blocked; `ui.js` behaviours; single issuance
+through the form; bulk preview → confirm → results; Web Crypto credential
+verification (genuine / tampered / attacker key); 2FA setup with a
+browser-computed TOTP code and turning it off with a recovery code;
+analytics (KPI = table sum, 30 focusable days, tooltip on focus, filters).
 
-These write fixture PDFs named `verifyui-*.pdf` into `private_data/uploads/`
-(git-ignored). Delete them after a run if you don't need them.
+## 4. Continuous integration
 
-## 5. Static checks
+`.github/workflows/ci.yml` runs on every push and pull request:
 
-```sh
-# Lint every first-party PHP file
-git ls-files '*.php' | grep -v -e phpqrcode -e PHPMailer -e qrdecoder | xargs -n1 php -l
-```
+1. **PHP job** — PHP 8.2 + MariaDB 10.11 (strict mode) service, `composer
+   install`, `php -l` on every first-party file, `php tests/run_all.php`.
+2. **Browser job** — Node 22 + Google Chrome, both browser suites.
 
-All first-party files lint clean.
+Failures are summarised as a job annotation (visible without logging in).
+CI has already caught real issues invisible on XAMPP: invalid ENUM values
+silently stored in non-strict mode, an undefined variable on a result view,
+mixed table collations, and flaky single-attempt QR decoding.
 
-## 6. Known test-coverage gaps
+## 5. Coverage notes
 
-* No automated test for the CSP or the security headers.
-* No CI — tests run only on a developer machine.
+* The manual plan still covers real SMTP delivery, real-device camera
+  scanning, and visual feel.
+* Static analysis beyond `php -l` is not yet in CI.

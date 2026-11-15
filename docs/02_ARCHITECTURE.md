@@ -2,81 +2,86 @@
 
 ## 1. High-level design
 
-CertiVault is a classic server-rendered PHP application with no framework.
-Only `public/` is meant to be reachable over HTTP; business logic, uploaded
-files and secrets live outside the web root.
+CertiVault is a server-rendered PHP application with no framework. Only
+`public/` is meant to be reachable over HTTP; business logic, uploaded files,
+key pins and secrets live outside the web root.
 
 ```
- Browser (HTML/CSS/JS, html5-qrcode, pdf.js)
+ Browser (HTML/CSS, external JS only: ui.js, smart-verify.js,
+          credential-verify.js, analytics.js, html5-qrcode, pdf.js)
         │  HTTPS
         ▼
- ┌──────────────────────────── public/  (web root) ────────────────────────────┐
- │ Page controllers: login, dashboards, issue/revoke/supersede, verify, share,  │
- │ report (PDF), api_status (JSON), well-known-keys …                           │
- └───────────────┬──────────────────────────────────────────────────────────────┘
+ ┌──────────────────────────── public/  (web root) ─────────────────────────────┐
+ │ Page controllers: login (+2FA), dashboards, issue / bulk issue / revoke /     │
+ │ supersede, verify, share, report (PDF), credential (JSON), offline_verify,    │
+ │ analytics, api_status (JSON), well-known-keys …                               │
+ └───────────────┬───────────────────────────────────────────────────────────────┘
                  │ require_once
- ┌───────────────▼────────────── src/  (NOT web-reachable) ─────────────────────┐
- │ config/   config.php (constants, secrets guard) · Database.php (PDO singleton)│
+ ┌───────────────▼────────────── src/  (NOT web-reachable) ──────────────────────┐
+ │ config/   config.php (constants, production guard) · Database.php (PDO,      │
+ │           strict SQL mode, time-zone alignment)                               │
  │ utils/    helpers.php (sessions, auth, CSRF, CAPTCHA, OTP, mail, headers)     │
- │           validators.php (server-side validators)                             │
- │ services/ Crypto · Verification · SmartVerify · FileVerify · TrustScore ·     │
- │           Report · StatusApi · StudentStats · ExternalSource ·                │
- │           AttestedCredential · TransparencyLog · QR                           │
+ │           validators.php · composer_autoload.php (safe optional loader)       │
+ │ services/ 19 services — issuance, verification, crypto, pinning, credentials, │
+ │           2FA, analytics, transparency log … (§4)                             │
  │ partials/ head / header / footer templates                                    │
- └───────┬───────────────────────────────┬──────────────────────────────────────┘
+ └───────┬───────────────────────────────┬────────────────────────────────────────┘
          ▼                               ▼
-   MySQL / MariaDB                 private_data/ (uploads, logs, mail spool,
-   (14 tables)                     transparency-log key, caches) — denied by .htaccess
+   MySQL / MariaDB                 private_data/ (uploads, mail spool, key pins,
+   (15 tables, utf8mb4_unicode_ci)  transparency key, logs, backups) — denied over HTTP
 ```
 
 **Patterns used**
 
-* **Page controller** — each `public/*.php` file handles its own GET/POST,
-  calls services, then renders HTML with shared partials.
-* **Service layer** — stateless static classes in `src/services/`; the same
-  `VerificationService::verify()` is used by `verify.php`, `share.php`,
-  `report.php`, `api_status.php` and the trust score, so every surface gives
-  the same verdict.
+* **Page controller** — each `public/*.php` handles its own GET/POST, calls
+  services, then renders HTML with shared partials.
+* **Service layer** — static classes in `src/services/`. One verification
+  engine (`VerificationService::verify()`) serves verify, share, report, the
+  status API, credentials and the trust score; one issuance pipeline
+  (`IssuanceService`) serves single and bulk issuance.
 * **PDO singleton** — `Database::getInstance()`; prepared statements with
-  emulation **off**; the MySQL session time zone is aligned with PHP's.
+  emulation off; session `sql_mode` strict (same behaviour as production
+  MySQL/MariaDB) and time zone aligned with PHP.
 * **Progressive enhancement** — every form works without JavaScript; JS adds
-  client-side validation, QR scanning and browser-side hashing.
-* **Feature flags** — optional features (external sources, attested
-  credentials, transparency log, status API, Smart Verify) are switched by
-  constants in `config.php` / `config.local.php`.
+  client-side validation, QR/PDF decoding, browser hashing, Web Crypto
+  verification and chart tooltips.
+* **No inline JavaScript** — behaviour is attached from external files via
+  data attributes, so the CSP forbids inline scripts (doc 04).
+* **Feature flags** — optional features are switched by constants in
+  `config.php` / `config.local.php` (doc 06).
 
 ## 2. Directory layout
 
 ```
 Web_Tech_CP/
-├── public/                     # Web root — the ONLY directory Apache should serve
-│   ├── .htaccess               # rewrite for /.well-known/certivault-keys.json
-│   ├── index.php               # Landing page + quick verify
+├── .github/workflows/ci.yml    # CI: lint + PHP suite + headless-Chrome suites
+├── .htaccess                   # defence in depth for "repo inside htdocs"
+├── public/                     # Web root — the ONLY directory to serve
 │   ├── *.php                   # Page controllers (see §3)
-│   ├── assets/css/style.css    # Design system (responsive, light/dark)
-│   ├── assets/js/              # validation.js, theme.js, verify-scan.js,
+│   ├── assets/css/style.css    # Design system (responsive, light/dark, charts)
+│   ├── assets/js/              # ui.js, smart-verify.js, credential-verify.js,
+│   │                           # analytics.js, validation.js, theme.js,
 │   │                           # html5-qrcode.min.js, vendor/pdf.js
 │   ├── qrcodes/                # Generated QR PNGs (runtime, git-ignored)
 │   └── checkpoints/            # Published transparency checkpoint (runtime)
-├── src/                        # Application code (outside web root)
+├── src/                        # Application code (denied over HTTP)
 │   ├── config/                 # config.php, Database.php, config.local.php.example
-│   ├── services/               # Business logic (12 services)
+│   ├── services/               # Business logic (19 services)
 │   ├── utils/                  # helpers.php, validators.php, composer_autoload.php
 │   │   ├── PHPMailer/          # vendored — SMTP email
-│   │   ├── phpqrcode/          # vendored — QR generation (+ precomputed cache)
+│   │   ├── phpqrcode/          # vendored — QR generation (PHP 8.2-patched)
 │   │   └── qrdecoder/          # vendored — ZXing port, server-side QR decoding
-│   └── partials/               # head.php, header.php, footer.php, head_fonts.php
+│   └── partials/               # head.php, header.php, footer.php
 ├── database/
 │   ├── schema.sql              # Full current schema (fresh installs)
-│   └── migrations/             # 001…012 incremental upgrades (existing installs)
-├── scripts/                    # CLI maintenance tools (see doc 06)
-├── tests/                      # Plain-PHP CLI test suites + Node browser tests
-├── private_data/               # Runtime data, denied over HTTP (git-ignored content)
-│   ├── uploads/                # Issued certificate files
-│   ├── mail/                   # Dev mail spool
-│   └── php_errors.log          # Application error log
-├── docs/                       # This documentation
-├── composer.json / .lock       # dompdf + smalot/pdfparser (run `composer install`)
+│   └── migrations/             # 001…016 incremental upgrades
+├── scripts/                    # CLI tools (doc 06 §6)
+├── tests/                      # 16 PHP suites, 2 browser suites, fixtures, helpers
+├── private_data/               # Runtime data (contents git-ignored)
+│   ├── uploads/  mail/  pins/  tlog/  backups/
+│   └── php_errors.log
+├── docs/                       # This documentation (+ git-ignored docs/private/)
+├── composer.json / .lock       # dompdf + smalot/pdfparser
 └── vendor/                     # Composer output (git-ignored)
 ```
 
@@ -86,94 +91,102 @@ Web_Tech_CP/
 
 | Page | Purpose |
 |------|---------|
-| `index.php` | Landing page with Smart Verify quick-verify panel |
-| `verify.php` | **Verification engine UI** — `?token=` (QR), or POST ID / URL / file / browser-computed hash; shows verdict seal, certificate card, trust-score gauge, key fingerprint, external-source cards |
-| `share.php` | Opens a student's HMAC-signed, 24-hour share link and shows the verified certificate |
-| `report.php` | Streams the PDF verification report (`?cert=` / `?certificate_id=`), 5 per 10 min per IP |
-| `api_status.php` | Read-only JSON status API (`?certificate_id=` or `?id=`) |
-| `institutions.php` | Public directory of institutions and their signing-key fingerprints |
-| `well-known-keys.php` | Key directory as JSON, served at `/.well-known/certivault-keys.json` |
-| `external_credential.php` | Public page for a student's attested external credential (`?token=`) |
-| `login.php` / `logout.php` | Login (CAPTCHA, lockout, remember-me) / POST-only logout |
-| `register_student.php` / `register_institution.php` | Self-registration (institutions then await approval) |
-| `activate_account.php` | Email-OTP account activation + password set |
-| `forgot_password.php` / `reset_password.php` | OTP-based password reset |
+| `index.php` | Landing page with the Smart Verify panel |
+| `verify.php` | **Verification UI** — `?token=` (QR), `?certificate_id=` / `?id=` (shareable links), or POST ID / URL / file / browser hash + browser-decoded QR text; verdict, trust score, key fingerprint, report + credential downloads |
+| `share.php` | Student's HMAC-signed 24-hour share link |
+| `report.php` | PDF verification report (`?cert=`), 5 per 10 min per IP |
+| `credential.php` | Signed, self-verifying JSON credential (`?token=` / `?certificate_id=`) |
+| `offline_verify.php` | Zero-trust verifier: checks a credential file **in the browser** with Web Crypto |
+| `api_status.php` | Read-only JSON status API (`?certificate_id=` / `?id=`) |
+| `institutions.php`, `well-known-keys.php` | Public key directory (HTML / JSON at `/.well-known/certivault-keys.json`) |
+| `external_credential.php` | Public page of an attested external credential |
+| `login.php` → `login_2fa.php` | Password (CAPTCHA, lockout, remember-me), then the TOTP step when 2FA is on |
+| `logout.php`, `register_*.php`, `activate_account.php`, `forgot_password.php`, `reset_password.php` | Account lifecycle |
 
 ### Student
 
 | Page | Purpose |
 |------|---------|
-| `student_dashboard.php` | Own certificates, per-certificate verification counts, activity strip |
-| `view_certificate_student.php` | Certificate detail, trust-score card, share-link generation, PDF report |
-| `download.php` | Ownership-checked file download (`nosniff`, sanitised filename) |
-| `external_credentials.php` | Declare third-party credentials for institutional attestation |
+| `student_dashboard.php` | Own certificates, verification counts, activity strip |
+| `view_certificate_student.php` | Detail, trust score, share link, PDF report, signed credential |
+| `download.php` | Ownership-checked download |
+| `external_credentials.php` | Declare external credentials (opt-in feature) |
 
-### Institution admin (must be approved)
+### Institution admin (approved)
 
 | Page | Purpose |
 |------|---------|
-| `admin_dashboard.php` | Issued certificates, stats |
-| `issue_certificate.php` | Issuance pipeline (doc 01 §3) |
-| `view_certificate_admin.php` | Certificate detail + actions |
-| `revoke_certificate.php` | Revoke with a reason |
-| `supersede_certificate.php` | Issue a corrected version |
-| `audit_logs.php` | Verification logs for the institution's certificates + transparency summary |
-| `attest_external_credentials.php` / `external_credential_file.php` | Review queue for student-declared credentials; sign or withdraw attestations |
-| `rotate_key.php` | Rotate the institution signing key (transparency feature) |
+| `admin_dashboard.php` | Issued certificates |
+| `issue_certificate.php` | Single issuance (uploaded file) |
+| `bulk_issue.php` | **CSV bulk issuance** with generated certificate PDFs |
+| `analytics.php` | **Verification analytics** (KPIs, daily chart, verdict mix, top certificates) |
+| `view_certificate_admin.php`, `revoke_certificate.php`, `supersede_certificate.php` | Certificate lifecycle |
+| `audit_logs.php` | Verification log + transparency summary |
+| `attest_external_credentials.php`, `external_credential_file.php` | Attestation queue (opt-in) |
+| `rotate_key.php` | Rotate the signing key (transparency feature) |
 
 ### Super admin
 
 | Page | Purpose |
 |------|---------|
-| `super_admin.php` | Tabs: **Institutions** (approve → generates RSA key pair; reject with reason) and **External sources** (add/edit/test/disable managed registry entries) |
+| `super_admin.php` | Approve (generates + pins the RSA key) / reject institutions; manage external sources |
 
 ### Any logged-in role
 
 | Page | Purpose |
 |------|---------|
 | `change_password.php` | Password change confirmed by email OTP |
+| `two_factor.php`, `two_factor_qr.php` | Set up / manage TOTP two-factor authentication |
 
 ## 4. Services (`src/services/`)
 
 | Service | Responsibility |
 |---------|----------------|
-| `CryptoService` | RSA key generation, AES-256-GCM key wrapping (legacy CBC read support), canonical hash, sign/verify, key fingerprints, encrypted config blobs |
-| `VerificationService` | Certificate lookup (token, exact ID, normalised ID, compact ID), the verdict cascade, per-IP rate limiting |
-| `SmartVerifyService` | Classifies free text (self-verify URL, token, CV-ID, issuer links), allow-listed external issuer links, look-alike/typosquat detection |
-| `FileVerifyService` | Uploaded-file pipeline: byte-hash match → QR decode → text extraction → regex scan; temp files always deleted |
-| `TrustScoreService` | 0–100 score replaying the cascade's checks (exists 20 / hash 30 / signature 30 / not expired 10 / not revoked 10; critical failure caps at 40; external credentials capped at 70) |
-| `ReportService` | dompdf PDF verification report with QR back to the live verify page |
-| `StatusApiService` | JSON status API resolution + audit logging |
+| `CryptoService` | RSA keys, AES-256-GCM key wrapping, canonical hash, sign/verify, fingerprints, encrypted config blobs |
+| `VerificationService` | Lookups (token, exact / normalised / compact ID), the verdict cascade incl. key-pin check, bounded pre-lookup rate limiter |
+| `KeyPinService` | Append-only key-fingerprint pins outside the database; `match` / `mismatch` / `unpinned`, strict mode |
+| `IssuanceService` | Shared issuance pipeline (student gate → ID → QR → file → hash → signature → insert → log) + issuance email |
+| `CertificatePdfService` | Renders certificate PDFs (dompdf) with the QR embedded |
+| `BulkIssueService` | CSV parsing/validation, CSV export (formula-injection safe) |
+| `CredentialService` | Builds and independently verifies portable signed credentials |
+| `SmartVerifyService` | Classifies free text / URLs / issuer links, look-alike detection |
+| `FileVerifyService` | Upload pipeline: raw file hash (`file_sha256`) → QR decode → text extraction |
+| `TrustScoreService` | 0–100 score mirroring the cascade (critical failure caps at 40) |
+| `ReportService` | PDF verification report |
+| `StatusApiService` | JSON status API + its own request-scoped rate limit |
 | `StudentStatsService` | Read-only verification counts for students |
-| `ExternalSourceService` | Optional external lookups (Open Badges / Credly over HTTPS, remote read-only DB) with SSRF guard, allow-list, caching and rate limit |
-| `AttestedCredentialService` | Student-declared credentials, exact-host URL validation, institution RSA attestation/withdrawal |
-| `TransparencyLogService` | Append-only Merkle log of ISSUE/REVOKE/SUPERSEDE events, inclusion proofs, signed checkpoints |
-| `QRService` | QR PNG generation (phpqrcode) |
+| `AnalyticsService` | Read-only institution analytics (DST-safe day series) |
+| `TotpService` | RFC 6238 TOTP, replay protection, encrypted secrets, recovery codes |
+| `ExternalSourceService` | Optional external lookups with SSRF guard |
+| `AttestedCredentialService` | Student-declared credentials + institution attestations |
+| `TransparencyLogService` | Merkle log, inclusion proofs, signed checkpoints |
+| `QRService` | QR PNG generation |
 
-## 5. Request lifecycle (example: `verify.php?token=…`)
+## 5. Request lifecycle (example: `verify.php?certificate_id=…`)
 
-1. `config.php` loads `config.local.php` (if present), then defines constants
-   and enforces the production-secret guard.
-2. `helpers.php` starts a hardened session and sends security headers.
-3. Token format is validated (no DB hit for malformed input).
-4. Rate limit: distinct lookups by this IP in the last 10 min ≥ 30 → HTTP 429.
-5. `VerificationService::findByToken()` → `verify()` cascade.
-6. `TrustScoreService::compute()`; transparency inclusion proof if enabled.
-7. Result logged to `verification_logs`; HTML rendered with escaped output.
+1. `config.php` loads `config.local.php`, defines constants, runs the
+   production guard; `Database.php` opens a strict-mode PDO session.
+2. **Rate gate** — `checkAndRecordLookup()` on a key derived from the raw
+   inputs; the 31st distinct lookup per IP per 10 min gets HTTP 429 before any
+   certificate query.
+3. Format pre-check (malformed input → INVALID without a DB lookup).
+4. Layered lookup → `VerificationService::verify()`: status → integrity →
+   **key pin** → RSA signature → expiry.
+5. Trust score, optional transparency proof, audit log row
+   (`verification_logs`), HTML with escaped output.
 
 ## 6. Third-party code
 
 | Library | Location | Licence | Used for |
 |---------|----------|---------|----------|
-| PHPMailer | `src/utils/PHPMailer/` | LGPL-2.1 | SMTP delivery of OTP / notification emails |
-| phpqrcode | `src/utils/phpqrcode/` | LGPL-3 | QR PNG generation |
-| ZXing PHP port | `src/utils/qrdecoder/` | MIT (see `LICENSE-ORIGINAL-MIT`) | Server-side QR decoding of uploaded images |
-| html5-qrcode | `public/assets/js/html5-qrcode.min.js` | Apache-2.0 | Camera scanning and image QR decoding in the browser |
-| pdf.js 3.11.174 | `public/assets/js/vendor/` | Apache-2.0 | Rendering uploaded PDFs in the browser to find QR codes |
-| dompdf | Composer (`vendor/`) | LGPL-2.1 | PDF verification report |
-| smalot/pdfparser | Composer (`vendor/`) | LGPL-3 | Extracting text from uploaded PDFs |
+| PHPMailer | `src/utils/PHPMailer/` | LGPL-2.1 | SMTP delivery |
+| phpqrcode | `src/utils/phpqrcode/` | LGPL-3 | QR PNG generation (two PHP 8.2 fixes, output byte-identical) |
+| ZXing PHP port | `src/utils/qrdecoder/` | MIT | Server-side QR decoding |
+| html5-qrcode | `public/assets/js/html5-qrcode.min.js` | Apache-2.0 | Camera scanning, image QR decoding |
+| pdf.js 3.11.174 | `public/assets/js/vendor/` | Apache-2.0 | Rendering PDFs in the browser to find QR codes |
+| dompdf | Composer | LGPL-2.1 | Verification report + generated certificates |
+| smalot/pdfparser | Composer | LGPL-3 | PDF text extraction |
 
-Composer packages are **optional**. They are loaded through
-`src/utils/composer_autoload.php`, which checks the install is complete
-first. Without them, `report.php` serves an HTML fallback and Smart Verify
-skips PDF text extraction.
+Composer packages load through `src/utils/composer_autoload.php`, which checks
+the install is complete; without them the report shows a fallback page,
+Smart Verify skips text extraction and bulk issuance is disabled.

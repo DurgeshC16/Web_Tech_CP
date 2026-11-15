@@ -39,10 +39,10 @@ conventional, well-understood cryptography:
 
 | Role | Account? | What they do |
 |------|----------|--------------|
-| **Super admin** (`super_admin`) | Yes (seeded) | Approves or rejects institution registrations (approval generates the institution's RSA key pair); manages external verification sources |
-| **Institution admin** (`admin`) | Yes, must be **approved** | Issues, revokes and supersedes (corrects) certificates; views audit logs; attests students' external credentials; rotates signing keys |
+| **Super admin** (`super_admin`) | Yes (seeded, locked until configured) | Approves or rejects institution registrations (approval generates the institution's RSA key pair); manages external verification sources |
+| **Institution admin** (`admin`) | Yes, must be **approved** | Issues certificates one by one or in bulk from a CSV, revokes and supersedes (corrects) them; views audit logs and analytics; attests students' external credentials; rotates signing keys |
 | **Student** (`student`) | Yes, activated by email OTP | Views, downloads and shares own certificates (24-hour signed share links); sees how often each certificate was verified; declares external credentials (Coursera, Credly, NPTEL…) |
-| **Verifier / employer** | **No account needed** | Scans the QR, enters the ID, or uploads the file; receives a verdict, trust score and downloadable PDF report |
+| **Verifier / employer** | **No account needed** | Scans the QR, enters the ID, or uploads the file; receives a verdict, trust score, PDF report and a signed credential they can re-check in their own browser |
 
 ## 3. Methodology — end to end
 
@@ -91,8 +91,9 @@ fixed order (status before integrity, cheap checks before RSA):
 | 1 | Has it been revoked? | **REVOKED** |
 | 2 | Has it been replaced by a corrected version? | **SUPERSEDED** (with a link to the new one) |
 | 3 | Does the recomputed canonical hash match? (integrity) | **TAMPERED** |
-| 4 | Is the RSA signature valid for the issuer's key? (authenticity) | **TAMPERED** |
-| 5 | Is it past its expiry date / marked expired? | **EXPIRED** |
+| 4 | Does the issuer's key match its pinned fingerprint? | **TAMPERED** |
+| 5 | Is the RSA signature valid for that key? (authenticity) | **TAMPERED** |
+| 6 | Is it past its expiry date / marked expired? | **EXPIRED** |
 | — | All checks passed | **VALID** |
 
 Revocation and supersession are server-side facts, so they win over
@@ -138,5 +139,5 @@ verification report.
 | Internet dependency | Verification requires reaching the CertiVault server. |
 | Key management | Keys are encrypted with an app secret, not an HSM/KMS (college-project simplification). |
 | Trust score is rule-based | It confirms the *record* passes technical checks, not the real-world achievement. |
-| Single-operator trust | A database-write attacker could swap an institution's public key; fingerprint pinning and the Merkle transparency log narrow this gap (see doc 04). |
+| Single-operator trust | Key fingerprints are pinned outside the database, so a database-write attacker can no longer swap an institution's key unnoticed; the pin file itself must be protected (doc 04). |
 | Prototype scope | Production would need backups, monitoring, HA and hardened infrastructure. |

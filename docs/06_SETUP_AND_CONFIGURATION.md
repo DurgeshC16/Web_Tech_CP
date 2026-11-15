@@ -32,7 +32,12 @@ copy src\config\config.local.php.example src\config\config.local.php   # Windows
 # 5. Set the super-admin email + password (the seeded account cannot log in until you do)
 php scripts/set_super_admin.php
 
-# 6. Run
+# 6. Existing database instead of a fresh one? Apply the missing migrations
+#    (database/migrations/001…016, in order), then once:
+php scripts/backfill_file_hashes.php
+php scripts/pin_institution_keys.php       # pin existing institution keys
+
+# 7. Run
 php -S localhost:8081 -t public              # then open http://localhost:8081
 ```
 
@@ -103,6 +108,13 @@ In production prefer real environment variables.
 |----------|---------|---------|
 | `RECAPTCHA_SITE_KEY` / `RECAPTCHA_SECRET_KEY` | `CV_RECAPTCHA_SITE_KEY` / `CV_RECAPTCHA_SECRET_KEY` | empty → offline arithmetic CAPTCHA |
 
+### Key pinning
+
+| Constant | Env var | Default |
+|----------|---------|---------|
+| `KEY_PINS_FILE` | `CV_KEY_PINS_FILE` | `private_data/pins/<DB_NAME>.json` — keep on storage the web/DB user cannot write; back it up |
+| `KEY_PINNING_STRICT` | `CV_KEY_PINNING_STRICT=1` | off — when on, keys that were never pinned are rejected |
+
 ### Feature flags
 
 | Constant | Env var | Default |
@@ -168,6 +180,7 @@ VALID. It is idempotent and refuses to run over HTTP.
 | `seed_demo.php` | Seed demo institution, student and certificates |
 | `seed_external_source.php` | Seed the offline `DEMO MOOC registry` external source |
 | `smtp_diagnostic.php <email>` | Stage-by-stage SMTP check |
+| `pin_institution_keys.php [--verify\|--export]` | Pin every institution key's fingerprint outside the DB (run once on existing installs), verify the DB against the pins, or export them for out-of-band publication |
 | `backfill_file_hashes.php [--dry-run]` | After migration 013: store the raw file hash for older certificates (skips files that fail the integrity check) |
 | `check_environment.php` | Upload-environment audit (CLI, or in the browser as an admin) |
 | `check_institution_keys.php` | Read-only audit of stored keys (prints lengths/booleans, never key material) |
@@ -196,7 +209,8 @@ VALID. It is idempotent and refuses to run over HTTP.
 - [ ] Document root = `public/`
 - [ ] `php.ini`: `expose_php=Off`, `display_errors=Off`, `log_errors=On`
 - [ ] Real SMTP credentials; reCAPTCHA keys
-- [ ] Super-admin credentials set with `set_super_admin.php`
+- [ ] Super-admin credentials set with `set_super_admin.php`; 2FA turned on for every admin
+- [ ] Key pins bootstrapped (`pin_institution_keys.php`), `CV_KEY_PINS_FILE` on storage the web/DB user cannot write, pins backed up and exported out of band
 - [ ] `MAIL_TRANSPORT` left at `smtp`
 - [ ] `composer install --no-dev`
 - [ ] `private_data/` writable by PHP, not by the web

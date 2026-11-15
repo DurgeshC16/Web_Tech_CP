@@ -1,6 +1,6 @@
 # 03 — Database
 
-Database name: **`certivault`** (14 tables) (MySQL 8 / MariaDB 10.4+, InnoDB).
+Database name: **`certivault`** (15 tables; MySQL 8 / MariaDB 10.4+, InnoDB; every table `utf8mb4` / `utf8mb4_unicode_ci`).
 `database/schema.sql` always contains the **full current schema**; the files
 in `database/migrations/` upgrade an older existing database step by step.
 
@@ -25,12 +25,13 @@ external_sources (managed registry) · tlog_checkpoints (signed Merkle roots) ·
 
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
-| `users` | Every account | `email` (unique), `password_hash` (bcrypt), `role` ∈ {super_admin, admin, student}, `is_verified`, `failed_login_attempts`, `locked_until` |
+| `users` | Every account | `email` (unique), `password_hash` (bcrypt), `role` ∈ {super_admin, admin, student}, `is_verified`, `failed_login_attempts`, `locked_until`, `totp_secret` (AES-GCM encrypted), `totp_enabled`, `totp_last_step` (2FA replay guard) |
 | `students` | Student profile | `user_id` → users, `full_name`, `enrollment_number` |
 | `institutions` | Institution profile | `user_id` → users, `name`, `status` ∈ {pending, approved, rejected}, `rejection_reason` |
 | `otp_codes` | Email one-time codes | `otp_code` (HMAC-SHA-256 hash, never plaintext), `purpose` ∈ {activation, password_reset, password_change}, `expires_at`, `used`, `attempts` |
 | `remember_tokens` | "Remember me" logins | `selector` (PK), `token_hash` = SHA-256(validator), `expires_at` |
 | `login_attempts` | Failed-login rate limiting | `email`, `ip`, `attempted_at` |
+| `user_recovery_codes` | 2FA recovery codes (migration 015) | `user_id`, `code_hash` (HMAC-SHA-256 only), `used_at` (single use) |
 
 ### Certificates & keys
 
@@ -90,6 +91,8 @@ in order. They are written to be idempotent (guarded `ALTER`s /
 | 012 | `012_versioned_keys_transparency_log.sql` | `institution_keys` — moves `public_key` / `encrypted_private_key` out of `institutions` (existing keys become v1, certificates are **not** re-signed), `certificates.key_id`, `tlog_entries`, `tlog_checkpoints` |
 | 013 | `013_certificate_file_hash.sql` | `certificates.file_sha256` + index. Afterwards run `php scripts/backfill_file_hashes.php` once |
 | 014 | `014_verify_rate_limiter.sql` | `verify_rate` table (bounded rate-limiter state) |
+| 015 | `015_two_factor_auth.sql` | `users.totp_*` columns + `user_recovery_codes` (2FA) |
+| 016 | `016_unify_collation.sql` | Converts the original tables to `utf8mb4_unicode_ci` (mixed collations broke cross-table comparisons on MariaDB 10.11). Rebuilds tables — run in a quiet moment |
 
 Run them in phpMyAdmin (Import tab, select the `certivault` database) or:
 

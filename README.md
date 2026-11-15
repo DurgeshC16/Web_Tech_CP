@@ -1,18 +1,21 @@
 # CertiVault — Digital Certificate Issuance & Verification
 
 > Issue tamper-evident digital certificates and let anyone verify them in
-> seconds — by QR code, certificate ID, or the file itself.
+> seconds — by QR code, certificate ID, the file itself, or a signed
+> credential checked in their own browser.
 
 CertiVault is a PHP + MySQL web platform built as a **Web Technology course
 project**. Institutions issue certificates that are bound to their identity
 with a **SHA-256 canonical fingerprint** and an **RSA-2048 digital
-signature**, and carry a **QR code**. Employers and other verifiers check a
-certificate **without creating an account**, and get one clear, audited
-verdict: **VALID, TAMPERED, EXPIRED, REVOKED, SUPERSEDED or INVALID**.
+signature**, whose key is **pinned outside the database**, and carry a **QR
+code**. Employers and other verifiers check a certificate **without an
+account** and get one clear, audited verdict: **VALID, TAMPERED, EXPIRED,
+REVOKED, SUPERSEDED or INVALID**.
 
+[![CI](https://github.com/DurgeshC16/Web_Tech_CP/actions/workflows/ci.yml/badge.svg)](https://github.com/DurgeshC16/Web_Tech_CP/actions/workflows/ci.yml)
 ![PHP](https://img.shields.io/badge/PHP-8.2-777BB4?logo=php&logoColor=white)
 ![MySQL](https://img.shields.io/badge/MySQL%20%2F%20MariaDB-10.4%2B-4479A1?logo=mysql&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-347%20checks%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-590%20checks-brightgreen)
 ![No framework](https://img.shields.io/badge/framework-none-lightgrey)
 
 ---
@@ -27,7 +30,7 @@ verdict: **VALID, TAMPERED, EXPIRED, REVOKED, SUPERSEDED or INVALID**.
 6. [Quick start](#quick-start)
 7. [Configuration](#configuration)
 8. [Demo accounts](#demo-accounts)
-9. [Testing](#testing)
+9. [Testing & CI](#testing--ci)
 10. [Security](#security)
 11. [Documentation](#documentation)
 12. [Project status & roadmap](#project-status--roadmap)
@@ -37,10 +40,10 @@ verdict: **VALID, TAMPERED, EXPIRED, REVOKED, SUPERSEDED or INVALID**.
 
 ## Why CertiVault
 
-Certificates are shared as PDFs and images, which anyone can edit. The
-person receiving one usually has no quick way to check it. Blockchain
+Certificates are shared as PDFs and images, which anyone can edit, and the
+person receiving one rarely has a quick way to check it. Blockchain
 solutions remove the central registry but add fees and latency, and still
-can't prove a ledger identity belongs to a real institution.
+can't prove that a ledger identity belongs to a real institution.
 
 CertiVault uses plain, well-understood cryptography instead:
 
@@ -49,53 +52,66 @@ CertiVault uses plain, well-understood cryptography instead:
 | Unique certificate ID | Fast lookup (`CV-2026-000123` or a custom ID) |
 | SHA-256 canonical fingerprint of all fields **and** the file | Any change is detected (**integrity**) |
 | RSA-2048 signature by the approved institution | Proves who issued it (**authenticity**) |
+| Key fingerprint pinned outside the database | A swapped institution key is detected |
 | QR code with a 256-bit random token | One-scan verification, no personal data inside |
-| Status lifecycle: active / expired / revoked / superseded | Errors can be corrected without deleting history |
+| Status lifecycle: active / expired / revoked / superseded | Corrections without deleting history |
 
 ## Features
 
-**Roles**
-- **Super admin** — approves or rejects institutions (approval generates their RSA key pair) and manages external sources.
-- **Institution admin** — issues, revokes and supersedes certificates, reads audit logs, attests students' external credentials, rotates keys.
-- **Student** — views and downloads certificates, shares 24-hour signed links, sees how often each certificate was verified.
-- **Verifier** — no account; scans the QR, types the ID, or uploads the file.
+**Issue**
+- **Single issuance** with an uploaded certificate file.
+- **Bulk issuance from CSV** — preview and validation first, then one signed
+  **generated certificate PDF** (QR embedded) per row, results CSV.
+- Students are **emailed** their verify link; new students get an activation email first.
+- Revocation with reason; **supersession** that keeps the version chain.
 
-**Verification**
-- **Smart Verify**: one box accepts an ID in any format, a QR token, a URL, a QR image or the certificate file (with an optional in-browser hashing privacy mode).
-- **Six-verdict cascade** with a fixed precedence and a full audit log.
-- **Trust score** (0–100) with a per-check checklist.
-- **PDF verification report** with a QR back to the live result.
-- **Public JSON status API** (`api_status.php`).
+**Verify** (no account needed)
+- **Smart Verify** — ID in any format, QR token, link, QR image or the
+  certificate file. Exact originals match by fingerprint; other copies resolve
+  through the **QR read inside the PDF, in the browser** (pdf.js). Privacy
+  mode sends only a hash. Camera scanning. Shareable links
+  (`verify.php?certificate_id=…`).
+- **Six-verdict cascade** with fixed precedence, audit log and a **trust score**.
+- **PDF verification report** and a **public JSON status API**.
+- **Signed credential (JSON)** + **zero-trust verifier**: anyone can re-check a
+  certificate **in their own browser** with Web Crypto (or with OpenSSL)
+  without trusting the server's verdict.
 
-**Lifecycle & trust** (optional features are opt-in)
-- Revocation with reason, and supersession that keeps the version chain.
-- Versioned institution keys with public fingerprints (`/.well-known/certivault-keys.json`).
-- Merkle-tree **transparency log** with signed checkpoints and inclusion proofs.
-- **External sources** (Open Badges / Credly, read-only remote DB), always labelled *not verified by CertiVault*.
-- **Attested external credentials** — institutions sign students' Coursera / Credly / NPTEL claims.
+**Accounts & security**
+- Email-OTP activation, CAPTCHA, login lockout, remember-me, session timeouts.
+- **Two-factor authentication (TOTP)** with recovery codes, for every role.
+- **Key pinning**, AES-256-GCM key storage, **CSP with no inline scripts**,
+  pre-lookup rate limiting, strict SQL mode.
 
-**Accounts & UX**
-- Email-OTP activation and password reset, CAPTCHA, login lockout, remember-me, session timeouts.
-- Responsive UI (360 → 1280 px), light/dark theme, validation on both client and server.
+**Insight**
+- **Institution analytics** — KPIs, verifications per day, verdict mix,
+  most-checked certificates (accessible SVG charts with table views).
+
+**Optional (off by default)** — Merkle **transparency log** with signed
+checkpoints and key rotation; **external sources** (Open Badges / Credly);
+**attested external credentials** (Coursera / Credly / NPTEL claims).
+
+Responsive UI (360 → 1280 px) with a light/dark theme.
 
 ## How it works
 
 ```
 ISSUE (institution)                              VERIFY (anyone, no login)
 ───────────────────                              ─────────────────────────
-validate input + file                            QR token / ID / URL / file
-   │                                                │  format check + rate limit
-store file outside web root                         ▼
-   │                                             exists? ─────────── no → INVALID
-h = SHA-256(id|inst|student|title|                revoked? ────────── yes → REVOKED
-            issued|expires|SHA-256(file))         superseded? ─────── yes → SUPERSEDED
-   │                                             recompute h == stored? no → TAMPERED
-σ = RSA-Sign(institution private key, h)          RSA-Verify(h, σ)? ── no → TAMPERED
-   │                                             expired? ─────────── yes → EXPIRED
-QR → verify.php?token=<256-bit random>                                     VALID
-   │                                                │
-commit in one DB transaction                     log to verification_logs,
-(rollback deletes file + QR)                     trust score, PDF report
+validate input + file (or CSV row → PDF)         QR / ID / link / file / credential
+   │                                                │  format check + rate gate
+store file outside the web root                     ▼
+   │                                             exists? ─────────────── no → INVALID
+h = SHA-256(id|inst|student|title|                revoked? ────────────── yes → REVOKED
+            issued|expires|SHA-256(file))         superseded? ─────────── yes → SUPERSEDED
+   │                                             recompute h == stored? ─ no → TAMPERED
+σ = RSA-Sign(institution key, h)                  key matches its pin? ─── no → TAMPERED
+   │  (key pinned outside the DB at approval)     RSA-Verify(h, σ)? ────── no → TAMPERED
+QR → verify.php?token=<256-bit random>            expired? ────────────── yes → EXPIRED
+   │                                                                            VALID
+one DB transaction (rollback deletes file + QR)     │
+email the student                                log, trust score, PDF report,
+                                                 signed credential (JSON)
 ```
 
 Full walkthrough: [docs/01_PROJECT_OVERVIEW.md](docs/01_PROJECT_OVERVIEW.md).
@@ -104,31 +120,32 @@ Full walkthrough: [docs/01_PROJECT_OVERVIEW.md](docs/01_PROJECT_OVERVIEW.md).
 
 | Layer | Technology |
 |-------|-----------|
-| Frontend | HTML5, CSS3 (custom responsive design system), vanilla JavaScript, html5-qrcode, pdf.js |
+| Frontend | HTML5, CSS3 (custom responsive design system), vanilla JavaScript (external files only), Web Crypto, html5-qrcode, pdf.js |
 | Backend | PHP 8.2 (no framework): sessions, cookies, PDO, OpenSSL |
-| Database | MySQL / MariaDB |
-| Cryptography | SHA-256, RSA-2048, AES-256-GCM, HMAC-SHA-256, bcrypt |
+| Database | MySQL / MariaDB (utf8mb4_unicode_ci, strict SQL mode) |
+| Cryptography | SHA-256, RSA-2048, AES-256-GCM, HMAC-SHA-256, TOTP (RFC 6238), bcrypt |
 | Libraries | PHPMailer, phpqrcode, ZXing PHP port (vendored); dompdf, smalot/pdfparser (Composer) |
+| Tooling | GitHub Actions CI, headless Chrome tests (no npm dependencies) |
 | Environment | XAMPP (Apache + MariaDB + PHP) or `php -S` |
 
 ## Project structure
 
 ```
 Web_Tech_CP/
-├── public/          Web root: page controllers, assets (CSS/JS), generated QR codes
+├── .github/workflows/ CI: lint, PHP suites (MariaDB 10.11), headless-Chrome suites
+├── public/            Web root: page controllers, assets (CSS/JS), generated QR codes
 ├── src/
-│   ├── config/      config.php, Database.php, config.local.php.example
-│   ├── services/    Crypto, Verification, SmartVerify, FileVerify, TrustScore,
-│   │                Report, StatusApi, ExternalSource, AttestedCredential,
-│   │                TransparencyLog, StudentStats, QR
-│   ├── utils/       helpers.php, validators.php + vendored PHPMailer / phpqrcode / qrdecoder
-│   └── partials/    Shared head / header / footer templates
-├── database/        schema.sql (fresh install) + migrations/001–014 (upgrades)
-├── scripts/         CLI tools: seeding, super-admin setup, SMTP / environment / key checks, checkpoints
-├── tests/           Plain-PHP CLI suites + Node browser tests
-├── private_data/    Uploaded certificates, logs, mail spool (not web-accessible; contents git-ignored)
-├── docs/            Full documentation
-└── composer.json    Optional PHP dependencies (vendor/ is git-ignored)
+│   ├── config/        config.php, Database.php, config.local.php.example
+│   ├── services/      19 services: Issuance, Verification, Crypto, KeyPin, Credential,
+│   │                  Totp, Analytics, BulkIssue, CertificatePdf, SmartVerify, …
+│   ├── utils/         helpers.php, validators.php + vendored PHPMailer / phpqrcode / qrdecoder
+│   └── partials/      Shared head / header / footer templates
+├── database/          schema.sql (fresh install) + migrations/001–016 (upgrades)
+├── scripts/           CLI tools: setup, seeding, key pins, backfill, diagnostics, checkpoints
+├── tests/             16 PHP suites + 2 browser suites + fixtures
+├── private_data/      Uploads, mail spool, key pins, logs (not web-accessible; git-ignored)
+├── docs/              Full documentation
+└── composer.json      PHP dependencies (vendor/ is git-ignored)
 ```
 
 Details: [docs/02_ARCHITECTURE.md](docs/02_ARCHITECTURE.md).
@@ -136,23 +153,23 @@ Details: [docs/02_ARCHITECTURE.md](docs/02_ARCHITECTURE.md).
 ## Quick start
 
 **Requirements:** PHP 8.2+ (`pdo_mysql`, `openssl`, `fileinfo`, `gd`,
-`mbstring`), MySQL/MariaDB, optionally Composer. XAMPP provides all of these.
+`mbstring`, `curl`), MySQL/MariaDB, Composer. XAMPP provides PHP and MariaDB.
 
 ```sh
 # 1. Get the code
 git clone https://github.com/DurgeshC16/Web_Tech_CP.git
 cd Web_Tech_CP
 
-# 2. PHP dependencies (PDF report + PDF text extraction)
+# 2. PHP dependencies (PDF report, generated certificates, PDF text extraction)
 composer install
 
-# 3. Create the database (creates `certivault` + tables + super admin)
+# 3. Create the database (creates `certivault`, all tables, a locked super admin)
 mysql -u root < database/schema.sql            # or phpMyAdmin → Import
 
 # 4. Local config (git-ignored): SMTP credentials + secrets
 copy src\config\config.local.php.example src\config\config.local.php
 
-# 5. Set the super-admin login (the seeded account is locked until you do)
+# 5. Set the super-admin login
 php scripts/set_super_admin.php
 
 # 6. Optional demo data
@@ -163,29 +180,35 @@ php -S localhost:8081 -t public
 ```
 
 Open <http://localhost:8081>. With Apache, point the virtual host's
-`DocumentRoot` at `public/`. Existing databases: apply the missing files in
-`database/migrations/` in order, then run `php scripts/backfill_file_hashes.php`
-once ([docs/03_DATABASE.md](docs/03_DATABASE.md)). No SMTP account? Set
-`define('MAIL_TRANSPORT', 'file');` in `config.local.php` and read the
-codes from `private_data/mail/`.
+`DocumentRoot` at `public/`.
+
+**Upgrading an existing database:** apply the missing files in
+`database/migrations/` in order (001 → 016), then run once
+`php scripts/backfill_file_hashes.php` and `php scripts/pin_institution_keys.php`
+([docs/03_DATABASE.md](docs/03_DATABASE.md)).
+
+**No SMTP account?** Set `define('MAIL_TRANSPORT', 'file');` in
+`config.local.php` and read every email (including codes) in
+`private_data/mail/`.
 
 ## Configuration
 
-Settings are read from `src/config/config.local.php`, then environment
-variables, then the defaults in `src/config/config.php`.
+Settings come from `src/config/config.local.php`, then environment variables,
+then the defaults in `src/config/config.php`.
 
 | Setting | Purpose |
 |---------|---------|
 | `CV_DB_HOST` / `CV_DB_USER` / `CV_DB_PASS` / `CV_DB_NAME` | Database connection (defaults: `localhost` / `root` / empty / `certivault`) |
-| `CV_ENCRYPTION_KEY` | Encrypts institution private keys. **Set it before approving the first institution.** |
-| `CV_OTP_PEPPER`, `CV_SHARE_SECRET` | HMAC secrets for OTP codes and share links |
-| `SMTP_*` | Email delivery for OTPs (Gmail needs an App Password) |
-| `CV_RECAPTCHA_SITE_KEY` / `_SECRET_KEY` | Google reCAPTCHA; without them an offline arithmetic CAPTCHA is used |
-| `CV_BASE_URL` | Only needed behind a proxy; otherwise derived per request |
-| `CV_ENV=production` | Refuses to start while development secrets are still set |
-| Feature flags | `CV_SMART_VERIFY`, `CV_API_ENABLED` (on by default); `CV_EXT_REGISTRY_ENABLED`, `CV_ATTESTED_CREDENTIALS_ENABLED`, `CV_CERTIFICATE_TRANSPARENCY_ENABLED` (off by default) |
+| `CV_ENCRYPTION_KEY` | Encrypts institution private keys and 2FA secrets. **Set it before approving the first institution.** |
+| `CV_OTP_PEPPER`, `CV_SHARE_SECRET` | HMAC secrets for codes and share links |
+| `SMTP_*`, `CV_MAIL_TRANSPORT` | Email delivery (Gmail needs an App Password); `file` = local dev spool |
+| `CV_KEY_PINS_FILE`, `CV_KEY_PINNING_STRICT` | Key-pin file location (keep it out of reach of the web/DB user); strict mode |
+| `CV_RECAPTCHA_SITE_KEY` / `_SECRET_KEY` | Google reCAPTCHA; otherwise an offline arithmetic CAPTCHA |
+| `CV_BASE_URL` | Only behind a proxy; otherwise derived per request |
+| `CV_ENV=production` | Refuses to start with development secrets or the file mail transport |
+| Feature flags | `CV_SMART_VERIFY`, `CV_API_ENABLED` (on); `CV_EXT_REGISTRY_ENABLED`, `CV_ATTESTED_CREDENTIALS_ENABLED`, `CV_CERTIFICATE_TRANSPARENCY_ENABLED` (off) |
 
-Full reference, Gmail setup, no-SMTP development mode and troubleshooting:
+Full reference, Gmail setup and the production checklist:
 [docs/06_SETUP_AND_CONFIGURATION.md](docs/06_SETUP_AND_CONFIGURATION.md).
 
 ## Demo accounts
@@ -196,36 +219,37 @@ After `php scripts/seed_demo.php`:
 |------|-------|----------|
 | Institution admin | `demo.institution@certivault.test` | `DemoInst@2026` |
 | Student | `demo.student@certivault.test` | `DemoStudent@2026` |
-| Super admin | set by you | run `php scripts/set_super_admin.php` (the seeded account is locked) |
+| Super admin | set by you | `php scripts/set_super_admin.php` (the seeded account is locked) |
 
-These are local demo credentials only. Never reuse them on a server.
+Local demo credentials only — never reuse them on a server.
 
-## Testing
+## Testing & CI
 
 ```sh
-php tests/run_all.php     # uses an isolated `certivault_test` database
+php tests/run_all.php              # 16 PHP suites, 512 checks (isolated certivault_test DB)
+node tests/test_verify_ui.mjs      # Smart Verify in headless Chrome — 17 checks
+node tests/test_pages_browser.mjs  # every page under the CSP, issuance, 2FA, analytics — 61 checks
 ```
 
-**347 checks across 10 suites pass** (crypto, validators, uploads, the
-verification cascade, Smart Verify, trust score, PDF report, status API,
-attested credentials, transparency log, rate limiter, OTP lifecycle,
-production config guard, full workflow, HTTP uploads).
-Browser checks (`tests/*.mjs`) cover the verify UI and responsive layout.
-See [docs/07_TESTING.md](docs/07_TESTING.md) and the manual
-[test plan](docs/TEST_PLAN.md).
+The suites cover crypto, validators, uploads, the verification cascade, key
+pinning (incl. the key-swap attack), signed credentials (incl. OpenSSL
+interop), bulk issuance, two-factor login over HTTP, analytics, rate limits
+and the full lifecycle. **GitHub Actions** runs everything on every push
+(Linux, MariaDB 10.11 strict mode, Google Chrome). See
+[docs/07_TESTING.md](docs/07_TESTING.md).
 
 ## Security
 
-- bcrypt passwords; HMAC-hashed email OTPs (10-minute expiry, 5 attempts, resend cooldown, hourly cap)
-- Login lockout (5 failures / 15 min), CAPTCHA, session regeneration, 30-minute idle and 8-hour absolute timeouts
-- Role-based plus row-level authorization; CSRF tokens on every POST; prepared statements everywhere; escaped output
-- Uploads checked by both extension and real MIME type (≤ 5 MB) and stored outside the web root
-- Verification rate limit (30 distinct lookups / 10 min / IP → HTTP 429), enforced before any lookup with constant-cost state; every lookup is logged
-- Only `public/` is web content; every other folder denies HTTP access, and the seeded super admin is locked until configured
-- Security headers (CSP, X-Frame-Options, nosniff, Referrer-Policy, Permissions-Policy, HSTS)
-- SSRF-guarded external lookups (HTTPS only, host allow-list, public IPs only)
+- bcrypt passwords; optional **TOTP 2FA** with recovery codes; HMAC-hashed email codes; lockout; CAPTCHA; hardened sessions
+- RSA-signed certificates; AES-256-GCM key storage; **key fingerprints pinned outside the DB** (a swapped key → TAMPERED)
+- Role-based + row-level authorization; CSRF tokens; prepared statements; strict SQL mode; escaped output
+- **CSP without inline scripts** (`script-src 'self'`, `script-src-attr 'none'`) plus nosniff, frame, referrer, permissions headers and HSTS
+- Rate limiting **before** any certificate lookup, with constant-cost state; every lookup logged
+- Uploads checked by extension and real MIME type and stored outside the web root; only `public/` is web-reachable
+- Production guard refuses development secrets; the seeded super admin is locked
 
-Threat model and known gaps: [docs/04_SECURITY_AND_CRYPTOGRAPHY.md](docs/04_SECURITY_AND_CRYPTOGRAPHY.md).
+Threat model and remaining gaps:
+[docs/04_SECURITY_AND_CRYPTOGRAPHY.md](docs/04_SECURITY_AND_CRYPTOGRAPHY.md).
 
 ## Documentation
 
@@ -234,33 +258,30 @@ Threat model and known gaps: [docs/04_SECURITY_AND_CRYPTOGRAPHY.md](docs/04_SECU
 | [01 Project Overview](docs/01_PROJECT_OVERVIEW.md) | Problem, roles, end-to-end methodology, verdicts |
 | [02 Architecture](docs/02_ARCHITECTURE.md) | Layers, page map, services, libraries |
 | [03 Database](docs/03_DATABASE.md) | Tables, relationships, migrations |
-| [04 Security & Cryptography](docs/04_SECURITY_AND_CRYPTOGRAPHY.md) | Hashing, signatures, key storage, threat model |
+| [04 Security & Cryptography](docs/04_SECURITY_AND_CRYPTOGRAPHY.md) | Hashing, signatures, pinning, 2FA, threat model |
 | [05 Features & User Guide](docs/05_FEATURES_AND_USER_GUIDE.md) | Step-by-step per role, every feature |
 | [06 Setup & Configuration](docs/06_SETUP_AND_CONFIGURATION.md) | Install, config reference, email, troubleshooting, production checklist |
-| [07 Testing](docs/07_TESTING.md) | Automated and browser tests, results |
+| [07 Testing](docs/07_TESTING.md) | PHP + browser suites, CI |
 | [08 Research Summary](docs/08_RESEARCH_SUMMARY.md) | Findings of the accompanying research paper |
-| [09 Status & Roadmap](docs/09_STATUS_AND_ROADMAP.md) | Progress, known bugs, next steps |
+| [09 Status & Roadmap](docs/09_STATUS_AND_ROADMAP.md) | Progress, change log, what is next |
 | [Requirements Matrix](docs/REQUIREMENTS_MATRIX.md) | Course requirements → implementation |
 | [Project Brief (PDF)](docs/reference/CertiVault_Project_Brief.pdf) | Original project brief |
 
 ## Project status & roadmap
 
-All core features and course requirements are implemented and tested, and
-the known bugs from the 2026-11-15 review are fixed (file-upload matching,
-rate limiter, dev mail transport, broken dependencies, web exposure, default
-super-admin password). Remaining work ([details](docs/09_STATUS_AND_ROADMAP.md)):
-
-1. Decide on the stashed tabbed scanner UI (browser PDF→QR decoding).
-2. Remove `'unsafe-inline'` from the CSP; enforce key pinning.
-3. Add CI; deploy a public HTTPS demo; refresh the research paper's numbers.
+All course requirements and core features are implemented and tested, the
+issues from the 2026-11-15 review are fixed, and signed credentials, bulk
+issuance, 2FA, analytics, key pinning and CI have been added. Next
+([details](docs/09_STATUS_AND_ROADMAP.md)): move inline styles out of the
+templates, optionally require 2FA for admins, a public HTTPS demo / container
+image, W3C Verifiable Credentials export, and refreshed paper figures.
 
 ## Limitations
 
-CertiVault is a single-operator, centralised prototype. If the server is
-down, nothing can be verified. An attacker with write access to the database
-*including the key table* could swap an institution's key; published
-fingerprints and the transparency log narrow that gap but do not close it
-automatically. A signature proves **who** issued a certificate, not that its
+CertiVault is a single-operator, centralised system: if the server is down,
+nothing can be verified online (signed credentials still verify offline).
+Key pinning is trust-on-first-use and only as strong as the protection of the
+pin file. A signature proves **who** issued a certificate, not that its
 content is true.
 
 ---
