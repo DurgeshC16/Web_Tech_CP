@@ -146,6 +146,14 @@ defined('API_ENABLED')              || define('API_ENABLED', (getenv('CV_API_ENA
 // separate from institution signing keys and APP_ENCRYPTION_KEY.
 defined('TLOG_PRIVATE_KEY_FILE') || define('TLOG_PRIVATE_KEY_FILE', getenv('CV_TLOG_PRIVATE_KEY_FILE') ?: __DIR__ . '/../../private_data/tlog/platform_private.pem');
 defined('TLOG_PUBLIC_KEY_FILE')  || define('TLOG_PUBLIC_KEY_FILE', getenv('CV_TLOG_PUBLIC_KEY_FILE') ?: __DIR__ . '/../../private_data/tlog/platform_public.pem');
+// Key fingerprint pinning (KeyPinService). The pin file must live OUTSIDE
+// the database and ideally on storage the web/DB layer cannot write.
+// Strict mode also rejects keys that were never pinned.
+// One pin file per database (pins are keyed by institution/key id, which
+// are only unique within one database).
+defined('KEY_PINS_FILE')       || define('KEY_PINS_FILE', getenv('CV_KEY_PINS_FILE')
+    ?: __DIR__ . '/../../private_data/pins/' . preg_replace('/[^A-Za-z0-9_-]/', '_', DB_NAME) . '.json');
+defined('KEY_PINNING_STRICT')  || define('KEY_PINNING_STRICT', (getenv('CV_KEY_PINNING_STRICT') ?: '0') === '1');
 defined('CERTIFICATE_TRANSPARENCY_ENABLED') || define('CERTIFICATE_TRANSPARENCY_ENABLED', (getenv('CV_CERTIFICATE_TRANSPARENCY_ENABLED') ?: '0') === '1');
 
 // ── Error Handling ──────────────────────────────────────────────────

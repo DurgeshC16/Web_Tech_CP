@@ -12,6 +12,7 @@
 // ─────────────────────────────────────────────────────────────────────
 
 require_once __DIR__ . '/CryptoService.php';
+require_once __DIR__ . '/KeyPinService.php';
 
 class VerificationService {
 
@@ -309,7 +310,17 @@ class VerificationService {
             ];
         }
 
-        // Step 4 – Authenticity: verify RSA signature
+        // Step 4a – Key pinning: the signing key must match the fingerprint
+        // pinned OUTSIDE the database (blocks a swapped public key).
+        if (!KeyPinService::acceptable((int)$cert['institution_id'], (int)($cert['key_id'] ?? 1), $cert['public_key'] ?? null)) {
+            return [
+                'verdict' => 'TAMPERED',
+                'detail'  => 'The signing key on record does not match the institution\'s pinned key fingerprint — the key record may have been replaced.',
+                'superseded_by' => null,
+            ];
+        }
+
+        // Step 4b – Authenticity: verify RSA signature
         $sigOK = false;
         if (!empty($cert['digital_signature']) && !empty($cert['public_key'])) {
             $sigOK = CryptoService::verifyCertificateSignature(

@@ -56,3 +56,6 @@ desktop.ini
 
 # Local database backups (contain password hashes + encrypted keys)
 private_data/backups/
+
+# Key fingerprint pins (KeyPinService) — keep out of git; back them up
+private_data/pins/

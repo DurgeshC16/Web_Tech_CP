@@ -28,6 +28,7 @@ require_once __DIR__ . '/../src/config/Database.php';
 require_once __DIR__ . '/../src/services/CryptoService.php';
 require_once __DIR__ . '/../src/services/TransparencyLogService.php';
 require_once __DIR__ . '/../src/services/QRService.php';
+require_once __DIR__ . '/../src/services/KeyPinService.php';
 
 const DEMO_INST_EMAIL = 'demo.institution@certivault.test';
 const DEMO_INST_PASSWORD = 'DemoInst@2026';
@@ -92,6 +93,13 @@ if ($activeKeyStmt->fetchColumn() === false) {
     $maxStmt->execute(['iid'=>$institution_id]); $keyId=(int)$maxStmt->fetchColumn();
     $db->prepare('INSERT INTO institution_keys (institution_id,key_id,public_key,encrypted_private_key,status,valid_from) VALUES (:iid,:kid,:pub,:priv,"active",NOW())')
        ->execute(['iid'=>$institution_id,'kid'=>$keyId,'pub'=>$keys['public_key'],'priv'=>$encryptedPriv]);
+}
+
+// Pin the demo institution's keys outside the database (append-only).
+$pinRows = $db->prepare('SELECT key_id, public_key FROM institution_keys WHERE institution_id = :iid');
+$pinRows->execute(['iid' => $institution_id]);
+foreach ($pinRows->fetchAll() as $pinRow) {
+    KeyPinService::pinQuietly((int)$institution_id, (int)$pinRow['key_id'], (string)$pinRow['public_key'], 'seed_demo');
 }
 
 // ── 2. Demo student ─────────────────────────────────────────────────

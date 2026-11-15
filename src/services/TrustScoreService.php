@@ -17,6 +17,9 @@
 // beside the gauge.
 // ─────────────────────────────────────────────────────────────────────
 
+require_once __DIR__ . '/CryptoService.php';
+require_once __DIR__ . '/KeyPinService.php';
+
 class TrustScoreService
 {
     public const DISCLAIMER = 'CertiVault confirms the record passes technical checks; '
@@ -81,11 +84,13 @@ class TrustScoreService
                 // hash passed, so a hash-failed row reports the signature
                 // as untestable (failed) in the score too.
                 if ($hashOK && !empty($cert['digital_signature']) && !empty($cert['public_key'])) {
-                    $signatureOK = CryptoService::verifyCertificateSignature(
-                        $recomputed,
-                        $cert['digital_signature'],
-                        $cert['public_key']
-                    );
+                    // Same order as verify(): the key must match its pin first.
+                    $signatureOK = KeyPinService::acceptable((int)$cert['institution_id'], (int)($cert['key_id'] ?? 1), $cert['public_key'])
+                        && CryptoService::verifyCertificateSignature(
+                            $recomputed,
+                            $cert['digital_signature'],
+                            $cert['public_key']
+                        );
                 }
             } catch (Throwable $e) {
                 $hashOK = false;

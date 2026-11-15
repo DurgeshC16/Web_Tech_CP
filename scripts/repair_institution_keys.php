@@ -29,6 +29,7 @@ if (!getenv('OPENSSL_CONF')) {
 require_once __DIR__ . '/../src/config/config.php';
 require_once __DIR__ . '/../src/config/Database.php';
 require_once __DIR__ . '/../src/services/CryptoService.php';
+require_once __DIR__ . '/../src/services/KeyPinService.php';
 
 $db = Database::getInstance();
 $stmt = $db->prepare('SELECT id, name, status FROM institutions WHERE id = :id');
@@ -88,6 +89,9 @@ try {
     exit(1);
 }
 
+$pinned = KeyPinService::pinQuietly($institutionId, $keyId, $keys['public_key'], 'repair');
+fwrite(STDOUT, 'Key pin: ' . ($pinned ?? 'FAILED (see php_errors.log)') . "
+");
 fwrite(STDOUT, "Rotated institution {$institutionId} to key v{$keyId}: fingerprint=" . CryptoService::fingerprintPublicKey($keys['public_key']) . "\n");
 fwrite(STDOUT, "Retired key remains available for existing certificates.\n");
 exit(0);

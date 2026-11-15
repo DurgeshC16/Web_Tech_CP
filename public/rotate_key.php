@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../src/config/Database.php';
 require_once __DIR__ . '/../src/utils/helpers.php';
 require_once __DIR__ . '/../src/services/CryptoService.php';
+require_once __DIR__ . '/../src/services/KeyPinService.php';
 if (!CERTIFICATE_TRANSPARENCY_ENABLED) { http_response_code(404); exit('Certificate transparency and key rotation are disabled.'); }
 require_role('admin');
 require_approved_institution();
@@ -33,6 +34,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $insert = $db->prepare('INSERT INTO institution_keys (institution_id,key_id,public_key,encrypted_private_key,status,valid_from) VALUES (:iid,:kid,:pub,:priv,"active",NOW())');
         $insert->execute(['iid'=>$institutionId,'kid'=>$newKeyId,'pub'=>$keys['public_key'],'priv'=>$encrypted]);
         $db->commit();
+        KeyPinService::pinQuietly($institutionId, $newKeyId, $keys['public_key'], 'rotation');
         $fingerprint = CryptoService::fingerprintPublicKey($keys['public_key']);
         $message = 'Key rotated. New signing key v' . $newKeyId . ' fingerprint: ' . $fingerprint . '. Previously signed certificates continue to verify with their recorded key version.';
     } catch (Throwable $e) {

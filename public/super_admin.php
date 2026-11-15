@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../src/config/Database.php';
 require_once __DIR__ . '/../src/utils/helpers.php';
 require_once __DIR__ . '/../src/services/CryptoService.php';
+require_once __DIR__ . '/../src/services/KeyPinService.php';
 require_once __DIR__ . '/../src/services/ExternalSourceService.php';
 
 require_role('super_admin');
@@ -126,6 +127,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $keyInsert->execute(['iid'=>$inst_id,'pub'=>$keys['public_key'],'priv'=>$encryptedPriv]);
 
                 $db->commit();
+                // Pin the new key's fingerprint outside the database.
+                KeyPinService::pinQuietly((int)$inst_id, 1, $keys['public_key'], 'approval');
                 $message = "Institution approved and RSA keys generated successfully.";
             } else {
                 $db->rollBack();
