@@ -1110,3 +1110,21 @@ img { max-width: 100%; height: auto; }
 .sv-status-error { color: var(--danger); }
 .qr-scanner { margin-top: 16px; }
 .qr-scanner #qrReader { max-width: 400px; margin: 0 auto; }
+
+/* ── Credential verifier (offline_verify.php / credential-verify.js) ──── */
+.small { font-size: 0.85em; }
+.checkbox-row { display: flex; gap: 8px; align-items: flex-start; margin: 4px 0 14px; font-size: 0.95em; }
+.checkbox-row input { margin-top: 4px; }
+.credential-summary { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0 0 14px; }
+.credential-summary dt { color: var(--muted); }
+.credential-summary dd { margin: 0; overflow-wrap: anywhere; }
+.check-list { list-style: none; padding: 0; margin: 0; }
+.check-list .check { padding: 8px 10px; border-left: 4px solid var(--border); margin-bottom: 6px; background: var(--paper); border-radius: 4px; overflow-wrap: anywhere; }
+.check-list .check-pass { border-left-color: var(--verified); }
+.check-list .check-fail { border-left-color: var(--danger); }
+.check-list .check-warn { border-left-color: var(--warn); }
+.check-list .check small { color: var(--muted); }
+.credential-pass { color: var(--verified); }
+.credential-warn { color: var(--warn); }
+.credential-fail { color: var(--danger); }
+.btn-row { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 8px; }

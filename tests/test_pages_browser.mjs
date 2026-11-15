@@ -198,6 +198,55 @@ async function main() {
     ok('ui.js: data-confirm shows the question', d && d.message === 'Proceed?', JSON.stringify(d));
     ok('ui.js: cancelling data-confirm keeps the page', (await ev(anon, 'location.pathname')) === '/index.php');
 
+    // ── Zero-trust credential verifier (Web Crypto in the browser) ───
+    await audit(anon, '/offline_verify.php');
+    const cred = await ev(anon, `fetch('credential.php?certificate_id=' + encodeURIComponent(${JSON.stringify(fx.CERT_ID)})).then((r) => r.json())`);
+    ok('credential.php returns a credential for the fixture', cred && cred.format === 'certivault-credential-v1', JSON.stringify(cred).slice(0, 120));
+    const states = (r) => Object.fromEntries(r.checks.map((c) => [c.id, c.state]));
+    const genuine = await ev(anon, `CertiVaultCredential.verify(${JSON.stringify(cred)}, { directory: true }).then((r) => ({ checks: r.checks, overall: CertiVaultCredential.overall(r.checks).cls }))`);
+    const g = states(genuine);
+    ok('browser: genuine credential — digest, signature, fingerprint pass',
+      g.format === 'pass' && g.digest === 'pass' && g.signature === 'pass' && g.fingerprint === 'pass', JSON.stringify(g));
+    ok('browser: key matches the published key directory', g.directory === 'pass', JSON.stringify(genuine.checks.find((c) => c.id === 'directory')));
+    ok('browser: live status check = VALID', g.status === 'pass');
+    ok('browser: overall verdict authentic', genuine.overall === 'pass');
+    const fpSame = await ev(anon, `CertiVaultCredential.fingerprint(${JSON.stringify(cred.proof.public_key_pem)})`);
+    ok('browser fingerprint algorithm == server fingerprint', fpSame === cred.proof.key_fingerprint_sha256, fpSame);
+
+    const tampered = await ev(anon, `(() => { const c = ${JSON.stringify(cred)}; c.certificate.title = 'Forged Title';
+      return CertiVaultCredential.verify(c, { directory: false }).then((r) => ({ checks: r.checks, overall: CertiVaultCredential.overall(r.checks).cls })); })()`);
+    ok('browser: edited title -> digest fails, overall not authentic', states(tampered).digest === 'fail' && tampered.overall === 'fail');
+
+    // Attacker re-signs with a fresh Web Crypto key and embeds it.
+    const attacker = await ev(anon, `(async () => {
+      const c = ${JSON.stringify(cred)}; c.certificate.title = 'Forged Title';
+      const enc = new TextEncoder(); const hex = (b) => [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, '0')).join('');
+      const can = [c.certificate.certificate_id, c.issuer.institution_id, c.subject.student_id, c.certificate.title, c.certificate.issue_date, c.certificate.expiry_date ?? '', c.certificate.file_sha256].join('|');
+      c.proof.digest_sha256 = hex(await crypto.subtle.digest('SHA-256', enc.encode(can)));
+      const kp = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']);
+      const sig = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', kp.privateKey, enc.encode(c.proof.digest_sha256));
+      c.proof.signature_base64 = btoa(String.fromCharCode(...new Uint8Array(sig)));
+      const spki = btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.exportKey('spki', kp.publicKey))));
+      c.proof.public_key_pem = '-----BEGIN PUBLIC KEY-----\\n' + spki.match(/.{1,64}/g).join('\\n') + '\\n-----END PUBLIC KEY-----';
+      c.proof.key_fingerprint_sha256 = await CertiVaultCredential.fingerprint(c.proof.public_key_pem);
+      const r = await CertiVaultCredential.verify(c, { directory: true });
+      return { checks: r.checks, overall: CertiVaultCredential.overall(r.checks).cls };
+    })()`);
+    const a = states(attacker);
+    ok('browser: attacker-key credential passes the self-contained crypto', a.digest === 'pass' && a.signature === 'pass', JSON.stringify(a));
+    ok('browser: …but the key directory exposes it (overall not authentic)', a.directory === 'fail' && attacker.overall === 'fail', JSON.stringify(a));
+
+    // Full UI flow: paste JSON, submit, read the rendered verdict.
+    await go(anon, `${BASE}/offline_verify.php`);
+    await ev(anon, `(() => { document.getElementById('credentialText').value = ${JSON.stringify(JSON.stringify(cred))};
+      document.querySelector('#credentialForm button[type=submit]').click(); return true; })()`);
+    let overallUi = null;
+    for (let i = 0; i < 40 && !overallUi; i++) {
+      await sleep(150);
+      overallUi = await ev(anon, `document.getElementById('credentialResult').getAttribute('data-overall')`);
+    }
+    ok('offline_verify UI: pasted genuine credential shows Authentic', overallUi === 'pass', String(overallUi));
+
     // ── Institution admin ────────────────────────────────────────────
     const admin = await open((await cdp.send('Target.createBrowserContext')).browserContextId);
     const adminLanding = await login(admin, fx.ADMIN_EMAIL, fx.PASSWORD);

@@ -306,12 +306,26 @@ async function main() {
         return await evaluate(cdp, page.sessionId,
           `window.CertiVaultSmartVerify.decodeFile(document.getElementById('smart_file').files[0]).then((t) => t, () => 'THREW')`);
       };
+      // Diagnostics for environments where decoding fails (e.g. Linux CI):
+      // the decoder's own error and the fixture's size are reported.
+      const diag = async (file) => {
+        await setFile(cdp, page.sessionId, '#smart_file', file);
+        return await evaluate(cdp, page.sessionId, `(async () => {
+          const f = document.getElementById('smart_file').files[0];
+          const out = { size: f.size, type: f.type, barcodeDetector: 'BarcodeDetector' in window };
+          try {
+            const d = document.createElement('div'); d.id = 'diagScan' + Date.now(); document.body.appendChild(d);
+            out.text = await new Html5Qrcode(d.id).scanFile(f, false);
+          } catch (e) { out.error = String(e && (e.message || e)); }
+          return JSON.stringify(out);
+        })()`);
+      };
       const one = await decode(PDF.one);
       ok('decode: PDF with QR on page 1', typeof one === 'string' && one.includes(T.valid), String(one));
       const multi = await decode(PDF.multi);
       ok('decode: PDF with QR on page 3', typeof multi === 'string' && multi.includes(T.valid), String(multi));
       const png = await decode(QR.valid);
-      ok('decode: QR PNG image', typeof png === 'string' && png.includes(T.valid), String(png));
+      ok('decode: QR PNG image', typeof png === 'string' && png.includes(T.valid), String(png) + (png ? '' : ' diag=' + await diag(QR.valid)));
       const none = await decode(PDF.noqr);
       ok('decode: PDF without QR -> null', none === null, String(none));
       const broken = await decode(PDF.broken);

@@ -28,6 +28,7 @@ $files = [
     'test_config_guard.php',  // production secret / mail-transport guard
     'test_verify_http.php',   // verify.php over real HTTP (php -S)
     'test_key_pinning.php',   // key fingerprint pins vs the S6 key-swap attack
+    'test_credentials.php',   // portable signed credentials + OpenSSL interop
     // Browser suite (needs Chrome/Edge + Node >= 21): node tests/test_verify_ui.mjs
     // test_smtp_live.php needs a real SMTP account; run it by hand.
 ];

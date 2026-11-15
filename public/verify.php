@@ -850,11 +850,16 @@ if ($query_type !== null) {
             <p style="color:var(--muted); font-size:0.85em; margin-top:10px;">
                 <?= htmlspecialchars(TrustScoreService::DISCLAIMER) ?>
             </p>
-            <p style="margin-top:8px;">
+            <p class="btn-row">
                 <a class="btn btn-secondary" href="report.php?cert=<?= rawurlencode((string)$cert['certificate_id']) ?>">
                     ⬇ Download verification report (PDF)
                 </a>
+                <a class="btn btn-secondary" href="credential.php?certificate_id=<?= rawurlencode((string)$cert['certificate_id']) ?>">
+                    ⬇ Signed credential (JSON)
+                </a>
             </p>
+            <p class="text-muted small text-center">The JSON file can be re-checked in any browser — no trust in this server needed:
+                <a href="offline_verify.php">verify a credential file</a>.</p>
         </div>
         <?php endif; ?>
 

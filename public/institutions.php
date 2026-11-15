@@ -2,7 +2,6 @@
 require_once __DIR__ . '/../src/config/Database.php';
 require_once __DIR__ . '/../src/services/CryptoService.php';
 require_once __DIR__ . '/../src/utils/helpers.php';
-if (!CERTIFICATE_TRANSPARENCY_ENABLED) { http_response_code(404); exit('Institution key directory is disabled.'); }
 $db = Database::getInstance();
 $stmt = $db->query("SELECT i.id AS institution_id,i.name,k.key_id,k.public_key,k.status,k.valid_from,k.valid_to
     FROM institutions i JOIN institution_keys k ON k.institution_id=i.id

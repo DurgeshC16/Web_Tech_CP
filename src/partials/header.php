@@ -23,6 +23,7 @@ $role = $_SESSION['role'] ?? null;
             <?php if (!$role): ?>
                 <a href="index.php">Home</a>
                 <a href="verify.php">Verify</a>
+                <a href="offline_verify.php">Check a credential file</a>
                 <a href="login.php">Login</a>
                 <a href="register_student.php">Register</a>
             <?php elseif ($role === 'student'): ?>

@@ -100,6 +100,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['generate_share'])) {
                 <a href="report.php?cert=<?= rawurlencode((string)$cert['certificate_id']) ?>" class="btn btn-secondary">
                     ⬇ Verification report (PDF)
                 </a>
+                <a href="credential.php?certificate_id=<?= rawurlencode((string)$cert['certificate_id']) ?>" class="btn btn-secondary">
+                    ⬇ Signed credential (JSON)
+                </a>
             </div>
             <?php endif; ?>
 
