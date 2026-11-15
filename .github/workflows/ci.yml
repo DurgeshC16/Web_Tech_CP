@@ -117,3 +117,26 @@ jobs:
         run: |
           msg=$( { cat /tmp/ui.txt /tmp/pages.txt 2>/dev/null | grep -E '^(FAIL|SKIP)|summary|fatal' || true; }                  | head -n 120 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
           echo "::error title=Browser suite failures::${msg}"
+
+  docker:
+    name: Docker image (build + smoke test)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and start the stack
+        run: docker compose up -d --build --wait
+
+      - name: Seed demo data and verify a certificate
+        run: |
+          docker compose exec -T -u www-data app php scripts/seed_demo.php
+          for i in $(seq 1 30); do code=$(curl -s -o /tmp/home.html -w '%{http_code}' http://localhost:8080/); [ "$code" = 200 ] && break; sleep 1; done
+          echo "home: $code"; test "$code" = 200
+          curl -s "http://localhost:8080/verify.php?certificate_id=CV-$(date +%Y)-000001" | grep -q 'verdict-seal-valid'
+          curl -s "http://localhost:8080/api_status.php?certificate_id=CV-$(date +%Y)-000003" | grep -q '"REVOKED"'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/../src/config/config.php)" != 200
+          docker compose exec -T -u www-data app php scripts/pin_institution_keys.php --verify
+
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --tail 80

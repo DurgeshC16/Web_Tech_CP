@@ -24,7 +24,23 @@ presenting it.
 | An authenticator app (optional) | Google/Microsoft Authenticator, Aegis… | To try two-factor login |
 | Node.js 21+ (optional) | — | Only for the browser test suites |
 
-### A.2 Windows + XAMPP (recommended for local use)
+### A.0 Fastest: Docker (no XAMPP needed)
+
+With [Docker Desktop](https://www.docker.com/products/docker-desktop/) running:
+
+```sh
+docker compose up -d --build                                       # app + MariaDB, schema loaded automatically
+docker compose exec -u www-data app php scripts/seed_demo.php      # demo data
+docker compose exec -it -u www-data app php scripts/set_super_admin.php
+```
+
+Open **<http://localhost:8080>** and continue with Part C (use port 8080 in
+the URLs). Emails are saved inside the container:
+`docker compose exec app ls private_data/mail`. Stop with
+`docker compose down` (add `-v` to delete the data). The secrets in
+`docker-compose.yml` are demo values — local use only.
+
+### A.2 Windows + XAMPP
 
 Open **Git Bash** or **PowerShell** in the project folder.
 

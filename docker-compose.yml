@@ -1,0 +1,41 @@
+# One-command local setup:   docker compose up -d --build
+# Then:  docker compose exec -u www-data app php scripts/seed_demo.php   (demo data)
+#        docker compose exec -it -u www-data app php scripts/set_super_admin.php
+# Open http://localhost:8080 — emails (activation codes) are written to
+# private_data/mail/ inside the container:  docker compose exec app ls private_data/mail
+# Development use only: secrets below are demo values.
+services:
+  db:
+    image: mariadb:10.11
+    environment:
+      MARIADB_ROOT_PASSWORD: certivault-dev
+    volumes:
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+      - dbdata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      retries: 30
+
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+    environment:
+      CV_DB_HOST: db
+      CV_DB_USER: root
+      CV_DB_PASS: certivault-dev
+      CV_BASE_URL: http://localhost:8080
+      CV_MAIL_TRANSPORT: file
+      CV_ENCRYPTION_KEY: docker-dev-encryption-key-change-me-0001
+      CV_OTP_PEPPER: docker-dev-otp-pepper-change-me-0002
+      CV_SHARE_SECRET: docker-dev-share-secret-change-me-0003
+    volumes:
+      - appdata:/var/www/html/private_data
+
+volumes:
+  dbdata:
+  appdata:

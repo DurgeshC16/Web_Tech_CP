@@ -183,6 +183,10 @@ Open <http://localhost:8081>. With Apache, point the virtual host's
 `DocumentRoot` at `public/`. **Next:** follow the guided tour in
 [docs/10_RUNNING_AND_DEMO_GUIDE.md](docs/10_RUNNING_AND_DEMO_GUIDE.md).
 
+**Prefer Docker?** `docker compose up -d --build`, then
+`docker compose exec -u www-data app php scripts/seed_demo.php` and open
+<http://localhost:8080> (details in the [running guide](docs/10_RUNNING_AND_DEMO_GUIDE.md)).
+
 **Upgrading an existing database:** apply the missing files in
 `database/migrations/` in order (001 → 016), then run once
 `php scripts/backfill_file_hashes.php` and `php scripts/pin_institution_keys.php`

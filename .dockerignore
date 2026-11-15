@@ -1,0 +1,14 @@
+.git
+.github
+vendor
+node_modules
+docs/private
+private_data/uploads/*
+private_data/mail/*
+private_data/pins
+private_data/backups
+private_data/tlog
+private_data/*.log
+public/qrcodes/*
+src/config/config.local.php
+.rnd
