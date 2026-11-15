@@ -266,6 +266,71 @@ async function main() {
     const preview = await ev(admin, `document.getElementById('file_name_display').textContent`);
     ok('ui.js: file name + size preview on issue form', /cv-pages-preview\.pdf — 2\.0 KB/.test(preview), preview);
     rmSync(tmpPdf, { force: true });
+    // ── Single issuance through the real form (IssuanceService) ──────
+    await go(admin, `${BASE}/issue_certificate.php`);
+    const certPdf = join(tmpdir(), 'cv-issue-ui.pdf');
+    writeFileSync(certPdf, '%PDF-1.4\n% browser issuance ' + Date.now() + '\n' + 'z'.repeat(1500));
+    {
+      const { root } = await cdp.send('DOM.getDocument', {}, admin.sessionId);
+      const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: root.nodeId, selector: '#certificate_file' }, admin.sessionId);
+      await cdp.send('DOM.setFileInputFiles', { nodeId, files: [certPdf] }, admin.sessionId);
+    }
+    const issuedLoad = cdp.once('Page.loadEventFired', admin.sessionId);
+    await ev(admin, `(() => { const f = document.getElementById('certificate_file').form;
+      f.querySelector('[name=student_email]').value = ${JSON.stringify(fx.STUDENT_EMAIL)};
+      f.querySelector('[name=student_name]').value = 'Browser Student';
+      f.querySelector('[name=title]').value = 'UI Issued Certificate';
+      f.querySelector('[name=issue_date]').value = new Date().toISOString().slice(0, 10);
+      f.querySelector('button[type=submit]').click(); return true; })()`);
+    await issuedLoad; await sleep(300);
+    const issuedText = await ev(admin, `document.body.innerText`);
+    const issuedId = (issuedText.match(/Certificate ID: ([A-Za-z0-9\-\/._]+)/) || [])[1];
+    ok('single issuance through the form succeeds', !!issuedId, issuedText.slice(0, 200));
+    if (issuedId) {
+      await go(admin, `${BASE}/verify.php?certificate_id=${encodeURIComponent(issuedId.trim())}`);
+      ok('...and the issued certificate verifies VALID', (await ev(admin, `!!document.querySelector('.verdict-seal-valid')`)) === true);
+    }
+    rmSync(certPdf, { force: true });
+
+    // ── Bulk issuance from CSV (preview -> confirm -> results) ───────
+    await audit(admin, '/bulk_issue.php');
+    const csvPath = join(tmpdir(), 'cv-bulk-ui.csv');
+    const today = new Date().toISOString().slice(0, 10);
+    const newEmail = `bulk-ui-${Date.now()}@example.com`;
+    writeFileSync(csvPath, 'student_email,student_name,title,issue_date,expiry_date,certificate_id\n'
+      + `${fx.STUDENT_EMAIL},Browser Student,Bulk Generated Certificate,${today},,\n`
+      + `${newEmail},Neha Kulkarni,Bulk Generated Certificate,${today},,\n`
+      + `not-an-email,Broken Row,X,${today},,\n`);
+    {
+      const { root } = await cdp.send('DOM.getDocument', {}, admin.sessionId);
+      const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: root.nodeId, selector: '#csv' }, admin.sessionId);
+      await cdp.send('DOM.setFileInputFiles', { nodeId, files: [csvPath] }, admin.sessionId);
+    }
+    const previewed = cdp.once('Page.loadEventFired', admin.sessionId);
+    await ev(admin, `document.querySelector('#bulkForm button[type=submit]').click()`);
+    await previewed; await sleep(300);
+    const prev = await ev(admin, `({ ok: document.querySelectorAll('#bulkPreview tr[data-ok="1"]').length, bad: document.querySelectorAll('#bulkPreview tr[data-ok="0"]').length })`);
+    ok('bulk preview: 2 rows ready, 1 flagged', prev.ok === 2 && prev.bad === 1, JSON.stringify(prev));
+    const confirmDlg = cdp.once('Page.javascriptDialogOpening', admin.sessionId, 8000);
+    const resultsLoaded = cdp.once('Page.loadEventFired', admin.sessionId, 90000);
+    await ev(admin, `(setTimeout(() => document.querySelector('form[data-confirm] button[type=submit]').click(), 0), true)`);
+    const dlg = await confirmDlg;
+    ok('bulk issue asks for confirmation', !!dlg && /Issue 2 signed certificate/.test(dlg.message), JSON.stringify(dlg));
+    if (dlg) await cdp.send('Page.handleJavaScriptDialog', { accept: true }, admin.sessionId);
+    await resultsLoaded; await sleep(300);
+    const res = await ev(admin, `(() => { const by = (s) => document.querySelectorAll('#bulkResults tr[data-status="' + s + '"]').length;
+      const link = document.querySelector('#bulkResults tr[data-status="issued"] a');
+      return { issued: by('issued'), pending: by('pending_activation'), skipped: by('skipped'), errors: by('error'), link: link ? link.getAttribute('href') : null }; })()`);
+    ok('bulk results: 1 issued, 1 pending activation, 1 skipped, 0 errors',
+      res.issued === 1 && res.pending === 1 && res.skipped === 1 && res.errors === 0, JSON.stringify(res));
+    if (res.link) {
+      await go(admin, `${BASE}/${res.link}`);
+      ok('bulk-issued (generated PDF) certificate verifies VALID', (await ev(admin, `!!document.querySelector('.verdict-seal-valid')`)) === true);
+    }
+    const resultsCsv = await ev(admin, `fetch('bulk_issue.php?download=results').then((r) => r.text())`);
+    ok('bulk results CSV downloadable', /certificate_id/.test(resultsCsv) && /pending_activation/.test(resultsCsv), resultsCsv.slice(0, 120));
+    rmSync(csvPath, { force: true });
+
     // Back link on change_password uses data-history-back with a real href.
     await go(admin, `${BASE}/change_password.php`);
     const back = await ev(admin, `(() => { const a = document.querySelector('a[data-history-back]'); return a ? a.getAttribute('href') : null; })()`);
@@ -302,6 +367,7 @@ async function main() {
     cdp.ws.close(); chrome.kill(); server.kill();
     await sleep(400);
     try { rmSync(userDir, { recursive: true, force: true }); } catch { /* locked */ }
+    phpRun(['tests/support/ui_db.php', 'purge-browser-issued']);
     phpRun(['tests/seed_browser_fixtures.php', '--clean']);
     phpRun(['tests/support/ui_db.php', 'reset-limiter']);
   }

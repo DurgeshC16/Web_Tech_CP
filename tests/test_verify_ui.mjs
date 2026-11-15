@@ -334,6 +334,10 @@ async function main() {
       ok('decode: PDF with QR on page 3', typeof multi === 'string' && multi.includes(T.valid), String(multi));
       const png = await decode(QR.valid);
       ok('decode: QR PNG image', typeof png === 'string' && png.includes(T.valid), String(png) + (png ? '' : ' diag=' + await diag(QR.valid)));
+      if (PDF.generated) {
+        const gen = await decode(PDF.generated);
+        ok('decode: bulk-generated certificate PDF (dompdf, landscape)', typeof gen === 'string' && gen.includes(T.valid), String(gen));
+      }
       const none = await decode(PDF.noqr);
       ok('decode: PDF without QR -> null', none === null, String(none));
       const broken = await decode(PDF.broken);

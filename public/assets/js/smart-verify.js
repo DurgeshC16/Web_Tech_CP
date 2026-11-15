@@ -71,27 +71,62 @@
         return new window.Html5Qrcode(scratchId, { verbose: false });
     }
 
-    /** Decode a QR from an image File/Blob; resolves to text or null. */
+    function html5Scan(blob) {
+        var scanner = scratchScanner();
+        if (!scanner) { return Promise.resolve(null); }
+        var file = blob instanceof File ? blob : new File([blob], 'scan.png', { type: blob.type || 'image/png' });
+        return scanner.scanFile(file, false).then(function (t) {
+            try { scanner.clear(); } catch (e) { /* ignore */ }
+            return t || null;
+        }).catch(function () { return null; });
+    }
+
+    /**
+     * Redraw an image on a white canvas (quiet zone added) at `scale`, so the
+     * decoder sees crisp, well-sized modules regardless of the source size.
+     */
+    function rasterize(blob, scale) {
+        if (!window.createImageBitmap) { return Promise.resolve(null); }
+        return window.createImageBitmap(blob).then(function (bmp) {
+            var pad = Math.round(Math.max(bmp.width, bmp.height) * 0.08 * scale) + 8;
+            var c = document.createElement('canvas');
+            c.width = Math.round(bmp.width * scale) + pad * 2;
+            c.height = Math.round(bmp.height * scale) + pad * 2;
+            var ctx = c.getContext('2d');
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, c.width, c.height);
+            ctx.imageSmoothingEnabled = false;
+            ctx.drawImage(bmp, pad, pad, bmp.width * scale, bmp.height * scale);
+            return new Promise(function (res) { c.toBlob(res, 'image/png'); });
+        }).catch(function () { return null; });
+    }
+
+    /**
+     * Decode a QR from an image File/Blob; resolves to text or null.
+     * Escalating attempts: native BarcodeDetector → ZXing (html5-qrcode) on
+     * the raw image → padded redraw at 1× → at 2×.
+     */
     function decodeImage(blob) {
-        // Fast path: native BarcodeDetector (Chromium) on an ImageBitmap.
-        var native = Promise.resolve(null);
+        var attempts = [];
         if ('BarcodeDetector' in window && window.createImageBitmap) {
-            native = window.createImageBitmap(blob).then(function (bmp) {
-                return new window.BarcodeDetector({ formats: ['qr_code'] }).detect(bmp);
-            }).then(function (codes) {
-                return codes && codes.length ? codes[0].rawValue : null;
-            }).catch(function () { return null; });
+            attempts.push(function () {
+                return window.createImageBitmap(blob).then(function (bmp) {
+                    return new window.BarcodeDetector({ formats: ['qr_code'] }).detect(bmp);
+                }).then(function (codes) {
+                    return codes && codes.length ? codes[0].rawValue : null;
+                });
+            });
         }
-        return native.then(function (text) {
-            if (text) { return text; }
-            var scanner = scratchScanner();
-            if (!scanner) { return null; }
-            var file = blob instanceof File ? blob : new File([blob], 'page.png', { type: blob.type || 'image/png' });
-            return scanner.scanFile(file, false).then(function (t) {
-                try { scanner.clear(); } catch (e) { /* ignore */ }
-                return t || null;
-            }).catch(function () { return null; });
-        });
+        attempts.push(function () { return html5Scan(blob); });
+        attempts.push(function () { return rasterize(blob, 1).then(function (b) { return b ? html5Scan(b) : null; }); });
+        attempts.push(function () { return rasterize(blob, 2).then(function (b) { return b ? html5Scan(b) : null; }); });
+        var i = 0;
+        function next() {
+            if (i >= attempts.length) { return Promise.resolve(null); }
+            return Promise.resolve().then(attempts[i++]).catch(function () { return null; })
+                .then(function (text) { return text || next(); });
+        }
+        return next();
     }
 
     var pdfJsPromise = null;

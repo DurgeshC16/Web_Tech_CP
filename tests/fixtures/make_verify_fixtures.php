@@ -19,6 +19,7 @@ require_once __DIR__ . '/../bootstrap.php';
 require_once __DIR__ . '/../../src/services/CryptoService.php';
 require_once __DIR__ . '/../../src/services/QRService.php';
 require_once __DIR__ . '/pdf_builder.php';
+require_once __DIR__ . '/../../src/services/CertificatePdfService.php';
 
 $opts = getopt('', ['clean', 'base::']);
 $base = $opts['base'] ?? 'http://127.0.0.1:8151';
@@ -134,6 +135,16 @@ file_put_contents($pdfOne,   cv_build_pdf([['png' => $qrValid]]));
 file_put_contents($pdfMulti, cv_build_pdf([null, null, ['png' => $qrValid]])); // QR on page 3
 file_put_contents($pdfNoQr,  cv_build_pdf([null, null]));
 file_put_contents($pdfBroken, random_bytes(8192));
+// A real generated certificate (bulk-issuance renderer) with the QR embedded.
+$pdfGenerated = null;
+if (CertificatePdfService::available()) {
+    $pdfGenerated = "$outDir/cert_generated.pdf";
+    file_put_contents($pdfGenerated, CertificatePdfService::render([
+        'institution' => 'Verify Fixture Uni', 'student' => 'Fixture Student', 'title' => 'Generated Certificate',
+        'certificate_id' => $valid['certId'], 'issue_date' => '2024-01-01', 'expiry_date' => null,
+        'verify_url' => $base . '/verify.php?token=' . $valid['token'],
+    ], $qrValid));
+}
 
 // ── Manifest ──────────────────────────────────────────────────────────
 $manifest = [
@@ -152,7 +163,7 @@ $manifest = [
         'valid' => $qrValid, 'bare' => $qrBare, 'foreign' => $qrForeign,
         'malformed' => $qrMalformed, 'noqr' => $qrNoQr, 'garbage' => $qrGarbage,
     ],
-    'pdf' => ['one' => $pdfOne, 'multi' => $pdfMulti, 'noqr' => $pdfNoQr, 'broken' => $pdfBroken],
+    'pdf' => ['one' => $pdfOne, 'multi' => $pdfMulti, 'noqr' => $pdfNoQr, 'broken' => $pdfBroken, 'generated' => $pdfGenerated],
 ];
 file_put_contents($manifestPath, json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 

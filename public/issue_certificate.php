@@ -1,7 +1,7 @@
 <?php
 require_once __DIR__ . '/../src/config/Database.php';
 require_once __DIR__ . '/../src/utils/helpers.php';
-require_once __DIR__ . '/../src/services/TransparencyLogService.php';
+require_once __DIR__ . '/../src/services/IssuanceService.php';
 
 require_role('admin');
 require_approved_institution();
@@ -84,174 +84,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!empty($errors)) {
         $error = 'Please correct the highlighted fields below.';
     } else {
-            $destination = null;
-            $qr_path = null;
             try {
-                $db->beginTransaction();
-                
-                // 1. Resolve Student — verified accounts only. Unverified
-                //    accounts cannot receive certificates until activation.
-                $stmt = $db->prepare('SELECT s.id, u.id AS user_id, u.is_verified FROM users u JOIN students s ON u.id = s.user_id WHERE u.email = :email LIMIT 1');
-                $stmt->execute(['email' => $student_email]);
-                $student_row = $stmt->fetch();
-
-                if ($student_row && (int)$student_row['is_verified'] === 1) {
-                    $student_id = $student_row['id'];
-                } else {
-                    if (!$student_row) {
-                        // Create inline (unverified) account
-                        $temp_password = password_hash(bin2hex(random_bytes(8)), PASSWORD_BCRYPT);
-                        $stmt = $db->prepare('INSERT INTO users (email, password_hash, role) VALUES (:email, :hash, "student")');
-                        $stmt->execute(['email' => $student_email, 'hash' => $temp_password]);
-                        $new_user_id = $db->lastInsertId();
-
-                        $stmt = $db->prepare('INSERT INTO students (user_id, full_name) VALUES (:user_id, :full_name)');
-                        $stmt->execute(['user_id' => $new_user_id, 'full_name' => $student_name]);
-                        $pending_user_id = $new_user_id;
-                    } else {
-                        $pending_user_id = $student_row['user_id'];
-                    }
-                    $db->commit(); // persist the pending account; issuance stops here
-                    $activate_url = BASE_URL . '/activate_account.php?user_id=' . $pending_user_id;
-                    $otp_result = create_otp($db, $pending_user_id, 'activation', $activate_url);
-                    if ($otp_result === 'sent') {
-                        throw new ActivationGate('This student has not activated their account yet. An activation code was sent to ' . mask_email($student_email) . ' — issue the certificate after the student activates.');
-                    } elseif ($otp_result === 'cooldown') {
-                        throw new ActivationGate('This student has not activated their account yet. An activation code was sent recently — ask the student to check their email, then issue the certificate after activation.');
-                    } elseif ($otp_result === 'limit') {
-                        throw new ActivationGate('This student has not activated their account yet, and too many activation codes were requested. Please try again later, after the student activates.');
-                    } elseif ($otp_result === 'smtp_not_configured') {
-                        throw new ActivationGate('This student has not activated their account yet. ' . smtp_not_configured_message());
-                    } else {
-                        throw new ActivationGate("This student has not activated their account yet, and we couldn't send the activation email right now. Please try again in a minute.");
-                    }
+                // Shared pipeline (src/services/IssuanceService.php) — the
+                // same code bulk issuance uses.
+                $student = IssuanceService::resolveStudent($db, $student_email, $student_name);
+                if ($student['status'] !== 'ok') {
+                    throw new ActivationGate($student['message']);
                 }
-                
-                // 2. Certificate ID: custom when given, else auto CV-YYYY-NNNNNN
-                if ($custom_id !== '') {
-                    // Re-checked here (validated up front): closes the gap
-                    // between validation and INSERT; the UNIQUE index plus
-                    // the PDOException handler below are the final backstop.
-                    if (($e = v_certificate_id_flexible($custom_id, $db)) !== true) {
-                        throw new Exception($e);
-                    }
-                    $cert_id = $custom_id;
-                } else {
-                    $year = date('Y');
-                    $stmt = $db->prepare("SELECT certificate_id FROM certificates WHERE certificate_id LIKE :prefix ORDER BY id DESC LIMIT 1 FOR UPDATE");
-                    $stmt->execute(['prefix' => "CV-$year-%"]);
-                    $lastId = $stmt->fetchColumn();
-                    if ($lastId) {
-                        $parts = explode('-', $lastId);
-                        $num = (int)end($parts) + 1;
-                    } else {
-                        $num = 1;
-                    }
-                    $cert_id = sprintf("CV-%s-%06d", $year, $num);
-                }
-                
-                // 3. Save File (unguessable name, validated lowercase ext, outside web root)
                 $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
-                $filename = sanitize_filename($cert_id) . '_' . bin2hex(random_bytes(16)) . '.' . $ext;
-                $upload_dir = __DIR__ . '/../private_data/uploads/';
-                if (!is_dir($upload_dir) && !mkdir($upload_dir, 0755, true) && !is_dir($upload_dir)) {
-                    throw new Exception('Upload directory is not available. Please contact the administrator.');
-                }
-                if (!is_writable($upload_dir)) {
-                    throw new Exception('Upload directory is not writable. Please contact the administrator.');
-                }
-                $destination = $upload_dir . $filename;
-                
-                if (!move_uploaded_file($file['tmp_name'], $destination)) {
-                    throw new Exception('Failed to move uploaded file.');
-                }
-                
-                // 4. Generate QR Token and QR Code
-                require_once __DIR__ . '/../src/services/QRService.php';
-                require_once __DIR__ . '/../src/services/CryptoService.php';
-                if (defined('QR_CACHE_DIR') && (!is_dir(QR_CACHE_DIR) || !is_writable(QR_CACHE_DIR))) {
-                    throw new Exception('QR cache directory is not writable. Please contact the administrator.');
-                }
-                $qr_token = rtrim(strtr(base64_encode(random_bytes(32)), '+/', '-_'), '=');
-                $verify_url = BASE_URL . "/verify.php?token=" . $qr_token;
-                $qr_dir = __DIR__ . "/qrcodes/";
-                if (!is_dir($qr_dir) && !mkdir($qr_dir, 0755, true) && !is_dir($qr_dir)) {
-                    throw new Exception('QR directory is not available. Please contact the administrator.');
-                }
-                if (!is_writable($qr_dir)) {
-                    throw new Exception('QR directory is not writable. Please contact the administrator.');
-                }
-                $qr_path = $qr_dir . $qr_token . ".png";
-                QRService::generateQRCode($verify_url, $qr_path);
-                
-                // 5. Compute SHA-256 hash of canonical certificate data
-                $certData = [
-                    'certificate_id' => $cert_id,
-                    'institution_id' => $institution_id,
-                    'student_id' => $student_id,
+                $issued = IssuanceService::issue($db, (int)$institution_id, (int)$student['student_id'], [
                     'title' => $title,
                     'issue_date' => $issue_date,
-                    'expiry_date' => $expiry_date ?: null,
-                ];
-                $sha256_hash = CryptoService::computeCertificateHash($certData, $destination);
-                
-                // 6. Sign the hash with institution's RSA private key
-                $instStmt = $db->prepare('SELECT key_id, public_key, encrypted_private_key FROM institution_keys WHERE institution_id = :id AND status="active" ORDER BY key_id DESC LIMIT 1 FOR UPDATE');
-                $instStmt->execute(['id' => $institution_id]);
-                $instKeys = $instStmt->fetch();
-                if (!$instKeys) throw new Exception('This institution has no active signing key. Please contact the platform administrator.');
-                try {
-                    $privateKey = CryptoService::decryptPrivateKey($instKeys['encrypted_private_key'] ?? '');
-                    if (!empty($instKeys['public_key']) && !CryptoService::verifyKeyPair($privateKey, $instKeys['public_key'])) {
-                        throw new Exception('Stored private key does not match the stored public key.');
+                    'expiry_date' => $expiry_date,
+                    'custom_id' => $custom_id,
+                ], $ext, function ($certId, $qrToken, $verifyUrl, $qrPath, $destination) use ($file) {
+                    if (!move_uploaded_file($file['tmp_name'], $destination)) {
+                        throw new Exception('Failed to move uploaded file.');
                     }
-                    while (openssl_error_string()) {}
-                    $digital_signature = CryptoService::signCertificateHash($sha256_hash, $privateKey);
-                } catch (Exception $keyException) {
-                    error_log('[CertiVault] Institution ' . (int)$institution_id . ' signing key error: ' . $keyException->getMessage());
-                    throw new Exception('This institution\'s signing key is not available. Please contact the platform administrator.');
-                }
-                
-                // 7. Insert Certificate with hash, signature, and QR token
-                $stmt = $db->prepare('INSERT INTO certificates (certificate_id, institution_id, key_id, student_id, title, issue_date, expiry_date, file_path, status, version, qr_token, sha256_hash, file_sha256, digital_signature) VALUES (:cid, :iid, :key_id, :sid, :title, :issue, :expiry, :path, "active", 1, :qr_token, :hash, :fhash, :sig)');
-                $stmt->execute([
-                    'cid' => $cert_id,
-                    'iid' => $institution_id,
-                    'key_id' => (int)$instKeys['key_id'],
-                    'sid' => $student_id,
-                    'title' => $title,
-                    'issue' => $issue_date,
-                    'expiry' => $expiry_date ?: null,
-                    'path' => $filename,
-                    'qr_token' => $qr_token,
-                    'hash' => $sha256_hash, 'fhash' => hash_file('sha256', $destination),
-                    'sig' => $digital_signature
-                ]);
-                TransparencyLogService::append($db, $cert_id, 'ISSUE');
-                
-                $db->commit();
-                $success = "Certificate successfully issued! Certificate ID: " . $cert_id;
-                $success_qr_token = $qr_token;
+                });
+                $success = 'Certificate successfully issued! Certificate ID: ' . $issued['certificate_id'];
+                $success_qr_token = $issued['qr_token'];
             } catch (ActivationGate $e) {
-                // Student gate: account already committed, nothing to roll
-                // back and no files created yet — just report.
+                // Student gate: pending account committed, nothing issued.
                 $error = $e->getMessage();
             } catch (PDOException $e) {
-                if ($db->inTransaction()) { $db->rollBack(); }
                 // Race backstop: the UNIQUE indexes reject a duplicate ID
                 // that slipped past validation (SQLSTATE 23000).
                 $error = ($e->getCode() === '23000')
                     ? 'That certificate ID is already in use. Please choose another.'
-                    : 'Error issuing certificate: ' . $e->getMessage();
+                    : 'Error issuing certificate. Please try again.';
                 error_log('[CertiVault] Issue certificate DB error: ' . $e->getMessage());
-                if (!empty($destination) && is_file($destination)) { @unlink($destination); }
-                if (!empty($qr_path) && is_file($qr_path)) { @unlink($qr_path); }
             } catch (Exception $e) {
-                if ($db->inTransaction()) { $db->rollBack(); }
                 $error = 'Error issuing certificate: ' . $e->getMessage();
-                // Remove orphaned files left behind by a failed issue attempt
-                if (!empty($destination) && is_file($destination)) { @unlink($destination); }
-                if (!empty($qr_path) && is_file($qr_path)) { @unlink($qr_path); }
             }
         }
     } // end overflow-guard else
