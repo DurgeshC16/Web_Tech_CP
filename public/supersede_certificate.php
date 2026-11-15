@@ -155,7 +155,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error)) {
                 }
                 
                 // 6. Insert new certificate
-                $stmt = $db->prepare('INSERT INTO certificates (certificate_id, institution_id, key_id, student_id, title, issue_date, expiry_date, file_path, status, version, previous_version_id, qr_token, sha256_hash, digital_signature) VALUES (:cid, :iid, :key_id, :sid, :title, :issue, :expiry, :path, "active", :ver, :prev, :qr_token, :hash, :sig)');
+                $stmt = $db->prepare('INSERT INTO certificates (certificate_id, institution_id, key_id, student_id, title, issue_date, expiry_date, file_path, status, version, previous_version_id, qr_token, sha256_hash, file_sha256, digital_signature) VALUES (:cid, :iid, :key_id, :sid, :title, :issue, :expiry, :path, "active", :ver, :prev, :qr_token, :hash, :fhash, :sig)');
                 $stmt->execute([
                     'cid' => $new_cert_id,
                     'iid' => $institution_id,
@@ -168,7 +168,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error)) {
                     'ver' => $new_version,
                     'prev' => $old_cert['id'],
                     'qr_token' => $qr_token,
-                    'hash' => $sha256_hash,
+                    'hash' => $sha256_hash, 'fhash' => hash_file('sha256', $destination),
                     'sig' => $digital_signature
                 ]);
                 $new_db_id = $db->lastInsertId();

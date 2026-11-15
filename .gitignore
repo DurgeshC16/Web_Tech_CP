@@ -52,3 +52,6 @@ tests/output/
 Thumbs.db
 desktop.ini
 ~$*
+
+# Local database backups (contain password hashes + encrypted keys)
+private_data/backups/

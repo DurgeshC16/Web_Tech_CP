@@ -117,14 +117,27 @@ class FileVerifyService
         return ['__cert' => null, '__candidates' => [], '__resolved' => null];
     }
 
-    /** Prefer an original-byte hit over a stamped-copy hit. */
+    /**
+     * Match the raw SHA-256 of an uploaded file. Prefer the original file
+     * (file_sha256, migration 013) over a QR-stamped copy (stamped_sha256).
+     * certificates.sha256_hash is deliberately NOT compared: it is the
+     * canonical digest of fields + file hash and can never equal a file hash.
+     */
     public static function findLocalByContentHash($db, string $hash): array
     {
         if (!preg_match('/^[a-f0-9]{64}$/i', $hash)) {
             return [];
         }
-        foreach (['sha256_hash', 'stamped_sha256'] as $col) {
-            $cert = self::findByHashColumn($db, $col, $hash);
+        $hash = strtolower($hash);
+        foreach (['file_sha256', 'stamped_sha256'] as $col) {
+            try {
+                $cert = self::findByHashColumn($db, $col, $hash);
+            } catch (\PDOException $e) {
+                // Column missing on a database without migration 013/009:
+                // skip this stage rather than failing the whole verify page.
+                error_log('[CertiVault] Smart Verify hash lookup skipped (' . $col . '): run the pending migrations.');
+                continue;
+            }
             if ($cert) {
                 return [$cert];
             }
@@ -142,6 +155,9 @@ class FileVerifyService
             LEFT JOIN institution_keys ik ON ik.institution_id=c.institution_id AND ik.key_id=c.key_id
             JOIN students     s ON c.student_id     = s.id
             WHERE ' . $column . ' = :hash
+            -- The same file can back several rows (e.g. superseded with an
+            -- unchanged PDF): prefer the active, most recent certificate.
+            ORDER BY (c.status = "active") DESC, c.id DESC
             LIMIT 1
         ';
         $stmt = $db->prepare($sql);

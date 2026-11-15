@@ -406,6 +406,9 @@ if (is_string($sv_qt) && !str_contains($sv_qt, "'file'")) {
 if ((int)$sv_db->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'certificates' AND COLUMN_NAME = 'stamped_sha256'")->fetchColumn() === 0) {
     $sv_db->exec("ALTER TABLE certificates ADD COLUMN stamped_sha256 CHAR(64) NULL DEFAULT NULL AFTER sha256_hash");
 }
+if ((int)$sv_db->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'certificates' AND COLUMN_NAME = 'file_sha256'")->fetchColumn() === 0) {
+    $sv_db->exec("ALTER TABLE certificates ADD COLUMN file_sha256 CHAR(64) NULL DEFAULT NULL AFTER sha256_hash"); // migration 013
+}
 
 require_once __DIR__ . '/../src/services/SmartVerifyService.php';
 require_once __DIR__ . '/../src/services/FileVerifyService.php';
@@ -475,9 +478,14 @@ try {
     file_put_contents($svTmpFile, "%PDF-1.4\nSV Smart Verify fixture $svTag\n" . str_repeat('v', 120));
     $svOrigHash = hash_file('sha256', $svTmpFile);
 
-    $sv_db->prepare('INSERT INTO certificates (certificate_id, institution_id, student_id, title, issue_date, file_path, status, sha256_hash)
-                    VALUES ("CV-2026-800001", :iid, :sid, "SV Original", "2026-01-01", "sv-fixture.pdf", "active", :hash)')
-       ->execute(['iid' => $svInstId, 'sid' => $svStudentId, 'hash' => $svOrigHash]);
+    // Mirror real issuance: sha256_hash = CANONICAL digest, file_sha256 = raw file hash.
+    $svCanonical = CryptoService::computeCertificateHash([
+        'certificate_id' => 'CV-2026-800001', 'institution_id' => $svInstId, 'student_id' => $svStudentId,
+        'title' => 'SV Original', 'issue_date' => '2026-01-01', 'expiry_date' => null,
+    ], $svTmpFile);
+    $sv_db->prepare('INSERT INTO certificates (certificate_id, institution_id, student_id, title, issue_date, file_path, status, sha256_hash, file_sha256)
+                    VALUES ("CV-2026-800001", :iid, :sid, "SV Original", "2026-01-01", "sv-fixture.pdf", "active", :canon, :hash)')
+       ->execute(['iid' => $svInstId, 'sid' => $svStudentId, 'canon' => $svCanonical, 'hash' => $svOrigHash]);
     $sv_bys = 'CV-2026-800002';
     $sv_db->prepare('INSERT INTO certificates (certificate_id, institution_id, student_id, title, issue_date, file_path, status, stamped_sha256)
                     VALUES ("SV-OTHER/2026/77", :iid, :sid, "SV Stamped", "2026-01-01", "sv-fixture2.pdf", "active", :hash)')
@@ -485,6 +493,8 @@ try {
 
     $found = FileVerifyService::findLocalByContentHash($sv_db, $svOrigHash);
     t_check('smart: byte-hash finds ORIGINAL', (count($found) === 1 && $found[0]['certificate_id'] === 'CV-2026-800001'));
+    t_check('smart: canonical digest is never treated as a file hash', FileVerifyService::findLocalByContentHash($sv_db, $svCanonical) === []);
+    t_check('smart: upper-case hex hash still matches', count(FileVerifyService::findLocalByContentHash($sv_db, strtoupper($svOrigHash))) === 1);
     t_check('smart: invalid hash format rejected', FileVerifyService::findLocalByContentHash($sv_db, 'zz; DROP TABLE x --') === []);
 
     $outcome = FileVerifyService::pipelineFromTemp($sv_db, $svTmpFile);
@@ -493,11 +503,23 @@ try {
     t_check('smart: resolved query_type is file', ($outcome['__resolved']['query_type'] ?? '') === 'file');
 
     // stamped-copy-only certainty: delete the original row's hash then retest
-    $sv_db->prepare('UPDATE certificates SET sha256_hash = NULL WHERE certificate_id = "CV-2026-800001"')->execute();
+    $sv_db->prepare('UPDATE certificates SET file_sha256 = NULL WHERE certificate_id = "CV-2026-800001"')->execute();
     $found = FileVerifyService::findLocalByContentHash($sv_db, $svOrigHash);
     t_check('smart: byte-hash falls back to STAMPED copy', (count($found) === 1 && $found[0]['certificate_id'] === 'SV-OTHER/2026/77'));
     $outcome = FileVerifyService::pipelineFromTemp($sv_db, $svTmpFile);
     t_check('smart: stamped hash conclusive too', ($outcome['__cert']['certificate_id'] ?? '') === 'SV-OTHER/2026/77');
+
+    // Same file behind two rows (superseded with an unchanged PDF): the
+    // ACTIVE certificate must win even when the superseded row is newer.
+    $svShared = hash('sha256', "shared-file-$svTag");
+    $sv_db->prepare('INSERT INTO certificates (certificate_id, institution_id, student_id, title, issue_date, file_path, status, file_sha256)
+                    VALUES ("SV-SHARED-ACTIVE", :iid, :sid, "SV Shared", "2026-01-01", "sv-shared-a.pdf", "active", :h)')
+       ->execute(['iid' => $svInstId, 'sid' => $svStudentId, 'h' => $svShared]);
+    $sv_db->prepare('INSERT INTO certificates (certificate_id, institution_id, student_id, title, issue_date, file_path, status, file_sha256)
+                    VALUES ("SV-SHARED-OLD", :iid, :sid, "SV Shared", "2026-01-01", "sv-shared-b.pdf", "superseded", :h)')
+       ->execute(['iid' => $svInstId, 'sid' => $svStudentId, 'h' => $svShared]);
+    $found = FileVerifyService::findLocalByContentHash($sv_db, $svShared);
+    t_check('smart: shared file hash prefers the active certificate', ($found[0]['certificate_id'] ?? '') === 'SV-SHARED-ACTIVE');
 
     // QR-image pipeline: render a harmless QR PNG of an unknown-ish token
     if (function_exists('imagepng')) {

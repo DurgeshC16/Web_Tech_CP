@@ -123,11 +123,25 @@ if (!$student_id) {
     $student_id = (int)$student_id;
 }
 
-// ── 3. Dummy certificate file ───────────────────────────────────────
-$dummy_file = $uploads_dir . '/demo_placeholder.pdf';
-if (!file_exists($dummy_file)) {
-    file_put_contents($dummy_file, "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\nDemo placeholder certificate for CertiVault seed data.\n");
-    echo "[+] Created dummy certificate file\n";
+// ── 3. Demo certificate files ───────────────────────────────────────
+// Each certificate gets its OWN placeholder file (its ID + title are
+// embedded), so every file has a distinct SHA-256 — exactly like real
+// certificates, and so Smart Verify's file upload resolves the right one.
+function write_demo_pdf($destination, $cert_id, $title) {
+    file_put_contents($destination,
+        "%PDF-1.4
+1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj
+2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj
+"
+        . "3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]>>endobj
+trailer<</Root 1 0 R>>
+%%EOF
+"
+        . "Demo placeholder certificate for CertiVault seed data.
+"
+        . "Certificate: $cert_id
+Title: $title
+");
 }
 
 // ── Helpers mirroring the real issuance flow ────────────────────────
@@ -151,7 +165,7 @@ function issue_cert($db, $institution_id, $student_id, $title, $issue_date, $exp
 
     $filename = $cert_id . '_' . time() . '_' . bin2hex(random_bytes(3)) . '.pdf';
     $destination = $uploads_dir . '/' . $filename;
-    copy($uploads_dir . '/demo_placeholder.pdf', $destination);
+    write_demo_pdf($destination, $cert_id, $title);
 
     $qr_token = rtrim(strtr(base64_encode(random_bytes(32)), '+/', '-_'), '=');
     $verify_url = BASE_URL . "/verify.php?token=" . $qr_token;
@@ -173,11 +187,11 @@ function issue_cert($db, $institution_id, $student_id, $title, $issue_date, $exp
     $privateKey = CryptoService::decryptPrivateKey($activeKey['encrypted_private_key'] ?? '');
     $digital_signature = CryptoService::signCertificateHash($sha256_hash, $privateKey);
 
-    $stmt = $db->prepare('INSERT INTO certificates (certificate_id, institution_id, key_id, student_id, title, issue_date, expiry_date, file_path, status, version, qr_token, sha256_hash, digital_signature) VALUES (:cid, :iid, :key_id, :sid, :title, :issue, :expiry, :path, "active", 1, :qr, :hash, :sig)');
+    $stmt = $db->prepare('INSERT INTO certificates (certificate_id, institution_id, key_id, student_id, title, issue_date, expiry_date, file_path, status, version, qr_token, sha256_hash, file_sha256, digital_signature) VALUES (:cid, :iid, :key_id, :sid, :title, :issue, :expiry, :path, "active", 1, :qr, :hash, :fhash, :sig)');
     $stmt->execute([
         'cid' => $cert_id, 'iid' => $institution_id, 'key_id'=>(int)$activeKey['key_id'], 'sid' => $student_id,
         'title' => $title, 'issue' => $issue_date, 'expiry' => $expiry_date ?: null,
-        'path' => $filename, 'qr' => $qr_token, 'hash' => $sha256_hash, 'sig' => $digital_signature,
+        'path' => $filename, 'qr' => $qr_token, 'hash' => $sha256_hash, 'fhash' => hash_file('sha256', $destination), 'sig' => $digital_signature,
     ]);
     TransparencyLogService::append($db,$cert_id,'ISSUE');
 
@@ -245,7 +259,7 @@ if (!$v2) {
     $new_version = 2;
     $filename = $new_cert_id . '_' . time() . '_' . bin2hex(random_bytes(3)) . '.pdf';
     $destination = $uploads_dir . '/' . $filename;
-    copy($uploads_dir . '/demo_placeholder.pdf', $destination);
+    write_demo_pdf($destination, $new_cert_id, $title);
 
     $qr_token = rtrim(strtr(base64_encode(random_bytes(32)), '+/', '-_'), '=');
     $verify_url = BASE_URL . "/verify.php?token=" . $qr_token;
@@ -267,12 +281,12 @@ if (!$v2) {
     $privateKey = CryptoService::decryptPrivateKey($activeKey['encrypted_private_key'] ?? '');
     $digital_signature = CryptoService::signCertificateHash($sha256_hash, $privateKey);
 
-    $stmt = $db->prepare('INSERT INTO certificates (certificate_id, institution_id, key_id, student_id, title, issue_date, expiry_date, file_path, status, version, previous_version_id, qr_token, sha256_hash, digital_signature) VALUES (:cid, :iid, :key_id, :sid, :title, :issue, NULL, :path, "active", :ver, :prev, :qr, :hash, :sig)');
+    $stmt = $db->prepare('INSERT INTO certificates (certificate_id, institution_id, key_id, student_id, title, issue_date, expiry_date, file_path, status, version, previous_version_id, qr_token, sha256_hash, file_sha256, digital_signature) VALUES (:cid, :iid, :key_id, :sid, :title, :issue, NULL, :path, "active", :ver, :prev, :qr, :hash, :fhash, :sig)');
     $stmt->execute([
         'cid' => $new_cert_id, 'iid' => $institution_id, 'key_id'=>(int)$activeKey['key_id'], 'sid' => $student_id,
         'title' => $title, 'issue' => $issue_date, 'path' => $filename,
         'ver' => $new_version, 'prev' => $v1['id'], 'qr' => $qr_token,
-        'hash' => $sha256_hash, 'sig' => $digital_signature,
+        'hash' => $sha256_hash, 'fhash' => hash_file('sha256', $destination), 'sig' => $digital_signature,
     ]);
     TransparencyLogService::append($db,$new_cert_id,'ISSUE');
     $new_db_id = $db->lastInsertId();

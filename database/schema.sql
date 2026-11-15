@@ -81,6 +81,9 @@ CREATE TABLE certificates (
     revoked_at DATETIME NULL DEFAULT NULL,
     revoked_by INT NULL DEFAULT NULL,
     sha256_hash VARCHAR(64) NULL,
+    -- Raw SHA-256 of the stored file (migration 013): lets Smart Verify
+    -- match an uploaded original. sha256_hash above is the canonical digest.
+    file_sha256 CHAR(64) NULL DEFAULT NULL,
     -- Hash of the QR-stamped copy (Smart Verify, migration 009); the
     -- ORIGINAL sha256_hash above remains the source of truth.
     stamped_sha256 CHAR(64) NULL DEFAULT NULL,
@@ -101,6 +104,8 @@ CREATE UNIQUE INDEX uniq_certificates_qr_token ON certificates(qr_token);
 CREATE UNIQUE INDEX uniq_certificates_cid_norm ON certificates(certificate_id_norm);
 -- Smart Verify file-upload lookups (migration 009)
 CREATE INDEX idx_cert_stamped_hash ON certificates(stamped_sha256);
+-- Smart Verify original-file lookups (migration 013)
+CREATE INDEX idx_cert_file_sha256 ON certificates(file_sha256);
 
 CREATE TABLE verification_logs (
     id INT AUTO_INCREMENT PRIMARY KEY,

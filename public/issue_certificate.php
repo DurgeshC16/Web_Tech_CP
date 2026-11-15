@@ -213,7 +213,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 
                 // 7. Insert Certificate with hash, signature, and QR token
-                $stmt = $db->prepare('INSERT INTO certificates (certificate_id, institution_id, key_id, student_id, title, issue_date, expiry_date, file_path, status, version, qr_token, sha256_hash, digital_signature) VALUES (:cid, :iid, :key_id, :sid, :title, :issue, :expiry, :path, "active", 1, :qr_token, :hash, :sig)');
+                $stmt = $db->prepare('INSERT INTO certificates (certificate_id, institution_id, key_id, student_id, title, issue_date, expiry_date, file_path, status, version, qr_token, sha256_hash, file_sha256, digital_signature) VALUES (:cid, :iid, :key_id, :sid, :title, :issue, :expiry, :path, "active", 1, :qr_token, :hash, :fhash, :sig)');
                 $stmt->execute([
                     'cid' => $cert_id,
                     'iid' => $institution_id,
@@ -224,7 +224,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'expiry' => $expiry_date ?: null,
                     'path' => $filename,
                     'qr_token' => $qr_token,
-                    'hash' => $sha256_hash,
+                    'hash' => $sha256_hash, 'fhash' => hash_file('sha256', $destination),
                     'sig' => $digital_signature
                 ]);
                 TransparencyLogService::append($db, $cert_id, 'ISSUE');
