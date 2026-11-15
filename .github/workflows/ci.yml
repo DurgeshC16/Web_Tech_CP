@@ -57,7 +57,15 @@ jobs:
           echo "Linted $(wc -l < /tmp/lint.txt) files."
 
       - name: Run the CLI test suite
-        run: php tests/run_all.php
+        run: |
+          set -o pipefail
+          php tests/run_all.php 2>&1 | tee /tmp/suite.txt
+
+      - name: Summarise failures as an annotation
+        if: failure()
+        run: |
+          msg=$( { grep -E '^(FAIL|SKIP|PHP (Fatal|Parse|Warning)|Fatal|===== |--- )' /tmp/suite.txt || true;                    echo '--- php_errors.log (tail) ---'; tail -n 25 private_data/php_errors.log 2>/dev/null || true; }                  | head -n 120 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+          echo "::error title=CLI suite failures::${msg}"
 
   browser:
     name: Browser suite (headless Chrome)
@@ -95,7 +103,17 @@ jobs:
         run: php tests/support/ui_db.php reset-limiter
 
       - name: Smart Verify in the browser
-        run: node tests/test_verify_ui.mjs
+        run: |
+          set -o pipefail
+          node tests/test_verify_ui.mjs 2>&1 | tee /tmp/ui.txt
 
       - name: Whole-app CSP audit
-        run: node tests/test_pages_browser.mjs
+        run: |
+          set -o pipefail
+          node tests/test_pages_browser.mjs 2>&1 | tee /tmp/pages.txt
+
+      - name: Summarise failures as an annotation
+        if: failure()
+        run: |
+          msg=$( { cat /tmp/ui.txt /tmp/pages.txt 2>/dev/null | grep -E '^(FAIL|SKIP)|summary|fatal' || true; }                  | head -n 120 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+          echo "::error title=Browser suite failures::${msg}"
