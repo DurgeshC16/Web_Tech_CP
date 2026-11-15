@@ -30,6 +30,15 @@ class Database {
                 // Non-fatal: keep the server default if the offset is
                 // rejected, so the app still connects.
             }
+            // Strict SQL mode for this session, as on a default MySQL 5.7+/
+            // MariaDB 10.2.4+ server. XAMPP ships a non-strict my.ini, which
+            // silently truncates or coerces invalid values; strict mode makes
+            // local behaviour match production (invalid data -> error).
+            try {
+                $this->pdo->exec("SET SESSION sql_mode = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ZERO_IN_DATE,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION'");
+            } catch (\PDOException $e) {
+                // Non-fatal: keep the server default.
+            }
         } catch (\PDOException $e) {
             throw new \PDOException($e->getMessage(), (int)$e->getCode());
         }

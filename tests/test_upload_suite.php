@@ -571,7 +571,7 @@ $ts_db->beginTransaction();
 try {
     $tsTag = (string)time();
     $ts_db->prepare('INSERT INTO users (email, password_hash, role, is_verified)
-                     VALUES (:e, "x", "institution", 1)')->execute(['e' => "ts_$tsTag@example.test"]);
+                     VALUES (:e, "x", "admin", 1)')->execute(['e' => "ts_$tsTag@example.test"]);
     $tsUser = (int)$ts_db->lastInsertId();
     $ts_db->prepare('INSERT INTO students (user_id, full_name) VALUES (:u, "Trust Student")')->execute(['u' => $tsUser]);
     $tsSid = (int)$ts_db->lastInsertId();
@@ -718,7 +718,7 @@ $api_file = null;
 try {
     $apiTag = (string)time();
     $api_db->prepare('INSERT INTO users (email, password_hash, role, is_verified)
-                      VALUES (:e, "x", "institution", 1)')->execute(['e' => "api_$apiTag@example.test"]);
+                      VALUES (:e, "x", "admin", 1)')->execute(['e' => "api_$apiTag@example.test"]);
     $apiUid = (int)$api_db->lastInsertId();
     $api_db->prepare('INSERT INTO students (user_id, full_name) VALUES (:u, "API Student")')->execute(['u' => $apiUid]);
     $apiSid = (int)$api_db->lastInsertId();
@@ -803,7 +803,7 @@ $st_db->beginTransaction();
 try {
     $stTag = (string)time();
     $st_db->prepare('INSERT INTO users (email, password_hash, role, is_verified)
-                     VALUES (:e, "x", "institution", 1)')->execute(['e' => "sts_$stTag@example.test"]);
+                     VALUES (:e, "x", "admin", 1)')->execute(['e' => "sts_$stTag@example.test"]);
     $stUid = (int)$st_db->lastInsertId();
     $st_db->prepare('INSERT INTO students (user_id, full_name) VALUES (:u, "Stats Student")')->execute(['u' => $stUid]);
     $stSid = (int)$st_db->lastInsertId();

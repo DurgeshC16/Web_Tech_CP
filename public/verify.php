@@ -80,6 +80,7 @@ $cert         = null;
 $verdict      = null;   // VALID | TAMPERED | EXPIRED | REVOKED | SUPERSEDED | INVALID
 $detail       = null;   // human-readable sub-reason
 $superseded_by = null;
+$trusted       = null;   // trust score (computed for local verdicts only)
 $external_ref  = null;  // informational card data for external references
 $sv_tips       = false; // show the NOT FOUND tips paragraph
 $sv_old_upload = false; // legacy qr_image upload path

@@ -85,6 +85,9 @@ function test_db() {
         // Non-fatal, as in Database.php.
     }
 
+    // Same strict SQL mode as Database.php / production servers / CI.
+    $pdo->exec("SET SESSION sql_mode = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ZERO_IN_DATE,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION'");
+
     // Import the canonical schema when the database is empty.
     $n = (int)$pdo->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = " . $pdo->quote($db))->fetchColumn();
     if ($n === 0) {
