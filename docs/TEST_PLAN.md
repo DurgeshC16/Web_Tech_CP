@@ -32,66 +32,25 @@ Each case lists steps + expected result, and whether it has been verified by cod
 21. **SUPERSEDED** — superseded cert → SUPERSEDED + link to current. *manual*
 22. **INVALID** — unknown ID, or malformed ID/token → INVALID, no DB hit for malformed. *verified*
 23. **Either/or inputs** — Smart Verify accepts an ID **or** a file: submitting with BOTH fields empty shows one shared message ("Enter a certificate ID or upload a certificate file.") under the form, no red per-field errors, and the button stays enabled; entering an ID clears the message; the file field keeps its specific error for other cases. With both provided, the file/hash pipeline resolves first and the ID is the fallback (note "Both provided: checking the file first, then the ID."). *verified* (CLI + live)
-24. **Share-link expiry** — use an old share token → "This share link has expired." *manual*
+25. **Share-link expiry** — use an old share token → "This share link has expired." *manual*
 
 ## Responsive check (four widths, touch emulation)
-24. **360 / 768 / 1024 / 1280** on index, login, verify, register_student, register_institution, forgot_password, share, student_dashboard, admin_dashboard, view_certificate_admin, view_certificate_student, audit_logs, super_admin, change_password, issue_certificate, revoke_certificate, supersede_certificate — headless Chromium with touch on, asserting per page-width: no document scroll past the viewport, no element clipped outside it, every button-like control ≥44px tall, every table inside `.table-wrap` (scrolls internally or stacked with `data-labels` ≤639px), `.form-row` single-column <768px. *verified 76/76 (plus a client-side `range` validator fix this run exposed: `(v + 0)` concatenated strings so every CAPTCHA failed — now `Number(v)`).* Text links inside sentences keep inline sizing (WCAG inline exception).
+26. **360 / 768 / 1024 / 1280** on index, login, verify, register_student, register_institution, forgot_password, share, student_dashboard, admin_dashboard, view_certificate_admin, view_certificate_student, audit_logs, super_admin, change_password, issue_certificate, revoke_certificate, supersede_certificate — headless Chromium with touch on, asserting per page-width: no document scroll past the viewport, no element clipped outside it, every button-like control ≥44px tall, every table inside `.table-wrap` (scrolls internally or stacked with `data-labels` ≤639px), `.form-row` single-column <768px. *verified 76/76 (plus a client-side `range` validator fix this run exposed: `(v + 0)` concatenated strings so every CAPTCHA failed — now `Number(v)`).* Text links inside sentences keep inline sizing (WCAG inline exception).
 
 Legend: *verified* = reproduced against the running app during development; *verified by code reading* = traced in source; *manual* = execute in browser.
 
-## Automated CLI tests (`tests/`, no framework)
-Prerequisites: MariaDB/MySQL running (`CV_DB_HOST`/`CV_DB_USER`/`CV_DB_PASS`
-env or the localhost/root defaults). On Windows XAMPP the suite relaunches
-itself with `OPENSSL_CONF` set so RSA key generation works.
+## Automated CLI tests
+The automated suites (314 checks, 8 suites) and how to run them are
+documented in [07_TESTING.md](07_TESTING.md):
 
 ```
-php tests/run_all.php            # all four suites + summary (exit 1 on failure)
-php tests/test_validators.php    # single suite (each file runs standalone)
+php tests/run_all.php
 ```
 
-- `test_validators.php` (34): `v_required`, `v_range`, `v_compare`,
-  `v_email`, `v_number`, `v_certificate_id`, `v_person_name`,
-  `v_password_strong`, `v_date_range` — accept + reject cases each.
-- `test_crypto.php` (8): RSA keygen, GCM encrypt/decrypt round trip,
-  sign + verify, verify failure after a 1-byte hash change and with a
-  wrong public key.
-- `test_upload_suite.php` (192 checks, single durable file after the
-  sandbox-AV incident retired `test_validators.php`) now hosts:
-  - the original `v_upload()` matrix (12);
-  - the validator + flexible-ID lookup + verification-cascade suites
-    (moved from the retired files);
-  - external-source adapter coverage (35): SSRF-guard matrix, allow-list,
-    OpenBadges schema validation, + `ExternalSourceService::lookup`
-    against the demo sqlite;
-  - Smart Verify (Phase 1, 34): text classification, issuer-link
-    allow-list map, other-link SSRF guards, byte-hash/stamped-hash file
-    pipeline over runtime fixtures (temp dir only), unknown QR token
-    stays unresolved, external candidate can never carry a cert row;
-  - trust score (Phase 2, 15): exact scores for seeded
-    VALID/EXPIRED/REVOKED/SUPERSEDED/TAMPERED rows (100/90/90/90/40 =
-    critical cap), replay verdict == engine verdict, 5 checks present,
-    gauge arc math (endpoints exact, monotonic), dompdf PDF build
-    (%PDF magic, no key material);
-  - status API (Phase 3, 12): 200 happy path (public fields only),
-    NOT_FOUND for unknown/empty/malformed, audit marker rows, per-IP
-    429 rate limit, other IP unaffected;
-  - student stats (Phase 4, 5): zero-log defaults, per-cert counts
-    (total + VALID hits), totals parity;
-  - either/or input planning (new, 16): planner message copy, neither →
-    blocked, ID/link only → `id`, file/hash only → `file`, both →
-    `file_first` + `Both provided: checking the file first, then the
-    ID.` note, `FileVerifyService::fileProvided()` guards (null /
-    NO_FILE / non-array), and injected `run()` error arrays proving
-    oversize/partial uploads surface their SPECIFIC message — never the
-    generic "required".
-
-  > NOTE (Windows AV): on machines with aggressive behavioral shields, this
-  > file has been observed quarantined right after it runs (it writes temp
-  > fixtures into `private_data/uploads/`). The committed copy is always
-  > intact — restore with `git checkout -- <file>` (retry
-  > once if the shield still holds the path; if one filename stays blocked,
-  > materialize the blob under a fresh name) and consider an AV exclusion
-  > for the repo folder.
+> NOTE (Windows AV): on machines with aggressive behavioural shields, a
+> test file has been observed quarantined right after it runs (it writes
+> temp fixtures into `private_data/uploads/`). Restore it with
+> `git checkout -- <file>` and consider an AV exclusion for the repo folder.
 
 ## Flexible certificate IDs (run `database/migrations/007_flexible_certificate_id.sql` first)
 - [ ] `cv-2026-9` / `CV20260009` / `CV 2026 000009` all resolve to the same auto cert. *verified e2e*
@@ -99,7 +58,7 @@ php tests/test_validators.php    # single suite (each file runs standalone)
 - [ ] Duplicate custom ID (exact and case-variant) → "already in use", zero new rows. *verified e2e*
 - [ ] Custom `CV-2026-123456` → reserved-namespace rejection. *verified e2e*
 - [ ] Emoji / SQL-injection IDs → INVALID malformed, no DB hit. *verified e2e*
-- [ ] Unit: `normalize_certificate_id` (8) + `v_certificate_id_flexible` format-only (6) + `sanitize_filename` (3) in `tests/test_validators.php`. *verified (51/51)*
+- [ ] Unit: `normalize_certificate_id` (8) + `v_certificate_id_flexible` format-only (6) + `sanitize_filename` (3) in `tests/test_upload_suite.php`. *verified*
 
 ## Live upload matrix (multipart, admin session)
 - [ ] Small PDF (~300 B, `application/pdf`) → issued. *verified e2e*

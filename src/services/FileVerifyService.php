@@ -297,12 +297,9 @@ class FileVerifyService
         if (class_exists('\\Smalot\\PdfParser\\Parser')) {
             return true;
         }
-        // Only allow loading from our own vendor dir.
-        $vendor = dirname(__DIR__, 2) . '/vendor/autoload.php';
-        if (is_file($vendor)) {
-            require_once $vendor;
-        }
-        return class_exists('\\Smalot\\PdfParser\\Parser');
+        // Only allow loading from our own vendor dir (safe if incomplete).
+        require_once dirname(__DIR__) . '/utils/composer_autoload.php';
+        return cv_composer_autoload() && class_exists('\\Smalot\\PdfParser\\Parser');
     }
 
     private static function findBinary(array $names): ?string

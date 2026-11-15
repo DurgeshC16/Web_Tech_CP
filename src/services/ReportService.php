@@ -8,15 +8,14 @@
 // ─────────────────────────────────────────────────────────────────────
 
 require_once __DIR__ . '/../utils/phpqrcode/phpqrcode.php';
+require_once __DIR__ . '/../utils/composer_autoload.php';
 
 class ReportService
 {
     public static function dompdfAvailable(): bool
     {
         return class_exists('\\Dompdf\\Dompdf')
-            || (is_file(dirname(__DIR__, 2) . '/vendor/autoload.php')
-                && (require_once dirname(__DIR__, 2) . '/vendor/autoload.php') !== false
-                && class_exists('\\Dompdf\\Dompdf'));
+            || (cv_composer_autoload() && class_exists('\\Dompdf\\Dompdf'));
     }
 
     /**

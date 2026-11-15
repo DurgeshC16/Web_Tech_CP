@@ -20,6 +20,15 @@ $files = [
     'test_crypto.php',
     'test_attested_credentials.php',
     'test_transparency_log.php',
+    'test_rate_limit.php',
+    'test_timezone.php',
+    'test_workflow.php',
+    'test_upload_http.php',   // spawns `php -S` on a local port
+    // Not yet included — they test code that is still parked in
+    // `git stash@{0}` (see docs/09_STATUS_AND_ROADMAP.md):
+    //   test_otp.php, test_config_guard.php  → MAIL_TRANSPORT=file spool
+    //   test_verify_http.php                 → tabbed scanner verify UI
+    // test_smtp_live.php needs a real SMTP account; run it by hand.
 ];
 
 $failed = [];

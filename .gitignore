@@ -1,18 +1,54 @@
-# Runtime-generated content — keep directories via .gitkeep, ignore the files they hold
+# ─────────────────────────────────────────────────────────────────────
+# CertiVault .gitignore
+# Rule of thumb: secrets, runtime data and installable dependencies never
+# go to GitHub. Empty runtime directories are kept via .gitkeep files.
+# ─────────────────────────────────────────────────────────────────────
+
+# ── Secrets / local configuration ───────────────────────────────────
+src/config/config.local.php
+.env
+.env.*
+*.pem
+*.key
+.rnd
+
+# ── Private documents (draft research paper with author contact details;
+#    kept local until it is published) ───────────────────────────────
+docs/private/
+
+# ── Composer dependencies (install with `composer install`) ─────────
+/vendor/
+
+# ── Runtime data (user uploads, logs, caches, keys, mail) ───────────
+private_data/uploads/*
+!private_data/uploads/.gitkeep
+private_data/mail/*
+!private_data/mail/.gitkeep
+private_data/tlog/*
+!private_data/tlog/.gitkeep
+private_data/external_source/*
+private_data/external_credentials/*
+private_data/cache/external/*
+private_data/php_errors.log
+private_data/dev_mail.log
+*.log
+
+# ── Generated public artifacts ──────────────────────────────────────
 public/qrcodes/*
 !public/qrcodes/.gitkeep
 public/checkpoints/latest.json
 public/checkpoints/latest.*.tmp
-private_data/uploads/*
-!private_data/uploads/.gitkeep
-private_data/php_errors.log
-private_data/external_source/*
-private_data/cache/external/*
-private_data/tlog/*
-!private_data/tlog/.gitkeep
-private_data/external_credentials/*
-private_data/mail/*
-!private_data/mail/.gitkeep
-.rnd
-src/config/config.local.php
-private_data/dev_mail.log
+
+# ── Test / tooling output ───────────────────────────────────────────
+node_modules/
+tests/output/
+*.tmp
+
+# ── Editor / OS noise ───────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+~$*

@@ -17,6 +17,10 @@ define('SMTP_FROM_EMAIL', 'your-email@gmail.com');
 define('SMTP_FROM_NAME', 'CertiVault');
 
 // ── LOCAL DEVELOPMENT mail transport (no SMTP account needed) ───────
+// NOTE: NOT ACTIVE IN THIS BUILD YET — the implementation is still parked
+// in git stash@{0} (see docs/09_STATUS_AND_ROADMAP.md, item 2). Until it
+// is restored use define('CV_DEV_SHOW_OTP', true); instead, which appends
+// every OTP to private_data/dev_mail.log.
 // Uncomment to stop sending real email and instead write each message
 // (including the OTP) to private_data/mail/*.eml so you can read the
 // code locally. This is refused when CV_ENV=production, so it can never

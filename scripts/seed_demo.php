@@ -11,6 +11,13 @@
 // Usage:  php scripts/seed_demo.php
 // -------------------------------------------------------------------------
 
+if (php_sapi_name() !== 'cli') {
+    // Seeding writes users/certificates with known demo passwords — never
+    // allow it to be triggered over HTTP.
+    http_response_code(403);
+    exit('This script must be run from the command line.');
+}
+
 if (!getenv('OPENSSL_CONF') && file_exists('C:\\xampp\\php\\extras\\openssl\\openssl.cnf')) {
     // CLI on Windows often lacks the OpenSSL config path that Apache has;
     // without it openssl_pkey_new() (CryptoService key generation) fails.

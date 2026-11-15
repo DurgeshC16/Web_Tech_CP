@@ -18,10 +18,11 @@ if (file_exists($local_config)) {
 }
 
 // ── Database ────────────────────────────────────────────────────────
-define('DB_HOST', getenv('CV_DB_HOST') ?: 'localhost');
-define('DB_USER', getenv('CV_DB_USER') ?: 'root');
-define('DB_PASS', getenv('CV_DB_PASS') ?: '');
-define('DB_NAME', getenv('CV_DB_NAME') ?: 'certivault');
+// (defined() guards let config.local.php override these for local dev.)
+defined('DB_HOST') || define('DB_HOST', getenv('CV_DB_HOST') ?: 'localhost');
+defined('DB_USER') || define('DB_USER', getenv('CV_DB_USER') ?: 'root');
+defined('DB_PASS') || define('DB_PASS', getenv('CV_DB_PASS') ?: '');
+defined('DB_NAME') || define('DB_NAME', getenv('CV_DB_NAME') ?: 'certivault');
 
 // ── Application ─────────────────────────────────────────────────────
 // BASE_URL feeds QR-code verify URLs, share links, and activation emails.
@@ -61,7 +62,7 @@ define('BASE_URL', getenv('CV_BASE_URL')
 // Server-side encryption key for RSA private keys at rest.
 // IMPORTANT: In production, use a proper KMS or at minimum a strong
 // random value stored outside the repo (e.g. in an env var).
-define('APP_ENCRYPTION_KEY', getenv('CV_ENCRYPTION_KEY') ?: 'CHANGE-ME-local-dev-only-32chars!!');
+defined('APP_ENCRYPTION_KEY') || define('APP_ENCRYPTION_KEY', getenv('CV_ENCRYPTION_KEY') ?: 'CHANGE-ME-local-dev-only-32chars!!');
 
 // HMAC pepper for OTP codes at rest. Separate from APP_ENCRYPTION_KEY so
 // compromise of one secret does not expose the other.

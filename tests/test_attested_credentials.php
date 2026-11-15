@@ -45,6 +45,16 @@ foreach ([
     [$badUrl] = AttestedCredentialService::validateIssuerUrl($urlDb, 'coursera', $unsafeUrl);
     t_check('external credential: rejected untrusted URL ' . parse_url($unsafeUrl, PHP_URL_HOST), $badUrl === null);
 }
+// Regression: the control-char/backslash regex used to fail to compile
+// (preg_match returned false), so these URLs slipped through.
+foreach ([
+    'space'     => 'https://www.coursera.org/verify/ABC 123',
+    'backslash' => 'https://www.coursera.org/verify/ABC\\123',
+    'tab'       => "https://www.coursera.org/verify/ABC\t123",
+] as $why => $malformedUrl) {
+    [$badUrl] = AttestedCredentialService::validateIssuerUrl($urlDb, 'coursera', $malformedUrl);
+    t_check("external credential: rejected malformed URL ($why)", $badUrl === null);
+}
 t_check('external credential: self declaration never VALID',
     AttestedCredentialService::verdict(null, ['status'=>'SELF_DECLARED']) === 'SELF_DECLARED');
 t_check('external credential: withdrawn never VALID',

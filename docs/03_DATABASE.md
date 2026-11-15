@@ -1,0 +1,94 @@
+# 03 — Database
+
+Database name: **`certivault`** (MySQL 8 / MariaDB 10.4+, InnoDB).
+`database/schema.sql` always contains the **full current schema**; the files
+in `database/migrations/` upgrade an older existing database step by step.
+
+## 1. Entity overview
+
+```
+users ──1:1── institutions ──1:N── institution_keys (versioned RSA keys)
+  │                │
+  │                └──1:N── certificates ──N:1── students ──1:1── users
+  │                             │  ▲ previous_version_id / superseded_by_id (self)
+  ├──1:N── otp_codes            │
+  ├──1:N── remember_tokens      └── (by certificate_id) verification_logs, tlog_entries
+  └── login_attempts (by email+ip)
+
+students ──1:N── external_credentials ──N:1── institutions (attesting)
+external_sources (managed registry) · tlog_checkpoints (signed Merkle roots)
+```
+
+## 2. Tables
+
+### Accounts & authentication
+
+| Table | Purpose | Key columns |
+|-------|---------|-------------|
+| `users` | Every account | `email` (unique), `password_hash` (bcrypt), `role` ∈ {super_admin, admin, student}, `is_verified`, `failed_login_attempts`, `locked_until` |
+| `students` | Student profile | `user_id` → users, `full_name`, `enrollment_number` |
+| `institutions` | Institution profile | `user_id` → users, `name`, `status` ∈ {pending, approved, rejected}, `rejection_reason` |
+| `otp_codes` | Email one-time codes | `otp_code` (HMAC-SHA-256 hash, never plaintext), `purpose` ∈ {activation, password_reset, password_change}, `expires_at`, `used`, `attempts` |
+| `remember_tokens` | "Remember me" logins | `selector` (PK), `token_hash` = SHA-256(validator), `expires_at` |
+| `login_attempts` | Failed-login rate limiting | `email`, `ip`, `attempted_at` |
+
+### Certificates & keys
+
+| Table | Purpose | Key columns |
+|-------|---------|-------------|
+| `institution_keys` | Versioned RSA key pairs | PK (`institution_id`, `key_id`), `public_key` (PEM), `encrypted_private_key` (`GCM1.` blob), `status` ∈ {active, retired}, `valid_from`, `valid_to` |
+| `certificates` | Issued certificates | `certificate_id` (unique; `certificate_id_norm` generated lower-case unique), `institution_id`, `key_id`, `student_id`, `title`, `issue_date`, `expiry_date`, `file_path`, `status` ∈ {active, revoked, expired, superseded}, `version`, `previous_version_id`, `superseded_by_id`, `revocation_reason`, `revoked_at`, `revoked_by`, `sha256_hash` (canonical digest), `stamped_sha256`, `digital_signature` (base64), `qr_token` (unique) |
+| `verification_logs` | Audit trail of every lookup | `query_type` ∈ {token, certificate_id, file, qr_image, text, external_ref, external_credential}, `query_value`, `certificate_id_found`, `result` (VALID … WITHDRAWN), `detail`, `verifier_ip`, `verified_at` |
+
+### Optional features
+
+| Table | Feature | Notes |
+|-------|---------|-------|
+| `external_sources` | Managed external registry (migration 010) | `type` ∈ {open_badges, remote_db}; `config_json` stored AES-256-GCM-encrypted (`CFG1.`); disabled by default |
+| `external_credentials` | Attested third-party credentials (migration 011) | `public_token`, issuer + URL + code, optional file + SHA-256, `status` ∈ {SELF_DECLARED, ATTESTED, WITHDRAWN}, attesting institution/key, `attestation_hash`, `signature` |
+| `tlog_entries` | Append-only transparency log (migration 012) | `seq`, `certificate_id`, `event_type` ∈ {ISSUE, REVOKE, SUPERSEDE}, `leaf_hash`, `prev_root` |
+| `tlog_checkpoints` | Signed Merkle checkpoints (migration 012) | `tree_size`, `last_seq`, `root_hash`, `signature`, `public_key_fingerprint` |
+
+### Indexes worth knowing
+
+* `uniq_certificates_qr_token`, `uniq_certificates_cid_norm` — O(1) lookup by
+  token / case-insensitive ID (measured flat latency up to 100 000 rows).
+* `idx_vlogs_ip_time (verifier_ip, verified_at)` — rate-limit window query.
+* `idx_login_attempts_email_ip_time` — login lockout window.
+* `idx_cert_stamped_hash` — Smart Verify stamped-copy lookup.
+
+## 3. Seed data
+
+`schema.sql` seeds one super admin: `superadmin@certivault.com` with the
+password `password`. **Change it immediately** with
+`php scripts/set_super_admin.php` (it also lets you set a real mailbox, which
+OTP-based flows need). `php scripts/seed_demo.php` adds a demo institution,
+student and certificates (see doc 06).
+
+## 4. Migrations
+
+Use `schema.sql` for a **fresh** install — it already includes everything
+below. For an **existing** database, apply the migrations you are missing,
+in order. They are written to be idempotent (guarded `ALTER`s /
+`IF NOT EXISTS`) and safe to re-run.
+
+| # | File | Adds |
+|---|------|------|
+| 001 | `001_otp_hardening.sql` | OTP attempts counter, hashed code width, purpose enum |
+| 002 | `002_institution_rejection.sql` | `institutions.rejection_reason`, `rejected` status |
+| 003 | `003_verification_integrity_indexes.sql` | Hardening indexes, unique `qr_token` |
+| 004 | `004_revocation_audit.sql` | `revoked_at`, `revoked_by` |
+| 005 | `005_remember_me_tokens.sql` | `remember_tokens` table |
+| 006 | `006_login_rate_limit.sql` | `login_attempts` table |
+| 007 | `007_flexible_certificate_id.sql` | Wider IDs, generated `certificate_id_norm` + unique index (custom IDs) |
+| 008 | `008_external_verification_source.sql` | `EXTERNAL_*` verdicts in `verification_logs` |
+| 009 | `009_smart_verify_enum.sql` | `file`/`qr_image`/`text`/`external_ref` query types, `stamped_sha256` |
+| 010 | `010_external_sources_registry.sql` | `external_sources` table |
+| 011 | `011_attested_external_credentials.sql` | `external_credentials` table + verdicts |
+| 012 | `012_versioned_keys_transparency_log.sql` | `institution_keys` — moves `public_key` / `encrypted_private_key` out of `institutions` (existing keys become v1, certificates are **not** re-signed), `certificates.key_id`, `tlog_entries`, `tlog_checkpoints` |
+
+Run them in phpMyAdmin (Import tab, select the `certivault` database) or:
+
+```sh
+mysql -u root certivault < database/migrations/012_versioned_keys_transparency_log.sql
+```

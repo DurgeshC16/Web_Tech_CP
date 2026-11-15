@@ -50,7 +50,7 @@ class AttestedCredentialService
         }
         $host = strtolower((string)$parts['host']);
         if (!in_array($host, $issuer['hosts'], true)) return [null, 'This URL host is not exactly allow-listed for the selected issuer.'];
-        if (strlen($url) > 2048 || preg_match('/[\x00-\x20\\]/', $url)) return [null, 'Verification URL is malformed or too long.'];
+        if (strlen($url) > 2048 || preg_match('/[\x00-\x20\\\\]/', $url)) return [null, 'Verification URL is malformed or too long.'];
         return [['url' => $url, 'label' => $issuer['label'], 'host' => $host], null];
     }
 
