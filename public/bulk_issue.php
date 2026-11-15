@@ -97,7 +97,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             throw new Exception('The certificate PDF could not be saved.');
                         }
                     });
-                    $results[] = $res + ['status' => 'issued', 'certificate_id' => $issued['certificate_id'], 'verify_url' => $issued['verify_url']];
+                    $notified = IssuanceService::notifyStudent($r['student_email'], $issued['certificate_id'], $r['title'], $institution['name'], $issued['verify_url']);
+                    $results[] = $res + ['status' => 'issued', 'certificate_id' => $issued['certificate_id'], 'verify_url' => $issued['verify_url'],
+                                         'message' => $notified ? 'student emailed' : 'email not sent'];
                 } catch (PDOException $e) {
                     error_log('[CertiVault] Bulk issue DB error (row ' . $r['line'] . '): ' . $e->getMessage());
                     $results[] = $res + ['status' => 'error', 'message' => $e->getCode() === '23000' ? 'Certificate ID already in use.' : 'Database error.'];

@@ -38,6 +38,7 @@ $role = $_SESSION['role'] ?? null;
                 <a href="issue_certificate.php">Issue</a>
                 <a href="bulk_issue.php">Bulk issue</a>
                 <a href="audit_logs.php">Audit Logs</a>
+                <a href="analytics.php">Analytics</a>
                 <a href="change_password.php">Change Password</a>
                 <a href="two_factor.php">Two-factor auth</a>
             <?php elseif ($role === 'super_admin'): ?>

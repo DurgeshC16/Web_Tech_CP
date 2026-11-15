@@ -69,6 +69,28 @@ class IssuanceService
     }
 
     /**
+     * Tell the student their certificate was issued (verify link included).
+     * Best effort: a delivery failure is logged and never undoes issuance.
+     */
+    public static function notifyStudent(string $email, string $certId, string $title, string $institution, string $verifyUrl): bool
+    {
+        try {
+            return send_notification_email(
+                $email,
+                'Your certificate "' . $title . '" has been issued',
+                'Your certificate is ready',
+                $institution . ' issued you the certificate "' . $title . '" (ID ' . $certId . '). '
+                    . 'Anyone can check it at ' . $verifyUrl . ' — sign in to CertiVault to download it, share a link, '
+                    . 'or export a signed credential.',
+                'You received this email because ' . $institution . ' issued you a certificate on CertiVault.'
+            );
+        } catch (Throwable $e) {
+            error_log('[CertiVault] Issuance notification failed for ' . $certId . ': ' . get_class($e));
+            return false;
+        }
+    }
+
+    /**
      * Issue one certificate. $placeFile is called INSIDE the transaction as
      *   fn(string $certId, string $qrToken, string $verifyUrl, string $qrPath, string $destination): void
      * and must write the certificate file to $destination (move the upload,

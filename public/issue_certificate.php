@@ -102,7 +102,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         throw new Exception('Failed to move uploaded file.');
                     }
                 });
-                $success = 'Certificate successfully issued! Certificate ID: ' . $issued['certificate_id'];
+                $instName = $db->prepare('SELECT name FROM institutions WHERE id = :id');
+                $instName->execute(['id' => $institution_id]);
+                $notified = IssuanceService::notifyStudent($student_email, $issued['certificate_id'], $title, (string)$instName->fetchColumn(), $issued['verify_url']);
+                $success = 'Certificate successfully issued! Certificate ID: ' . $issued['certificate_id']
+                    . ($notified ? ' — the student has been emailed.' : ' — the notification email could not be sent.');
                 $success_qr_token = $issued['qr_token'];
             } catch (ActivationGate $e) {
                 // Student gate: pending account committed, nothing issued.

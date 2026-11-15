@@ -1133,3 +1133,77 @@ img { max-width: 100%; height: auto; }
 .recovery-codes { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 6px; padding: 0; list-style: none; }
 .recovery-codes code { display: block; padding: 6px 8px; background: var(--paper); border-radius: 4px; text-align: center; font-size: 1.05em; }
 .totp-qr { border: 8px solid #fff; border-radius: 4px; image-rendering: pixelated; }
+
+/* ── Analytics (analytics.php) — data-viz roles, validated per surface ── */
+.viz-root {
+    --viz-series: #2a78d6;          /* validated on #FFFFFF: band, chroma, contrast ≥ 3:1 */
+    --viz-series-wash: rgba(42, 120, 214, 0.10);
+    --viz-grid: #e1e0d9;
+    --viz-axis: #c3c2b7;
+    --viz-ink: var(--ink);
+    --viz-ink-2: #52514e;
+    --viz-muted: #6f6d68;
+    --viz-surface: var(--surface);
+}
+:root[data-theme="dark"] .viz-root {
+    --viz-series: #3987e5;          /* validated on the dark card surface #1A2338 */
+    --viz-series-wash: rgba(57, 135, 229, 0.12);
+    --viz-grid: #2a3550;
+    --viz-axis: #3a4766;
+    --viz-ink-2: #c3c8d4;
+    --viz-muted: #9AA5B8;
+}
+.viz-filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; }
+.viz-filter { padding: 6px 12px; border-radius: var(--radius-pill); border: 1px solid var(--border); color: var(--viz-ink-2); text-decoration: none; font-size: 0.9em; }
+.viz-filter:hover { background: var(--paper); }
+.viz-filter.is-active { color: var(--viz-ink); font-weight: 600; border-color: var(--viz-ink); }
+.viz-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.viz-tile, .viz-card { background: var(--viz-surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
+.viz-tile-label { font-size: 0.85em; color: var(--viz-ink-2); }
+.viz-tile-value { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 2rem; font-weight: 600; line-height: 1.2; color: var(--viz-ink); }
+.viz-tile-delta { font-size: 0.8em; color: var(--viz-muted); }
+.viz-card { margin-bottom: 16px; position: relative; }
+.viz-title { font-family: var(--font-sans); font-size: 1.05rem; margin: 0; color: var(--viz-ink); }
+.viz-subtitle { margin: 2px 0 10px; font-size: 0.85em; color: var(--viz-muted); }
+.viz-empty { color: var(--viz-muted); margin: 18px 0; }
+.viz-chart { position: relative; }
+.viz-chart svg { width: 100%; height: auto; display: block; overflow: visible; }
+.viz-grid { stroke: var(--viz-grid); stroke-width: 1; shape-rendering: crispEdges; }
+.viz-axis { stroke: var(--viz-axis); stroke-width: 1; shape-rendering: crispEdges; }
+.viz-tick { fill: var(--viz-muted); font-size: 11px; font-variant-numeric: tabular-nums; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+.viz-label { fill: var(--viz-ink); font-size: 12px; font-weight: 600; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+.viz-area { fill: var(--viz-series-wash); stroke: none; }
+.viz-line { fill: none; stroke: var(--viz-series); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.viz-dot { fill: var(--viz-series); stroke: var(--viz-surface); stroke-width: 2; }
+.viz-crosshair { stroke: var(--viz-axis); stroke-width: 1; pointer-events: none; }
+.viz-grid, .viz-axis, .viz-line, .viz-crosshair { vector-effect: non-scaling-stroke; }
+/* The SVG scales with its container: on narrow screens enlarge text and
+   dots in SVG units so they stay legible (~10-11 px on a 375 px phone). */
+@media (max-width: 639px) {
+    .viz-tick { font-size: 22px; }
+    .viz-label { font-size: 24px; }
+    .viz-dot { r: 8px; stroke-width: 4; }
+}
+.viz-hit { fill: transparent; cursor: crosshair; outline: none; }
+.viz-hit:focus-visible { fill: var(--viz-series-wash); }
+.viz-tooltip { position: absolute; z-index: 20; pointer-events: none; background: var(--viz-surface); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 10px; box-shadow: 0 4px 12px rgba(0,0,0,.12); font-size: 0.85em; white-space: nowrap; }
+.viz-tooltip strong { display: block; color: var(--viz-ink); font-size: 1.05em; }
+.viz-tooltip span { color: var(--viz-ink-2); }
+.viz-table { margin-top: 8px; font-size: 0.9em; }
+.viz-table summary { cursor: pointer; color: var(--viz-ink-2); }
+.data-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.viz-grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.viz-grid-2 .viz-card { margin-bottom: 0; }
+.viz-bars { list-style: none; padding: 0; margin: 0; }
+.viz-bar-row { display: grid; grid-template-columns: minmax(110px, 38%) 1fr auto; align-items: center; gap: 10px; padding: 6px 4px; border-radius: 6px; outline: none; }
+.viz-bar-row.is-hover, .viz-bar-row:focus-visible { background: var(--paper); }
+.viz-bar-name { font-size: 0.9em; color: var(--viz-ink); overflow-wrap: anywhere; }
+.viz-bar-name small { color: var(--viz-muted); }
+.viz-bar-track { display: block; height: 12px; }
+.viz-bar { display: block; height: 12px; background: var(--viz-series); border-radius: 0 4px 4px 0; min-width: 2px; }
+.viz-bar-value { font-size: 0.85em; color: var(--viz-ink-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+@media (max-width: 479px) {
+    .viz-bar-row { grid-template-columns: 1fr auto; }
+    .viz-bar-track { grid-column: 1 / -1; grid-row: 2; }
+}

@@ -775,6 +775,16 @@ try {
     $apLogStmt->execute(['ip' => $clientIp]);
     t_check('api: NOT_FOUND request audit-logged', (int)$apLogStmt->fetchColumn() >= 1);
 
+    // Regression: ordinary website lookups by the same IP must NOT count
+    // against the API allowance (the limiter used to count every log row).
+    $apWebStmt = $api_db->prepare('INSERT INTO verification_logs (query_type, query_value, certificate_id_found, result, detail, verifier_ip)
+        VALUES ("certificate_id", "web lookup", "CV-2026-820001", "VALID", "All integrity checks passed.", :ip)');
+    for ($api_i = 0; $api_i < 40; $api_i++) {
+        $apWebStmt->execute(['ip' => '192.0.2.77']);
+    }
+    [$apWeb] = StatusApiService::resolve($api_db, 'CV-2026-820001', '192.0.2.77');
+    t_check('api: 40 website lookups do not exhaust the API limit', $apWeb === 200);
+
     // Rate limit: >30 requests/IP/10-min (marker rows simulate traffic).
     $apRateStmt = $api_db->prepare('INSERT INTO verification_logs
         (query_type, query_value, certificate_id_found, result, detail, verifier_ip)

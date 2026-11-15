@@ -61,6 +61,14 @@ try {
     t_check('generated certificate verifies VALID', VerificationService::verify($db, $cert)['verdict'] === 'VALID');
     t_check('QR image written', is_file($qrDir . $issued['qr_token'] . '.png'));
     t_check('exact upload of the generated PDF resolves (byte hash)', (FileVerifyService::findLocalByContentHash($db, hash_file('sha256', $path))[0]['certificate_id'] ?? '') === $issued['certificate_id']);
+    $spoolBefore = count(glob(MAIL_FILE_DIR . DIRECTORY_SEPARATOR . '*.eml') ?: []);
+    t_check('issuance email sent', IssuanceService::notifyStudent("bulk-stu-$tag@example.com", $issued['certificate_id'], 'Données Avancées', "Bulk Uni $tag", $issued['verify_url']) === true);
+    $spool = glob(MAIL_FILE_DIR . DIRECTORY_SEPARATOR . '*.eml') ?: [];
+    usort($spool, fn($a, $b) => filemtime($a) <=> filemtime($b));
+    $eml = $spool ? (string)file_get_contents(end($spool)) : '';
+    t_check('issuance email names the certificate and its verify link (no "did not perform" footer)',
+        count($spool) === $spoolBefore + 1 && str_contains($eml, $issued['certificate_id']) && str_contains($eml, $issued['verify_url'])
+        && !str_contains($eml, 'did not perform this action'));
     $cred = CredentialService::build($db, $cert);
     t_check('credential of a generated certificate verifies offline', $cred !== null && CredentialService::verifyOffline($cred)['valid'] === true);
     if (FileVerifyService::pdfParserAvailable()) {

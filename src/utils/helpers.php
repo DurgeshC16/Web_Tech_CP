@@ -1174,7 +1174,7 @@ function verify_otp($db, $user_id, $purpose, $code) {
  * @param  string $body_text Plain-text body paragraph.
  * @return bool              True if sent, false on failure.
  */
-function send_notification_email($to_email, $subject, $heading, $body_text) {
+function send_notification_email($to_email, $subject, $heading, $body_text, $footer = 'If you did not perform this action, please contact support immediately.') {
     // SMTP not configured: record the would-be delivery in the dev log
     // BEFORE any send attempt (there is nothing to attempt without
     // credentials), so notification flows are testable offline too.
@@ -1197,10 +1197,10 @@ function send_notification_email($to_email, $subject, $heading, $body_text) {
             . '<h2 style="color:#333;margin-bottom:10px;">' . htmlspecialchars($heading) . '</h2>'
             . '<p style="color:#555;font-size:16px;">' . htmlspecialchars($body_text) . '</p>'
             . '<hr style="border:none;border-top:1px solid #eee;margin:24px 0;">'
-            . '<p style="color:#aaa;font-size:12px;">If you did not perform this action, please contact support immediately.</p>'
+            . '<p style="color:#aaa;font-size:12px;">' . htmlspecialchars($footer) . '</p>'
             . '</div></body></html>';
 
-        $mail->AltBody = $body_text . "\n\nIf you did not perform this action, please contact support immediately.";
+        $mail->AltBody = $body_text . "\n\n" . $footer;
 
         deliver_mail($mail);
         return true;

@@ -331,6 +331,48 @@ async function main() {
     ok('bulk results CSV downloadable', /certificate_id/.test(resultsCsv) && /pending_activation/.test(resultsCsv), resultsCsv.slice(0, 120));
     rmSync(csvPath, { force: true });
 
+    // ── Analytics dashboard ──────────────────────────────────────────
+    {
+      const seeded = Number((phpRun(['tests/support/ui_db.php', 'seed-analytics']).stdout || '0').trim());
+      await audit(admin, '/analytics.php?days=30');
+      const a = await ev(admin, `(() => ({
+        total: document.getElementById('kpiTotal').textContent.trim(),
+        hits: document.querySelectorAll('#dailyChart .viz-hit').length,
+        rows: document.querySelectorAll('#dailyTable tbody tr').length,
+        tableSum: [...document.querySelectorAll('#dailyTable tbody td.num')].reduce((s, td) => s + Number(td.textContent), 0),
+        verdicts: document.querySelectorAll('#verdictBars .viz-bar-row').length,
+        top: document.querySelectorAll('#topBars .viz-bar-row').length,
+        line: !!document.querySelector('#dailyChart .viz-line'),
+      }))()`);
+      // Earlier steps of this run also looked the fixture up (real lookups),
+      // so the total is the seed PLUS those; the KPI must equal the table sum.
+      const kpi = Number(a.total.replace(/,/g, ''));
+      ok('analytics: KPI total = sum of the daily table, includes every seeded check', kpi === a.tableSum && kpi >= seeded && seeded > 0, JSON.stringify(a) + ' seeded=' + seeded);
+      ok('analytics: 30 focusable day targets + a 30-row table view', a.hits === 30 && a.rows === 30 && a.line, JSON.stringify(a));
+      ok('analytics: verdict mix + top certificates rendered', a.verdicts === 4 && a.top >= 1, JSON.stringify(a));
+      const tipText = await ev(admin, `(() => { const h = document.querySelectorAll('#dailyChart .viz-hit')[29]; h.focus();
+        const t = document.querySelector('.viz-tooltip-float'); const x = document.getElementById('dailyCrosshair');
+        return { shown: !t.hidden, text: t.textContent, cross: x.getAttribute('visibility') }; })()`);
+      ok('analytics: keyboard focus shows the tooltip + crosshair', tipText.shown && /verification/.test(tipText.text) && tipText.cross === 'visible', JSON.stringify(tipText));
+      await audit(admin, '/analytics.php?days=7');
+      const seven = await ev(admin, `document.querySelectorAll('#dailyChart .viz-hit').length`);
+      ok('analytics: 7-day filter re-scopes the chart', seven === 7, String(seven));
+      if (process.env.CV_SCREENSHOT_DIR) {
+        const shot = async (name, width, theme) => {
+          await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: 1400, deviceScaleFactor: 1, mobile: width < 500 }, admin.sessionId);
+          await go(admin, `${BASE}/analytics.php?days=30`);
+          await ev(admin, `document.documentElement.setAttribute('data-theme', ${JSON.stringify(theme)})`);
+          await sleep(300);
+          const { data } = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true }, admin.sessionId);
+          writeFileSync(join(process.env.CV_SCREENSHOT_DIR, name), Buffer.from(data, 'base64'));
+        };
+        await shot('analytics-light.png', 1280, 'light');
+        await shot('analytics-dark.png', 1280, 'dark');
+        await shot('analytics-mobile.png', 375, 'light');
+        await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false }, admin.sessionId);
+      }
+    }
+
     // Back link on change_password uses data-history-back with a real href.
     await go(admin, `${BASE}/change_password.php`);
     const back = await ev(admin, `(() => { const a = document.querySelector('a[data-history-back]'); return a ? a.getAttribute('href') : null; })()`);

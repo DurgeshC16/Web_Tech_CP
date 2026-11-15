@@ -101,7 +101,10 @@ class StatusApiService
             SELECT COUNT(*) FROM verification_logs
             WHERE verifier_ip = :ip
               AND verified_at > DATE_SUB(NOW(), INTERVAL 10 MINUTE)
+              AND detail LIKE "API status request%"
         ');
+        // Only the API's OWN requests count: website lookups by the same
+        // visitor must not use up their API allowance (and vice versa).
         $stmt->execute(['ip' => $ip]);
         return (int)$stmt->fetchColumn() > self::RATE_LIMIT;
     }
