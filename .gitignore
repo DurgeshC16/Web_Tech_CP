@@ -17,7 +17,8 @@ src/config/config.local.php
 docs/private/
 
 # ── Composer dependencies (install with `composer install`) ─────────
-/vendor/
+/vendor/*
+!/vendor/.htaccess
 
 # ── Runtime data (user uploads, logs, caches, keys, mail) ───────────
 private_data/uploads/*

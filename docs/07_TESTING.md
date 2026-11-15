@@ -23,26 +23,26 @@ php tests/run_all.php
 
 ## 2. Suites in `run_all.php`
 
-Results from the run on 2026-11-15 (XAMPP PHP 8.2.12, MariaDB 10.4.32):
+Results from the run on 2026-11-15 (XAMPP PHP 8.2.12, MariaDB 10.4.32, Composer packages installed):
 
 | Suite | Checks | Covers |
 |-------|-------:|--------|
-| `test_upload_suite.php` | 208 | `v_upload()` matrix; all validators; flexible certificate-ID lookup; verification cascade; external-source adapters + SSRF guard; Smart Verify text/file pipelines; trust score; PDF report; status API; student stats; either/or input planning |
+| `test_upload_suite.php` | 212 | `v_upload()` matrix; all validators; flexible certificate-ID lookup; verification cascade; external-source adapters + SSRF guard; Smart Verify text/file pipelines; trust score; PDF report; status API; student stats; either/or input planning |
 | `test_crypto.php` | 11 | RSA keygen, GCM wrap/unwrap, sign/verify, tamper and wrong-key failures |
 | `test_attested_credentials.php` | 31 | Exact-host URL validation (incl. malformed-URL regression), canonical payload, attestation/withdrawal verdicts, trust-score cap |
 | `test_transparency_log.php` | 17 | Merkle root, inclusion proofs, leaf hashing, checkpoint signing |
-| `test_rate_limit.php` | 13 | Login lockout and verify rate limiting |
+| `test_rate_limit.php` | 20 | Verify rate limiter: 30/31 boundary, free repeats, expiry/pruning, bounded state under a flood, legacy fallback, timing vs the old query |
 | `test_timezone.php` | 2 | PHP ↔ MySQL session time-zone alignment |
 | `test_workflow.php` | 25 | End-to-end register → approve → issue → verify → revoke/supersede |
 | `test_upload_http.php` | 7 | Real multipart uploads through `php -S` |
-| **Total** | **314** | **8/8 suites green** |
+| `test_otp.php` | 17 | OTP create/verify, hashing, cooldown, hourly cap, attempt lockout, single use — via the `MAIL_TRANSPORT=file` spool |
+| `test_config_guard.php` | 5 | Production guard: default secrets and the file mail transport are refused |
+| **Total** | **347** | **10/10 suites green** |
 
 ## 3. Tests not yet in `run_all.php`
 
 | Test | Status | Why |
 |------|--------|-----|
-| `test_otp.php` | 3 pass / 14 fail | Tests the `MAIL_TRANSPORT=file` mail spool, whose implementation is still parked in `git stash@{0}` (doc 09) |
-| `test_config_guard.php` | 4 pass / 1 fail | Same — the production guard against the file transport |
 | `test_verify_http.php` | 7 pass / 14 fail | Expects the tabbed scanner UI and `GET ?id=` lookups from the same stash |
 | `test_smtp_live.php` | not run | Needs real SMTP credentials (`tests/support/smtp_capture_server.py` provides a local capture server) |
 
@@ -67,9 +67,5 @@ All first-party files lint clean.
 
 ## 6. Known test-coverage gaps
 
-* The Smart Verify byte-hash test inserts the **raw file hash** into
-  `sha256_hash`, which real issuance never does — so it hides the matching
-  bug described in doc 09 item 1.
 * No automated test for the CSP or the security headers.
-* OTP flows are covered only by the (currently failing) `test_otp.php`.
 * No CI — tests run only on a developer machine.

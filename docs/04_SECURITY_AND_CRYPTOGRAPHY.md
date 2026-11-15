@@ -116,12 +116,14 @@ independent oracle (doc 08).
 | XSS | `htmlspecialchars()` on all output; CSP |
 | CSRF | Per-session token on every POST form |
 | Malicious uploads | Extension **and** `finfo` MIME must agree (PDF/PNG/JPEG); 100 B – 5 MB; stored outside web root under random names; served only through `download.php` with `nosniff` |
-| Enumeration of IDs/tokens | 256-bit tokens; > 30 distinct lookups per IP per 10 min → HTTP 429; all lookups logged |
+| Enumeration of IDs/tokens | 256-bit tokens; the 31st distinct lookup per IP per 10 min → HTTP 429 + `Retry-After`, checked **before** any certificate query, using the bounded `verify_rate` table (constant cost, ≈0.65 ms even with 30 000 logged rows); all lookups logged |
 | SSRF (external sources) | HTTPS only, host allow-list, every resolved IP must be public, redirects re-validated, 5 s timeout, 1 MB cap |
 | Look-alike issuer links | Exact-host matching; typosquats / punycode shown as warnings, never as links |
 | Clickjacking / sniffing | `X-Frame-Options: DENY`, `frame-ancestors`, `X-Content-Type-Options: nosniff` |
 | Info leakage | `Referrer-Policy`, `Permissions-Policy`, HSTS on HTTPS, errors logged to `private_data/php_errors.log` not displayed |
-| Direct file access | `private_data/.htaccess` denies all; services live in `src/` outside the web root |
+| Direct file access | Only `public/` is web content. `src/`, `database/`, `tests/`, `docs/`, `scripts/` (except `check_environment.php`), `vendor/` and `private_data/` each carry a `Require all denied` `.htaccess`; the root `.htaccess` 404s dotfiles (`.git/`, `.env`…) and denies `.md/.sql/.log/.lock` files — verified against Apache |
+| Default credentials | The seeded super admin has an unusable password hash until `set_super_admin.php` is run |
+| Dev-only shortcuts in production | The production guard also refuses `MAIL_TRANSPORT=file` |
 | Committed secrets | Production guard refuses to boot (`CV_ENV=production`) while `APP_ENCRYPTION_KEY`, `OTP_PEPPER` or `SHARE_LINK_SECRET` still have their development defaults |
 
 ### Share links
@@ -153,7 +155,5 @@ Attackers ordered by capability, with what stops them:
   published, but the verifier does not yet compare against a pinned copy
   outside the database.
 * **Single operator** — availability and trust rest on one server.
-* **Repo-root exposure in dev setups** — if the *repository root* (not
-  `public/`) is served (e.g. cloned straight into `htdocs` or
-  `php -S` without `-t public`), files such as `database/schema.sql` or
-  `.git/` become reachable. Always serve `public/` only (doc 06).
+* **`php -S` ignores `.htaccess`** — with the built-in server always use
+  `-t public`; otherwise the whole repository is served.

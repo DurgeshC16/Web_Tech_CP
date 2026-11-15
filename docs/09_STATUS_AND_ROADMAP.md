@@ -12,123 +12,82 @@
 | Roles & authorization: super admin, approved institution admin, student, public verifier | ✅ |
 | Institution approval → RSA key generation, AES-256-GCM key storage | ✅ |
 | Issuance pipeline: validation, custom/auto IDs, canonical SHA-256, RSA signature, QR, single transaction with cleanup | ✅ |
-| Verification cascade with six verdicts + audit logging + rate limiting | ✅ |
+| Verification cascade with six verdicts + audit logging | ✅ |
+| Rate limiting before any lookup, constant-cost state (migration 014) | ✅ |
 | Revocation and supersession (version chain) | ✅ |
 | Student dashboard, downloads, 24-hour signed share links, verification counts | ✅ |
-| Smart Verify (ID in any format, token, URL, QR image, file, browser hashing) | ✅ — except byte-hash matching (bug 1) |
-| Trust score, PDF verification report, public JSON status API | ✅ (report needs `composer install`) |
+| Smart Verify (ID in any format, token, URL, QR image, file upload with raw-hash matching, browser hashing, camera scan) | ✅ |
+| Trust score, PDF verification report (dompdf), public JSON status API | ✅ |
+| Dev mail spool (`MAIL_TRANSPORT=file`) and dev OTP log | ✅ |
 | External sources (Open Badges/Credly, remote DB, managed registry) — opt-in | ✅ |
 | Attested external credentials — opt-in | ✅ |
 | Versioned keys, published fingerprints, Merkle transparency log — opt-in | ✅ |
 | Responsive UI (360–1280 px), light/dark theme | ✅ |
 | All course requirements (see [REQUIREMENTS_MATRIX.md](REQUIREMENTS_MATRIX.md)) | ✅ |
-| Automated tests | ✅ 314 checks, 8/8 suites green |
+| Automated tests | ✅ 347 checks, 10/10 suites green |
 
-### Fixed during the 2026-11-15 clean-up
+## 2. Change log of the 2026-11-15 clean-up
+
+### Round 1 — repository and documentation
 
 | Problem | Fix |
 |---------|-----|
-| `vendor/` was committed as 7 **empty git sub-module links** plus generated autoload files — every clone (and this machine) had a broken Composer install, and loading it **crashed** `report.php`, the PDF text pipeline and the test suite with a fatal error | `vendor/` untracked and git-ignored; new `src/utils/composer_autoload.php` checks the install is complete before loading it, so the features degrade gracefully |
-| `AttestedCredentialService::validateIssuerUrl()` used a regex that **failed to compile** (`[\x00-\x20\]`), so URLs containing spaces, tabs or backslashes were never rejected | Regex fixed; 3 regression checks added |
-| `config.php` redefined `APP_ENCRYPTION_KEY` and `DB_*` without `defined()` guards — setting them in `config.local.php` (as the example suggests) produced "already defined" warnings | Guards added; local overrides now work for DB settings too |
-| `scripts/seed_demo.php` had no CLI guard and was reachable over HTTP in an htdocs layout | Refuses non-CLI requests |
-| `run_all.php` ran only 4 of the 8 passing suites | Now runs all 8 |
-| README was a pile of phase notes with broken characters | Rewritten; full documentation set in `docs/` |
-| `.gitignore` gaps (vendor, private docs, editor files) | Reorganised and extended |
-| Draft research paper (with author emails) in `docs/` | Moved to git-ignored `docs/private/` |
+| `vendor/` committed as 7 **empty git sub-module links** plus generated autoload files; loading it **crashed** `report.php`, the PDF text pipeline and the test suite | `vendor/` git-ignored; `src/utils/composer_autoload.php` checks the install is complete first |
+| `AttestedCredentialService::validateIssuerUrl()` regex never compiled, so URLs with spaces/tabs/backslashes were accepted | Fixed + regression checks |
+| `config.php` redefined `APP_ENCRYPTION_KEY` / `DB_*` without guards | `defined()` guards |
+| `seed_demo.php` reachable over HTTP | CLI-only |
+| Messy README, no documentation set, stale test docs, draft paper in `docs/` | README rewritten, docs 01–09, paper moved to git-ignored `docs/private/` |
 
-## 2. Known bugs and gaps
+### Round 2 — bugs fixed
 
-### 🔴 P0 — fix next
+| # | Problem | Fix | Proof |
+|---|---------|-----|-------|
+| 1 | **Uploading an issued certificate file never matched**: raw file SHA-256 was compared with `sha256_hash`, which is the canonical digest; `stamped_sha256` was never written | Migration 013 adds `file_sha256`, stored at issue/supersede/seed; lookup uses it (then `stamped_sha256`); active + newest wins when files are shared; `scripts/backfill_file_hashes.php` for old rows (integrity-checked) | Unit checks + end-to-end: all 5 seeded certificates resolve from their real files with VALID / EXPIRED / REVOKED / SUPERSEDED / VALID |
+| 1b | Every demo certificate used the same file bytes | Each demo file embeds its ID and title | same E2E run |
+| 2 | **Unfinished work in `git stash@{0}`** — the documented `MAIL_TRANSPORT=file` option did nothing | Mail transport ported (`deliver_mail()`, `write_mail_to_file()`, production guard) | `test_otp` 3/17 → 17/17, `test_config_guard` 4/5 → 5/5 |
+| 3 | Composer packages missing → PDF report and PDF text extraction disabled | `composer install` (lock file unchanged) | PDF report checks now execute and pass |
+| 4 | **Rate limiter ran after the lookup** (the 429 came only after the DB query, hashing and RSA check), cost grew with log history, query ran twice per request, inconsistent `>`/`>=` | Gate moved before any lookup; bounded `verify_rate` table (migration 014); `Retry-After` header | 30 lookups → 200, 31st → 429 with **no** audit row written, repeat → 200 (Apache/`php -S`); 0.65 ms vs 22.8 ms at 30 000 logged rows |
+| 5 | Local dev database was only at migration ~004 (no `login_attempts`, `remember_tokens`, key history…) — login/issuance would fail | Backed up to `private_data/backups/`, migrations 001–014 applied; schema verified identical to `schema.sql` (118 columns, 43 indexes before 014) | column/index diff |
+| 6 | Approved institution #3 had no signing key (approved by an old build while key generation failed) | `repair_institution_keys.php 3` → key v1, decrypts and matches | `check_institution_keys.php` |
+| 7 | Non-public folders (`src/`, `database/`, `docs/`, `.git/`…) were web-reachable when the repo root sits in `htdocs` | Deny `.htaccess` per folder + root rules for dotfiles and `.md/.sql/.log/.lock` | Real XAMPP Apache run: public pages, CSS and pdf.js → 200, `check_environment.php` → login redirect, `/.well-known/` rewrite still reached; 16 private paths (`src/`, `database/`, `docs/`, `tests/`, `vendor/`, `scripts/seed_demo.php`, `private_data/`, `.git/`, `.gitignore`, `.rnd`, `README.md`, `composer.*`, repo root) → 403/404 |
+| 8 | Seeded super admin shipped with password `password` | Seeded with an unusable hash; `set_super_admin.php` required | `password_verify()` false for every input |
+| 9 | phpqrcode flooded the error log under PHP 8.2 (447 deprecations per 8 QR codes) | Declared `$cmyk`, explicit int casts | 0 deprecations; QR images byte-identical to before |
 
-1. **Smart Verify cannot match an uploaded original file by hash.**
-   `FileVerifyService::findLocalByContentHash()` compares the uploaded
-   file's raw SHA-256 with `certificates.sha256_hash`, but that column holds
-   the *canonical digest* `SHA-256(id|…|SHA-256(file))`, so it never
-   matches a really issued certificate. `stamped_sha256` is never written by
-   any code path. Browser "privacy mode" hashing relies on the same lookup.
-   The unit test hides this because its fixture stores the raw file hash.
-   **Plan:** migration `013` adding `certificates.file_sha256 CHAR(64)` +
-   index; populate it in `issue_certificate.php`, `supersede_certificate.php`
-   and `seed_demo.php`; a one-off backfill script hashing existing files;
-   match on `file_sha256` (then `stamped_sha256`); fix the test fixture to use
-   the real issuance pipeline.
+## 3. Still open
 
-2. **Unfinished work parked in `git stash@{0}` ("before-pull-2026-10-26").**
-   It was stashed before a pull and never re-applied. Its *tests* were later
-   committed (that is why `test_otp`, `test_config_guard` and
-   `test_verify_http` fail) but its *source changes* were not:
-   * `MAIL_TRANSPORT=file` dev mail spool (`deliver_mail()` /
-     `write_mail_to_file()` in `helpers.php`, constants + production guard in
-     `config.php`) — referenced by `config.local.php.example`, so the
-     documented option currently does nothing;
-   * a tabbed scanner UI for `verify.php` (camera / image / PDF / ID tabs,
-     `GET ?id=`, browser decode limits `VERIFY_PDF_MAX_*`) with CSS;
-   * README / TEST_PLAN / matrix edits.
-   **Plan:** inspect with `git stash show -p stash@{0}`, port the mail
-   transport (low conflict), decide whether the tabbed scanner should be
-   merged into the current Smart Verify panel (high conflict in
-   `verify.php`), enable the three tests, then `git stash drop`.
-   *Do not run `git stash pop` blindly — `verify.php` has diverged.*
+### 🟠 Needs your decision
 
-3. **Composer packages not installed on the dev machine** — the PDF report
-   and PDF text extraction are disabled until `composer install` is run.
+* **Tabbed scanner UI from `git stash@{0}`.** The stash also holds an
+  alternative `verify.php` with camera / QR-image / PDF / ID tabs, browser
+  PDF→QR decoding via pdf.js, `GET ?id=` lookups and decode limits. Current
+  Smart Verify already covers ID, file, browser hashing and camera scanning;
+  the genuine gap is decoding a QR from a PDF page *in the browser*.
+  `public/assets/js/verify-scan.js` and `public/assets/js/vendor/pdf*.js`
+  are committed but unused, and `test_verify_http.php` (7/21) tests that UI.
+  Options: port the PDF-QR tab into Smart Verify, or drop the stash, delete
+  the orphaned assets and rewrite `test_verify_http.php` for the current
+  page. After that, `git stash drop`.
 
-4. **Rate-limiter scalability patch from the paper is missing.**
-   `VerificationService::recentLookupCount()` still runs
-   `COUNT(DISTINCT query_value)` over `verification_logs`, which the paper
-   measured degrading from 3.8 ms to 54.7 ms at 30 000 rows. **Plan:** a
-   small `verify_rate (ip, value_hash, seen_at)` table capped at 31 rows per
-   IP, keep `verification_logs` as the audit trail, extend
-   `test_rate_limit.php`.
+### 🟡 Security hardening (remaining work)
 
-### 🟠 P1 — security hardening
+* **CSP allows `'unsafe-inline'`** — move inline `<script>` blocks / `on*=`
+  handlers to `assets/js/`, replace `style=` attributes with classes, emit a
+  per-request nonce.
+* **Key pinning not enforced** — compare the signing key's fingerprint with
+  a copy kept outside the database before RSA verification.
 
-5. **CSP allows `'unsafe-inline'`** — move inline `<script>` blocks and
-   `on*=` handlers into `assets/js/`, replace `style=` attributes with
-   classes, then emit a per-request nonce.
-6. **Key pinning not enforced** — compare the signing key's fingerprint
-   with a copy stored outside the database (file or published list) before
-   RSA verification; show a mismatch as TAMPERED.
-7. **Non-public directories are web-reachable when the repo root is
-   served** (htdocs clone, `php -S` without `-t public`). Add
-   `Require all denied` `.htaccess` files to `src/`, `database/`, `tests/`,
-   `docs/` and `scripts/` (whitelisting `check_environment.php`), or make the
-   `public/` vhost mandatory.
-8. **Seeded super admin uses `password`** — force a password change on first
-   login, or generate a random one at install time.
+### 🟢 Project hygiene / completeness
 
-### 🟡 P2 — project hygiene
-
-9. **CI** — GitHub Actions workflow: `php -l` on all files +
-   `php tests/run_all.php` against a MariaDB service container.
-10. **phpqrcode PHP 8 deprecations** (optional parameters before required
-    ones in `qrimage.php`) fill the error log — patch the signature or move
-    to a maintained Composer QR library.
-11. **Local leftovers** — 145 `verifyui-*.pdf` browser-test fixtures sit in
-    `private_data/uploads/` (git-ignored, unreferenced by the dev database);
-    safe to delete. `private_data/php_errors.log` can be truncated.
-12. **phpqrcode `cache/mask_*` files** (320) are runtime-generated but
-    tracked; they could be ignored.
-13. **Refresh the research paper's numbers** to match the repository (doc 08
-    §6), and fix the reference-list notes left in the draft.
-
-### 🟢 P3 — product completeness
-
-14. Real-device check of camera QR scanning and mobile feel.
-15. Deploy a public HTTPS demo (needed for the paper's URL claims and for
-    employers to try it).
-16. Append-only revocation log and trusted timestamping (paper future work).
-17. Multi-core load test and a small usability study with employers.
-18. Align wording between the brief and the app: the brief lists
-    "Verifier" as a login role, but verification needs no account.
-
-## 3. Suggested order of work
-
-1. Bug 1 (file-hash matching) — user-visible, small, well-scoped.
-2. Bug 2 (stash) — recover the mail transport; decide on the scanner UI.
-3. `composer install` and re-run tests (report PDF checks start executing).
-4. Bug 4 (rate limiter) — makes the repo match the paper.
-5. CI (item 9) so every later change is checked automatically.
-6. Security items 5–8.
-7. Paper refresh and public demo deployment.
+* **CI** — GitHub Actions: `php -l` + `php tests/run_all.php` against a
+  MariaDB service.
+* **Local leftovers** — 145 `verifyui-*.pdf` browser-test fixtures in
+  `private_data/uploads/` (git-ignored, unused by any database) can be
+  deleted; `private_data/php_errors.log` can be truncated.
+* **Your dev super admin** still has the old `password` hash (only fresh
+  installs get the locked seed) — run `php scripts/set_super_admin.php`.
+* **Paper refresh** — update numbers to match the repository (doc 08 §6) and
+  fix the reference-list notes left in the draft.
+* Real-device QR camera check; public HTTPS demo deployment; append-only
+  revocation log and trusted timestamping; multi-core load test; employer
+  usability study; align the brief's "Verifier login role" wording with the
+  account-free verifier.

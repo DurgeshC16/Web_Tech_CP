@@ -1,0 +1,2 @@
+# Not web content. Only public/ is meant to be served over HTTP.
+Require all denied

@@ -1,0 +1,6 @@
+# CLI tools — not web content. The only exception is the upload-environment
+# audit, which admins may open in a browser (it enforces require_role()).
+Require all denied
+<Files "check_environment.php">
+    Require all granted
+</Files>

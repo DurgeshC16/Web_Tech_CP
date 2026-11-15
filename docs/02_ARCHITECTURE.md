@@ -26,7 +26,7 @@ files and secrets live outside the web root.
  └───────┬───────────────────────────────┬──────────────────────────────────────┘
          ▼                               ▼
    MySQL / MariaDB                 private_data/ (uploads, logs, mail spool,
-   (13 tables)                     transparency-log key, caches) — denied by .htaccess
+   (14 tables)                     transparency-log key, caches) — denied by .htaccess
 ```
 
 **Patterns used**

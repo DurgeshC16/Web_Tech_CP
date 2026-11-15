@@ -65,8 +65,8 @@ issuer keys created **after** super-admin approval.
 `verification_logs` history made the check grow from 3.8 ms to 54.7 ms at
 30 000 logged rows (an algorithmic-complexity weakness). The paper's patch
 keeps limiter state in a small dedicated table (≤ 31 rows per address),
-holding latency at ≈ 3.4 ms. **This patch is not yet in the repository**
-(doc 09 item 4).
+holding latency at ≈ 3.4 ms. The patch is now in the repository
+(migration 014, `VerificationService::checkAndRecordLookup()`).
 
 ## 4. Limitations stated in the paper
 
@@ -88,7 +88,7 @@ The paper describes an earlier snapshot. Numbers that have changed since:
 
 | Paper says | Repository now |
 |-----------|----------------|
-| 8 database tables | 13 tables |
-| 78 automated tests | 314 checks in 8 suites |
+| 8 database tables | 14 tables |
+| 78 automated tests | 347 checks in 10 suites |
 | Key pinning / Merkle anchoring are in-memory prototypes | Merkle transparency log + versioned keys with published fingerprints are implemented (opt-in); automatic pinning is not |
-| Redesigned rate limiter (`verify_rate`) | Not committed — still the `COUNT(DISTINCT …)` query |
+| Redesigned rate limiter (`verify_rate`) | Implemented (migration 014): ≤ 30 rows per IP, checked before any lookup; 0.65 ms vs 22.8 ms for the old query at 30 000 logged rows (XAMPP, Windows) |

@@ -29,7 +29,7 @@ copy src\config\config.local.php.example src\config\config.local.php   # Windows
 # cp src/config/config.local.php.example src/config/config.local.php   # Linux/macOS
 #    → fill in SMTP credentials and the three secrets (see §3)
 
-# 5. Set a real super-admin email + password
+# 5. Set the super-admin email + password (the seeded account cannot log in until you do)
 php scripts/set_super_admin.php
 
 # 6. Run
@@ -95,6 +95,7 @@ In production prefer real environment variables.
 | `SMTP_USERNAME` / `SMTP_PASSWORD` | same | *(empty)* |
 | `SMTP_ENCRYPTION` | `SMTP_ENCRYPTION` | `tls` (`ssl` for port 465) |
 | `SMTP_FROM_EMAIL` / `SMTP_FROM_NAME` | same | username / `CertiVault` |
+| `MAIL_TRANSPORT` | `CV_MAIL_TRANSPORT` | `smtp` (`file` = dev spool in `private_data/mail/`, refused in production) |
 
 ### CAPTCHA
 
@@ -133,11 +134,16 @@ In production prefer real environment variables.
 Errors `534-5.7.9` / `535-5.7.8` mean a normal password, spaces left in the
 App Password, or 2-Step Verification is off.
 
-**Without SMTP (development only):** set `define('CV_DEBUG', true);` or
-`define('CV_DEV_SHOW_OTP', true);` in `config.local.php` (never with
-`CV_ENV=production`). Every OTP is then also appended to
-`private_data/dev_mail.log`. Failed sends do not consume the resend cooldown
-or the hourly quota.
+**Without SMTP (development only)** — two options, both refused or inert
+with `CV_ENV=production`:
+
+* `define('MAIL_TRANSPORT', 'file');` (or `CV_MAIL_TRANSPORT=file`) — every
+  email, including OTPs, is written as an `.eml` file to `private_data/mail/`
+  instead of being sent. The production guard refuses to start with it.
+* `define('CV_DEV_SHOW_OTP', true);` (or `CV_DEBUG`) — OTPs are also
+  appended to `private_data/dev_mail.log`.
+
+Failed sends do not consume the resend cooldown or the hourly quota.
 
 ## 5. Demo data
 
@@ -149,7 +155,7 @@ php scripts/seed_demo.php
 |---------|-------|----------|
 | Institution admin | `demo.institution@certivault.test` | `DemoInst@2026` |
 | Student | `demo.student@certivault.test` | `DemoStudent@2026` |
-| Super admin | `superadmin@certivault.com` (seeded) | `password` — change it with `set_super_admin.php` |
+| Super admin | set by you | locked until `php scripts/set_super_admin.php` is run |
 
 The seeder uses the real issuance pipeline, so demo certificates verify as
 VALID. It is idempotent and refuses to run over HTTP.
@@ -162,6 +168,7 @@ VALID. It is idempotent and refuses to run over HTTP.
 | `seed_demo.php` | Seed demo institution, student and certificates |
 | `seed_external_source.php` | Seed the offline `DEMO MOOC registry` external source |
 | `smtp_diagnostic.php <email>` | Stage-by-stage SMTP check |
+| `backfill_file_hashes.php [--dry-run]` | After migration 013: store the raw file hash for older certificates (skips files that fail the integrity check) |
 | `check_environment.php` | Upload-environment audit (CLI, or in the browser as an admin) |
 | `check_institution_keys.php` | Read-only audit of stored keys (prints lengths/booleans, never key material) |
 | `repair_institution_keys.php <id>` | Recovery rotation of one institution's key |
@@ -189,7 +196,8 @@ VALID. It is idempotent and refuses to run over HTTP.
 - [ ] Document root = `public/`
 - [ ] `php.ini`: `expose_php=Off`, `display_errors=Off`, `log_errors=On`
 - [ ] Real SMTP credentials; reCAPTCHA keys
-- [ ] Super-admin password changed from the seeded default
+- [ ] Super-admin credentials set with `set_super_admin.php`
+- [ ] `MAIL_TRANSPORT` left at `smtp`
 - [ ] `composer install --no-dev`
 - [ ] `private_data/` writable by PHP, not by the web
 - [ ] Schedule `publish_checkpoint.php` and back up `private_data/tlog/`

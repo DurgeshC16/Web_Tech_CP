@@ -1,0 +1,19 @@
+# ─────────────────────────────────────────────────────────────────────
+# Defence in depth for the "repository cloned into htdocs" layout.
+# Recommended: point DocumentRoot at public/ — then this file is never used.
+# Non-public folders carry their own "Require all denied" .htaccess.
+# ─────────────────────────────────────────────────────────────────────
+Options -Indexes
+
+# Dotfiles and VCS metadata (.git/, .gitignore, .env, .rnd …) → 404
+<IfModule mod_alias.c>
+    RedirectMatch 404 /\.(?!well-known/)[^/]+
+</IfModule>
+
+# Project files that are never web content, wherever they sit.
+<FilesMatch "\.(md|lock|sql|log|example|mjs|py|bak|swp)$">
+    Require all denied
+</FilesMatch>
+<FilesMatch "^composer\.json$">
+    Require all denied
+</FilesMatch>

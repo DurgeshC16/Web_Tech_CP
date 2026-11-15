@@ -1,6 +1,6 @@
 # 03 — Database
 
-Database name: **`certivault`** (MySQL 8 / MariaDB 10.4+, InnoDB).
+Database name: **`certivault`** (14 tables) (MySQL 8 / MariaDB 10.4+, InnoDB).
 `database/schema.sql` always contains the **full current schema**; the files
 in `database/migrations/` upgrade an older existing database step by step.
 
@@ -16,7 +16,7 @@ users ──1:1── institutions ──1:N── institution_keys (versioned R
   └── login_attempts (by email+ip)
 
 students ──1:N── external_credentials ──N:1── institutions (attesting)
-external_sources (managed registry) · tlog_checkpoints (signed Merkle roots)
+external_sources (managed registry) · tlog_checkpoints (signed Merkle roots) · verify_rate (rate limiter)
 ```
 
 ## 2. Tables
@@ -37,7 +37,8 @@ external_sources (managed registry) · tlog_checkpoints (signed Merkle roots)
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
 | `institution_keys` | Versioned RSA key pairs | PK (`institution_id`, `key_id`), `public_key` (PEM), `encrypted_private_key` (`GCM1.` blob), `status` ∈ {active, retired}, `valid_from`, `valid_to` |
-| `certificates` | Issued certificates | `certificate_id` (unique; `certificate_id_norm` generated lower-case unique), `institution_id`, `key_id`, `student_id`, `title`, `issue_date`, `expiry_date`, `file_path`, `status` ∈ {active, revoked, expired, superseded}, `version`, `previous_version_id`, `superseded_by_id`, `revocation_reason`, `revoked_at`, `revoked_by`, `sha256_hash` (canonical digest), `stamped_sha256`, `digital_signature` (base64), `qr_token` (unique) |
+| `certificates` | Issued certificates | `certificate_id` (unique; `certificate_id_norm` generated lower-case unique), `institution_id`, `key_id`, `student_id`, `title`, `issue_date`, `expiry_date`, `file_path`, `status` ∈ {active, revoked, expired, superseded}, `version`, `previous_version_id`, `superseded_by_id`, `revocation_reason`, `revoked_at`, `revoked_by`, `sha256_hash` (canonical digest), `file_sha256` (raw file hash, for file-upload matching), `stamped_sha256`, `digital_signature` (base64), `qr_token` (unique) |
+| `verify_rate` | Rate-limiter state (migration 014) | PK (`ip`, `value_hash` = SHA-256 of the lookup key), `seen_at`; at most 30 live rows per IP |
 | `verification_logs` | Audit trail of every lookup | `query_type` ∈ {token, certificate_id, file, qr_image, text, external_ref, external_credential}, `query_value`, `certificate_id_found`, `result` (VALID … WITHDRAWN), `detail`, `verifier_ip`, `verified_at` |
 
 ### Optional features
@@ -55,14 +56,15 @@ external_sources (managed registry) · tlog_checkpoints (signed Merkle roots)
   token / case-insensitive ID (measured flat latency up to 100 000 rows).
 * `idx_vlogs_ip_time (verifier_ip, verified_at)` — rate-limit window query.
 * `idx_login_attempts_email_ip_time` — login lockout window.
-* `idx_cert_stamped_hash` — Smart Verify stamped-copy lookup.
+* `idx_cert_file_sha256`, `idx_cert_stamped_hash` — Smart Verify file-upload lookups.
+* `verify_rate` PK (`ip`, `value_hash`) — constant-cost rate-limit check.
 
 ## 3. Seed data
 
-`schema.sql` seeds one super admin: `superadmin@certivault.com` with the
-password `password`. **Change it immediately** with
-`php scripts/set_super_admin.php` (it also lets you set a real mailbox, which
-OTP-based flows need). `php scripts/seed_demo.php` adds a demo institution,
+`schema.sql` seeds one super admin, `superadmin@certivault.com`, with an
+**unusable password hash** — nobody can log in as super admin until you run
+`php scripts/set_super_admin.php`, which sets a real email (OTP flows need a
+real mailbox) and password. `php scripts/seed_demo.php` adds a demo institution,
 student and certificates (see doc 06).
 
 ## 4. Migrations
@@ -86,9 +88,12 @@ in order. They are written to be idempotent (guarded `ALTER`s /
 | 010 | `010_external_sources_registry.sql` | `external_sources` table |
 | 011 | `011_attested_external_credentials.sql` | `external_credentials` table + verdicts |
 | 012 | `012_versioned_keys_transparency_log.sql` | `institution_keys` — moves `public_key` / `encrypted_private_key` out of `institutions` (existing keys become v1, certificates are **not** re-signed), `certificates.key_id`, `tlog_entries`, `tlog_checkpoints` |
+| 013 | `013_certificate_file_hash.sql` | `certificates.file_sha256` + index. Afterwards run `php scripts/backfill_file_hashes.php` once |
+| 014 | `014_verify_rate_limiter.sql` | `verify_rate` table (bounded rate-limiter state) |
 
 Run them in phpMyAdmin (Import tab, select the `certivault` database) or:
 
 ```sh
-mysql -u root certivault < database/migrations/012_versioned_keys_transparency_log.sql
+# apply every migration in order (all are re-runnable)
+for f in database/migrations/*.sql; do mysql -u root certivault < "$f"; done
 ```

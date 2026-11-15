@@ -57,10 +57,12 @@ CREATE TABLE institution_keys (
     FOREIGN KEY (institution_id) REFERENCES institutions(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Insert a default super_admin for demo purposes
-INSERT INTO users (email, password_hash, role, is_verified) VALUES 
-('superadmin@certivault.com', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'super_admin', 1); 
--- password is 'password'
+-- Seed the single super_admin row with an UNUSABLE password hash: no
+-- password can log in until you set real credentials with
+--   php scripts/set_super_admin.php
+-- (this used to ship with the well-known password 'password').
+INSERT INTO users (email, password_hash, role, is_verified) VALUES
+('superadmin@certivault.com', '!locked: run php scripts/set_super_admin.php', 'super_admin', 1);
 
 CREATE TABLE certificates (
     id INT AUTO_INCREMENT PRIMARY KEY,

@@ -90,9 +90,11 @@ server). File pipeline: byte-hash match → QR decode → text extraction →
 regex scan; temporary files are always deleted. Disable with
 `CV_SMART_VERIFY=0`.
 
-> ⚠️ Known bug: byte-hash matching of an *issued* file currently never hits
-> (see doc 09, item 1). QR decoding and text extraction still resolve
-> uploaded certificates.
+The byte-hash stage compares the upload with `certificates.file_sha256`
+(the raw hash stored at issuance, migration 013), so only an *unmodified*
+copy of the original file matches; a re-saved or screenshot copy falls
+through to QR decoding and text extraction. If several certificates share
+the same file, the active, newest one is chosen.
 
 ### 3.2 Trust score
 

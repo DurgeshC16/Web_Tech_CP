@@ -12,7 +12,7 @@ verdict: **VALID, TAMPERED, EXPIRED, REVOKED, SUPERSEDED or INVALID**.
 
 ![PHP](https://img.shields.io/badge/PHP-8.2-777BB4?logo=php&logoColor=white)
 ![MySQL](https://img.shields.io/badge/MySQL%20%2F%20MariaDB-10.4%2B-4479A1?logo=mysql&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-314%20checks%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-347%20checks%20passing-brightgreen)
 ![No framework](https://img.shields.io/badge/framework-none-lightgrey)
 
 ---
@@ -108,7 +108,7 @@ Full walkthrough: [docs/01_PROJECT_OVERVIEW.md](docs/01_PROJECT_OVERVIEW.md).
 | Backend | PHP 8.2 (no framework): sessions, cookies, PDO, OpenSSL |
 | Database | MySQL / MariaDB |
 | Cryptography | SHA-256, RSA-2048, AES-256-GCM, HMAC-SHA-256, bcrypt |
-| Libraries | PHPMailer, phpqrcode, ZXing PHP port (vendored); dompdf, smalot/pdfparser (Composer, optional) |
+| Libraries | PHPMailer, phpqrcode, ZXing PHP port (vendored); dompdf, smalot/pdfparser (Composer) |
 | Environment | XAMPP (Apache + MariaDB + PHP) or `php -S` |
 
 ## Project structure
@@ -123,7 +123,7 @@ Web_Tech_CP/
 │   │                TransparencyLog, StudentStats, QR
 │   ├── utils/       helpers.php, validators.php + vendored PHPMailer / phpqrcode / qrdecoder
 │   └── partials/    Shared head / header / footer templates
-├── database/        schema.sql (fresh install) + migrations/001–012 (upgrades)
+├── database/        schema.sql (fresh install) + migrations/001–014 (upgrades)
 ├── scripts/         CLI tools: seeding, super-admin setup, SMTP / environment / key checks, checkpoints
 ├── tests/           Plain-PHP CLI suites + Node browser tests
 ├── private_data/    Uploaded certificates, logs, mail spool (not web-accessible; contents git-ignored)
@@ -143,7 +143,7 @@ Details: [docs/02_ARCHITECTURE.md](docs/02_ARCHITECTURE.md).
 git clone https://github.com/DurgeshC16/Web_Tech_CP.git
 cd Web_Tech_CP
 
-# 2. Optional: PDF report + PDF text extraction
+# 2. PHP dependencies (PDF report + PDF text extraction)
 composer install
 
 # 3. Create the database (creates `certivault` + tables + super admin)
@@ -152,7 +152,7 @@ mysql -u root < database/schema.sql            # or phpMyAdmin → Import
 # 4. Local config (git-ignored): SMTP credentials + secrets
 copy src\config\config.local.php.example src\config\config.local.php
 
-# 5. Set a real super-admin login (the seeded password is "password")
+# 5. Set the super-admin login (the seeded account is locked until you do)
 php scripts/set_super_admin.php
 
 # 6. Optional demo data
@@ -164,7 +164,10 @@ php -S localhost:8081 -t public
 
 Open <http://localhost:8081>. With Apache, point the virtual host's
 `DocumentRoot` at `public/`. Existing databases: apply the missing files in
-`database/migrations/` in order ([docs/03_DATABASE.md](docs/03_DATABASE.md)).
+`database/migrations/` in order, then run `php scripts/backfill_file_hashes.php`
+once ([docs/03_DATABASE.md](docs/03_DATABASE.md)). No SMTP account? Set
+`define('MAIL_TRANSPORT', 'file');` in `config.local.php` and read the
+codes from `private_data/mail/`.
 
 ## Configuration
 
@@ -193,7 +196,7 @@ After `php scripts/seed_demo.php`:
 |------|-------|----------|
 | Institution admin | `demo.institution@certivault.test` | `DemoInst@2026` |
 | Student | `demo.student@certivault.test` | `DemoStudent@2026` |
-| Super admin | `superadmin@certivault.com` | `password` *(change with `set_super_admin.php`)* |
+| Super admin | set by you | run `php scripts/set_super_admin.php` (the seeded account is locked) |
 
 These are local demo credentials only. Never reuse them on a server.
 
@@ -203,9 +206,10 @@ These are local demo credentials only. Never reuse them on a server.
 php tests/run_all.php     # uses an isolated `certivault_test` database
 ```
 
-**314 checks across 8 suites pass** (crypto, validators, uploads, the
-verification cascade, Smart Verify, trust score, status API, attested
-credentials, transparency log, rate limits, full workflow, HTTP uploads).
+**347 checks across 10 suites pass** (crypto, validators, uploads, the
+verification cascade, Smart Verify, trust score, PDF report, status API,
+attested credentials, transparency log, rate limiter, OTP lifecycle,
+production config guard, full workflow, HTTP uploads).
 Browser checks (`tests/*.mjs`) cover the verify UI and responsive layout.
 See [docs/07_TESTING.md](docs/07_TESTING.md) and the manual
 [test plan](docs/TEST_PLAN.md).
@@ -216,7 +220,8 @@ See [docs/07_TESTING.md](docs/07_TESTING.md) and the manual
 - Login lockout (5 failures / 15 min), CAPTCHA, session regeneration, 30-minute idle and 8-hour absolute timeouts
 - Role-based plus row-level authorization; CSRF tokens on every POST; prepared statements everywhere; escaped output
 - Uploads checked by both extension and real MIME type (≤ 5 MB) and stored outside the web root
-- Verification rate limit (30 distinct lookups / 10 min / IP → HTTP 429), and every lookup is logged
+- Verification rate limit (30 distinct lookups / 10 min / IP → HTTP 429), enforced before any lookup with constant-cost state; every lookup is logged
+- Only `public/` is web content; every other folder denies HTTP access, and the seeded super admin is locked until configured
 - Security headers (CSP, X-Frame-Options, nosniff, Referrer-Policy, Permissions-Policy, HSTS)
 - SSRF-guarded external lookups (HTTPS only, host allow-list, public IPs only)
 
@@ -240,14 +245,14 @@ Threat model and known gaps: [docs/04_SECURITY_AND_CRYPTOGRAPHY.md](docs/04_SECU
 
 ## Project status & roadmap
 
-All core features and course requirements are implemented and tested. The
-next steps, in priority order ([details](docs/09_STATUS_AND_ROADMAP.md)):
+All core features and course requirements are implemented and tested, and
+the known bugs from the 2026-11-15 review are fixed (file-upload matching,
+rate limiter, dev mail transport, broken dependencies, web exposure, default
+super-admin password). Remaining work ([details](docs/09_STATUS_AND_ROADMAP.md)):
 
-1. Fix Smart Verify's file-hash matching (store the raw file SHA-256 at issuance).
-2. Recover the unfinished work parked in `git stash@{0}` (dev mail spool, tabbed scanner UI).
-3. Run `composer install` locally so the PDF report and PDF text extraction work.
-4. Port the paper's scalable rate limiter.
-5. Add CI, remove `'unsafe-inline'` from the CSP, enforce key pinning.
+1. Decide on the stashed tabbed scanner UI (browser PDF→QR decoding).
+2. Remove `'unsafe-inline'` from the CSP; enforce key pinning.
+3. Add CI; deploy a public HTTPS demo; refresh the research paper's numbers.
 
 ## Limitations
 
