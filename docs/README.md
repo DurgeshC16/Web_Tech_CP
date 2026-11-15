@@ -19,6 +19,7 @@ reference.
 | 07 | [Testing](07_TESTING.md) | Automated CLI suites, browser tests, how to run them, current results |
 | 08 | [Research Summary](08_RESEARCH_SUMMARY.md) | Summary of the accompanying IEEE-style research paper: research questions, evaluation and results |
 | 09 | [Status & Roadmap](09_STATUS_AND_ROADMAP.md) | What is done, known bugs and gaps, and the prioritised next steps |
+| 10 | [Running & Demo Guide](10_RUNNING_AND_DEMO_GUIDE.md) | **Start here to run it:** step-by-step setup (Windows/XAMPP, Apache, Linux), a guided tour of every feature, a 5-minute presentation script, reset & troubleshooting |
 | — | [Requirements Matrix](REQUIREMENTS_MATRIX.md) | Course requirement → where it is implemented |
 | — | [Manual Test Plan](TEST_PLAN.md) | Manual / end-to-end test cases with expected results |
 | — | [Project Brief (PDF)](reference/CertiVault_Project_Brief.pdf) | Original 4-page brief describing the purpose and methodology |

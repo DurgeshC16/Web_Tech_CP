@@ -180,7 +180,8 @@ php -S localhost:8081 -t public
 ```
 
 Open <http://localhost:8081>. With Apache, point the virtual host's
-`DocumentRoot` at `public/`.
+`DocumentRoot` at `public/`. **Next:** follow the guided tour in
+[docs/10_RUNNING_AND_DEMO_GUIDE.md](docs/10_RUNNING_AND_DEMO_GUIDE.md).
 
 **Upgrading an existing database:** apply the missing files in
 `database/migrations/` in order (001 → 016), then run once
@@ -264,6 +265,7 @@ Threat model and remaining gaps:
 | [07 Testing](docs/07_TESTING.md) | PHP + browser suites, CI |
 | [08 Research Summary](docs/08_RESEARCH_SUMMARY.md) | Findings of the accompanying research paper |
 | [09 Status & Roadmap](docs/09_STATUS_AND_ROADMAP.md) | Progress, change log, what is next |
+| [10 Running & Demo Guide](docs/10_RUNNING_AND_DEMO_GUIDE.md) | **Step-by-step setup, guided tour of the website, 5-minute demo script** |
 | [Requirements Matrix](docs/REQUIREMENTS_MATRIX.md) | Course requirements → implementation |
 | [Project Brief (PDF)](docs/reference/CertiVault_Project_Brief.pdf) | Original project brief |
 

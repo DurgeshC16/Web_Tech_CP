@@ -84,7 +84,7 @@ In production prefer real environment variables.
 | Constant | Env var | Default | Notes |
 |----------|---------|---------|-------|
 | `DB_HOST` / `DB_USER` / `DB_PASS` / `DB_NAME` | `CV_DB_HOST` … `CV_DB_NAME` | `localhost` / `root` / *(empty)* / `certivault` | |
-| `BASE_URL` | `CV_BASE_URL` (or `CV_BASE_URL` constant) | derived per request | Used in QR codes, share links and emails. Set only behind proxies. CLI fallback `http://localhost:8081/certivault/public` |
+| `BASE_URL` | `CV_BASE_URL` (or `CV_BASE_URL` constant) | derived per request | Used in QR codes, share links and emails. Set only behind proxies. CLI scripts (seeding) fall back to `http://localhost:8081` — set `CV_BASE_URL` before seeding if you serve the app elsewhere, because it is printed into QR codes |
 | `APP_ENCRYPTION_KEY` | `CV_ENCRYPTION_KEY` | dev default | **Set before approving the first institution**; wraps RSA private keys |
 | `OTP_PEPPER` | `CV_OTP_PEPPER` | dev default | HMAC key for stored OTPs |
 | `SHARE_LINK_SECRET` | `CV_SHARE_SECRET` | dev default | HMAC key for share links |

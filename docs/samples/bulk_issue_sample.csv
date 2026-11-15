@@ -1,0 +1,5 @@
+student_email,student_name,title,issue_date,expiry_date,certificate_id
+demo.student@certivault.test,Demo Student,Full Stack Web Development,2026-06-15,2028-06-15,
+demo.student@certivault.test,Demo Student,Database Systems Workshop,2026-07-01,,
+new.learner@example.com,Asha Verma,Full Stack Web Development,2026-06-15,2028-06-15,
+not-an-email,Broken Row,Shows a validation error,2026-06-15,,

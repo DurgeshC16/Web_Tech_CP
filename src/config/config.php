@@ -31,9 +31,11 @@ defined('DB_NAME') || define('DB_NAME', getenv('CV_DB_NAME') ?: 'certivault');
 // scheme + host + port + path up to /public, so the app works on any
 // host/port/mount point with zero configuration.
 function certivault_default_base_url() {
-    // CLI (scripts, cron): no request to derive from — dev fallback.
+    // CLI (scripts, cron): no request to derive from. Fallback = the
+    // documented dev server (php -S localhost:8081 -t public); set
+    // CV_BASE_URL for any other address (it is baked into QR codes).
     if (php_sapi_name() === 'cli' || empty($_SERVER['HTTP_HOST'])) {
-        return 'http://localhost:8081/certivault/public';
+        return 'http://localhost:8081';
     }
     $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
         || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https') // TLS-terminating proxy
