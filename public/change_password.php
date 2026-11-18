@@ -141,64 +141,95 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['cancel'])) {
 ?>
 <?php $page_title = 'Change Password - CertiVault'; require __DIR__ . '/../src/partials/head.php'; ?>
 <?php require __DIR__ . '/../src/partials/header.php'; ?>
-<main id="main">
-    <div class="auth-wrap">
-    <div class="auth-card">
-        <div class="page-head">
-            <div class="auth-brand">
-            <svg width="40" height="40" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="14" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="16" cy="16" r="9" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M16 10 L18.2 14.2 L22.5 14.8 L19.2 17.8 L20.2 22 L16 19.6 L11.8 22 L12.8 17.8 L9.5 14.8 L13.8 14.2 Z" fill="currentColor"/></svg>
-            <div class="brand-name">CertiVault</div>
-        </div>
-        <h2>Change Password</h2>
-            <a href="index.php" data-history-back class="btn btn-secondary">Back</a>
-        </div>
-        <?php if ($error): ?>
-            <div class="alert alert-danger"><?= htmlspecialchars($error) ?></div>
-        <?php endif; ?>
-        <?php if ($info): ?>
-            <div class="alert alert-success"><?= htmlspecialchars($info) ?></div>
-        <?php endif; ?>
+<?php $cp_done = ($step === 1 && $info !== '' && $error === ''); // presentation only: step 2 just succeeded ?>
+<main id="main" class="auth-page">
+    <div class="auth-split auth-shell">
+        <div class="auth-main">
+        <div class="auth-card">
+            <div class="auth-card-top">
+                <a href="index.php" data-history-back class="btn btn-secondary btn-sm">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M19 12H5M11 18l-6-6 6-6"/></svg>
+                    Back
+                </a>
+            </div>
+            <ol class="stepper auth-stepper" aria-label="Password change progress">
+                <li class="<?= ($step === 2 || $cp_done) ? 'is-done' : 'is-current' ?>"<?= ($step === 1 && !$cp_done) ? ' aria-current="step"' : '' ?>>New password</li>
+                <li class="<?= $cp_done ? 'is-done' : ($step === 2 ? 'is-current' : '') ?>"<?= $step === 2 ? ' aria-current="step"' : '' ?>>Confirm code</li>
+                <li class="<?= $cp_done ? 'is-done' : '' ?>"<?= $cp_done ? ' aria-current="step"' : '' ?>>Done</li>
+            </ol>
+            <div class="auth-card-head">
+                <span class="auth-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2L20 3M16 7l3 3M14 9l2 2"/></svg>
+                </span>
+                <h1>Change Password</h1>
+                <?php if ($step === 2): ?>
+                    <p class="auth-sub">Enter the 6-digit code sent to <strong class="auth-email-chip"><?= htmlspecialchars($masked) ?></strong>.</p>
+                <?php else: ?>
+                    <p class="auth-sub">Confirm your current password, then choose a new one. We'll email you a code to approve the change.</p>
+                <?php endif; ?>
+            </div>
+            <?php if ($error): ?>
+                <div class="alert alert-danger" role="alert"><?= htmlspecialchars($error) ?></div>
+            <?php endif; ?>
+            <?php if ($info): ?>
+                <div class="alert alert-success" role="status"><?= htmlspecialchars($info) ?></div>
+            <?php endif; ?>
 
-        <?php if (!empty($errors)): ?>
-            <div class="alert alert-danger">Please correct the highlighted fields below.</div>
-        <?php endif; ?>
+            <?php if (!empty($errors)): ?>
+                <div class="alert alert-danger">Please correct the highlighted fields below.</div>
+            <?php endif; ?>
 
-        <?php if ($step === 1): ?>
-        <form method="POST" action="">
-            <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
-            <div class="form-group">
-                <label for="current_password">Current Password:</label>
-                <input type="password" name="current_password" id="current_password" autocomplete="current-password" data-validate="required" required>
-                <?php render_field_error($errors, 'current_password'); ?>
-            </div>
-            <div class="form-group">
-                <label for="new_password">New Password:</label>
-                <input type="password" name="new_password" id="new_password" autocomplete="new-password" data-validate="required|min:8|max:72|strong" required>
-                <?php render_field_error($errors, 'new_password'); ?>
-            </div>
-            <div class="form-group">
-                <label for="confirm_password">Confirm New Password:</label>
-                <input type="password" name="confirm_password" id="confirm_password" autocomplete="new-password" data-validate="required|match:#new_password" required>
-                <?php render_field_error($errors, 'confirm_password'); ?>
-            </div>
-            <button type="submit" class="btn btn-primary">Continue</button>
-        </form>
-        <?php elseif ($step === 2): ?>
-        <p>Enter the 6-digit code sent to <strong><?= htmlspecialchars($masked) ?></strong>.</p>
-        <form method="POST" action="">
-            <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
-            <div class="form-group">
-                <label>Verification Code:</label>
-                <input type="text" name="otp_code" maxlength="6" inputmode="numeric" autocomplete="one-time-code" class="otp-input" data-validate="required|otp" required>
-                <?php render_field_error($errors, 'otp_code'); ?>
-            </div>
-            <button type="submit" class="btn btn-primary">Confirm Password Change</button>
-        </form>
-        <p><a href="change_password.php?cancel=1">Cancel and start over</a></p>
-        <?php endif; ?>
+            <?php if ($step === 1): ?>
+            <form method="POST" action="" class="auth-form" data-loading>
+                <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
+                <div class="form-group">
+                    <label for="current_password">Current Password</label>
+                    <input type="password" name="current_password" id="current_password" autocomplete="current-password" data-validate="required" required>
+                    <?php render_field_error($errors, 'current_password'); ?>
+                </div>
+                <div class="form-group">
+                    <label for="new_password">New Password</label>
+                    <input type="password" name="new_password" id="new_password" autocomplete="new-password" data-validate="required|min:8|max:72|strong" required>
+                    <?php render_field_error($errors, 'new_password'); ?>
+                </div>
+                <div class="form-group">
+                    <label for="confirm_password">Confirm New Password</label>
+                    <input type="password" name="confirm_password" id="confirm_password" autocomplete="new-password" data-validate="required|match:#new_password" required>
+                    <?php render_field_error($errors, 'confirm_password'); ?>
+                </div>
+                <button type="submit" class="btn btn-primary btn-lg btn-block">
+                    Continue
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+                </button>
+            </form>
+            <?php elseif ($step === 2): ?>
+            <form method="POST" action="" class="auth-form" data-loading>
+                <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
+                <div class="form-group auth-otp-group">
+                    <label for="cp_otp_code">Verification Code</label>
+                    <input type="text" name="otp_code" id="cp_otp_code" maxlength="6" inputmode="numeric" autocomplete="one-time-code" class="otp-input otp-slots" data-validate="required|otp" required>
+                    <?php render_field_error($errors, 'otp_code'); ?>
+                </div>
+                <button type="submit" class="btn btn-primary btn-lg btn-block">Confirm Password Change</button>
+            </form>
+            <p class="auth-foot"><a href="change_password.php?cancel=1">Cancel and start over</a></p>
+            <?php endif; ?>
+        </div>
+        </div>
+
+        <aside class="auth-aside" aria-labelledby="authAsideTitle">
+            <span class="auth-eyebrow"><span class="eyebrow-dot" aria-hidden="true"></span> Account security</span>
+            <h2 id="authAsideTitle">Keep your account yours.</h2>
+            <p>Changing your password signs out every device that was remembered, and we email you when it happens.</p>
+            <ul class="auth-points">
+                <li data-reveal="left" data-reveal-delay="1"><span class="auth-point-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M3 7.5l9 6 9-6"/></svg></span><span><strong>Email confirmation</strong> for every change</span></li>
+                <li data-reveal="left" data-reveal-delay="2"><span class="auth-point-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M4 7h16M4 12h10M4 17h7"/></svg></span><span><strong>Unique and long</strong> beats clever and short</span></li>
+                <li data-reveal="left" data-reveal-delay="3"><span class="auth-point-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M11 18h2"/></svg></span><span><strong>Add a second factor:</strong> <a href="two_factor.php">set up two-factor authentication</a></span></li>
+            </ul>
+            <svg class="auth-aside-art" viewBox="0 0 200 200" aria-hidden="true" focusable="false"><g fill="none" stroke="#fff" stroke-width="2"><circle cx="100" cy="100" r="92" stroke-opacity=".35"/><circle cx="100" cy="100" r="70" stroke-opacity=".5" stroke-dasharray="4 8"/><circle cx="78" cy="118" r="22" stroke-width="5"/><path d="M94 102l46-46M126 70l14 14M114 82l10 10" stroke-width="5" stroke-linecap="round"/></g></svg>
+        </aside>
     </div>
     <script src="assets/js/validation.js"></script>
-</div>
 </main>
 <?php require __DIR__ . '/../src/partials/footer.php'; ?>
 </body>

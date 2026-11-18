@@ -189,110 +189,185 @@ $stmt->execute(['status' => $active_filter]);
 $filtered_institutions = $stmt->fetchAll();
 
 ?>
-<?php $page_title = 'Super Admin - CertiVault'; require __DIR__ . '/../src/partials/head.php'; ?>
-<?php require __DIR__ . '/../src/partials/header.php'; ?>
+<?php
+require_once __DIR__ . '/../src/utils/admin_ui.php';
+$filter_labels = ['pending' => 'Pending', 'approved' => 'Approved', 'rejected' => 'Rejected'];
+$filter_icons = ['pending' => 'clock', 'approved' => 'check', 'rejected' => 'x'];
+$page_title = 'Super Admin - CertiVault';
+require __DIR__ . '/../src/partials/head.php';
+require __DIR__ . '/../src/partials/header.php';
+?>
 <main id="main">
-    <div class="container shell-wide">
-        <div class="page-head">
-            <h2>Super Admin Dashboard</h2>
-            <div>
-                <a href="change_password.php" class="btn btn-secondary">Change Password</a>
+    <div class="admin-shell">
+        <section class="admin-hero" aria-labelledby="saTitle">
+            <span class="admin-hero-art" aria-hidden="true"><?= cv_icon('building') ?></span>
+            <div class="admin-hero-grid">
+                <div>
+                    <span class="admin-eyebrow"><?= cv_icon('shield') ?> Platform administration</span>
+                    <h1 id="saTitle">Super Admin Dashboard</h1>
+                    <p class="admin-hero-sub">Review institutions before they can sign certificates, and manage the external registries verifiers can query.</p>
+                    <div class="hero-chips">
+                        <span class="hero-chip"><?= cv_icon('building') ?> <?= count($filtered_institutions) ?> <?= htmlspecialchars(strtolower($filter_labels[$active_filter])) ?> institution<?= count($filtered_institutions) === 1 ? '' : 's' ?></span>
+                        <span class="hero-chip"><?= cv_icon('database') ?> Registry lookups <?= EXT_REGISTRY_ENABLED ? 'enabled' : 'disabled' ?></span>
+                    </div>
+                </div>
+                <div class="admin-hero-actions">
+                    <a href="change_password.php" class="btn btn-outline-light"><?= cv_icon('lock') ?> Change Password</a>
+                </div>
             </div>
-        </div>
+        </section>
 
         <?php if ($message): ?>
-            <div class="alert alert-info"><?= htmlspecialchars($message) ?></div>
+            <div class="alert alert-info" role="status"><?= htmlspecialchars($message) ?></div>
         <?php endif; ?>
         <?php if (!empty($errors['rejection_reason'])): ?>
-            <div class="alert alert-danger"><?= htmlspecialchars($errors['rejection_reason']) ?></div>
+            <div class="alert alert-danger" role="alert"><?= htmlspecialchars($errors['rejection_reason']) ?></div>
         <?php endif; ?>
 
-<div class="tabs">
-            <a class="tab <?= $active_tab === 'institutions' ? 'active' : '' ?>" href="super_admin.php?tab=institutions&amp;status=<?= htmlspecialchars($active_filter) ?>">Institutions</a>
-            <a class="tab <?= $active_tab === 'external_sources' ? 'active' : '' ?>" href="super_admin.php?tab=external_sources">External sources</a>
-        </div>
-        <?php if ($active_tab === 'institutions'): ?>
-        <div class="tabs">
-            <a class="tab <?= $active_filter === 'pending' ? 'active' : '' ?>" href="super_admin.php?status=pending">Pending</a>
-            <a class="tab <?= $active_filter === 'approved' ? 'active' : '' ?>" href="super_admin.php?status=approved">Approved</a>
-            <a class="tab <?= $active_filter === 'rejected' ? 'active' : '' ?>" href="super_admin.php?status=rejected">Rejected</a>
+        <div class="tab-bar">
+            <nav class="tabs" aria-label="Sections">
+                <a class="tab <?= $active_tab === 'institutions' ? 'active' : '' ?>"<?= $active_tab === 'institutions' ? ' aria-current="page"' : '' ?> href="super_admin.php?tab=institutions&amp;status=<?= htmlspecialchars($active_filter) ?>"><?= cv_icon('building') ?> Institutions</a>
+                <a class="tab <?= $active_tab === 'external_sources' ? 'active' : '' ?>"<?= $active_tab === 'external_sources' ? ' aria-current="page"' : '' ?> href="super_admin.php?tab=external_sources"><?= cv_icon('database') ?> External sources</a>
+            </nav>
+            <?php if ($active_tab === 'institutions'): ?>
+            <nav class="tabs" aria-label="Institution status">
+                <?php foreach ($filter_labels as $fk => $fl): ?>
+                    <a class="tab <?= $active_filter === $fk ? 'active' : '' ?>"<?= $active_filter === $fk ? ' aria-current="page"' : '' ?> href="super_admin.php?status=<?= $fk ?>"><?= cv_icon($filter_icons[$fk]) ?> <?= $fl ?></a>
+                <?php endforeach; ?>
+            </nav>
+            <?php endif; ?>
         </div>
 
-        <h3><?= htmlspecialchars(ucfirst($active_filter)) ?> Institutions</h3>
-        <?php if (count($filtered_institutions) > 0): ?>
-            <div class="table-wrap">
-            <table class="table">
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>Name</th>
-                        <th>Email</th>
-                        <?php if ($active_filter === 'rejected'): ?><th>Reason</th><?php endif; ?>
-                        <th>Action</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php foreach ($filtered_institutions as $inst): ?>
-                        <tr>
-                            <td><?= (int)$inst['id'] ?></td>
-                            <td><?= htmlspecialchars($inst['name']) ?></td>
-                            <td><?= htmlspecialchars($inst['email']) ?></td>
+        <?php if ($active_tab === 'institutions'): ?>
+        <section aria-labelledby="queueTitle">
+            <div class="section-label">
+                <h2 id="queueTitle"><?= htmlspecialchars(ucfirst($active_filter)) ?> Institutions</h2>
+                <p><?= $active_filter === 'pending' ? 'Approving generates the institution’s RSA signing keys.' : 'Read-only list.' ?></p>
+            </div>
+            <?php if (count($filtered_institutions) > 0): ?>
+                <div class="approval-grid">
+                    <?php foreach ($filtered_institutions as $idx => $inst): ?>
+                        <article class="card approval-card" data-reveal data-reveal-delay="<?= min(5, $idx + 1) ?>">
+                            <div class="approval-top">
+                                <span class="avatar avatar-lg avatar-<?= cv_avatar_hue($inst['name']) ?>" aria-hidden="true"><?= htmlspecialchars(cv_initials($inst['name'])) ?></span>
+                                <div class="flex-1">
+                                    <h3><?= htmlspecialchars($inst['name']) ?></h3>
+                                    <p><?= htmlspecialchars($inst['email']) ?></p>
+                                </div>
+                            </div>
+                            <div class="approval-meta">
+                                <span class="id-chip">ID <?= (int)$inst['id'] ?></span>
+                                <span class="badge-status badge-<?= htmlspecialchars($active_filter) ?>"><?= htmlspecialchars($active_filter) ?></span>
+                            </div>
                             <?php if ($active_filter === 'rejected'): ?>
-                                <td><?= htmlspecialchars($inst['rejection_reason'] ?? '') ?></td>
+                                <p class="reason-note"><strong>Reason:</strong> <?= htmlspecialchars($inst['rejection_reason'] ?? '') ?></p>
                             <?php endif; ?>
-                            <td>
-                                <?php if ($active_filter === 'pending'): ?>
+                            <?php if ($active_filter === 'pending'): ?>
+                            <div class="approval-actions">
                                 <form method="POST" action="" class="inline-form" data-confirm="Approve this institution and generate its RSA keys?">
                                     <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
                                     <input type="hidden" name="approve_id" value="<?= (int)$inst['id'] ?>">
-                                    <button type="submit" class="btn btn-primary">Approve</button>
+                                    <button type="submit" class="btn btn-verified btn-block"><?= cv_icon('check') ?> Approve</button>
                                 </form>
-                                <form method="POST" action="" class="inline-form" style="margin-top:6px;" data-confirm="Reject this institution?">
+                                <form method="POST" action="" class="inline-form" data-confirm="Reject this institution?">
                                     <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
                                     <input type="hidden" name="reject_id" value="<?= (int)$inst['id'] ?>">
-                                    <input type="text" name="rejection_reason" placeholder="Reason (required)" data-validate="required|min:3|max:500" required>
-                                    <button type="submit" class="btn btn-danger">Reject</button>
+                                    <div class="form-group m-0">
+                                        <label for="reject_reason_<?= (int)$inst['id'] ?>" class="visually-hidden">Rejection reason for <?= htmlspecialchars($inst['name']) ?></label>
+                                        <div class="reject-form">
+                                            <input type="text" name="rejection_reason" id="reject_reason_<?= (int)$inst['id'] ?>" placeholder="Reason (required)" data-validate="required|min:3|max:500" required>
+                                            <button type="submit" class="btn btn-danger"><?= cv_icon('x') ?> Reject</button>
+                                        </div>
+                                    </div>
                                 </form>
-                                <?php else: ?>
-                                    —
-                                <?php endif; ?>
-                            </td>
-                        </tr>
+                            </div>
+                            <?php endif; ?>
+                        </article>
                     <?php endforeach; ?>
-                </tbody>
-            </table>
+                </div>
+            <?php else: ?>
+                <div class="card">
+                    <div class="empty-state">
+                        <span class="empty-state-icon"><?= cv_icon($active_filter === 'pending' ? 'inbox' : 'building') ?></span>
+                        <h3><?= $active_filter === 'pending' ? 'Queue is empty' : 'Nothing here' ?></h3>
+                        <p>No <?= htmlspecialchars($active_filter) ?> institutions.</p>
+                    </div>
+                </div>
+            <?php endif; ?>
+        </section>
+        <?php else: ?>
+        <section class="card data-card" aria-labelledby="sourcesTitle">
+            <div class="card-head">
+                <div class="card-head-text">
+                    <h2 id="sourcesTitle">Managed external sources</h2>
+                    <p>Registry lookups are <?= EXT_REGISTRY_ENABLED ? 'enabled' : 'disabled by default' ?>. Source settings are encrypted at rest; secret values are never shown again.</p>
+                </div>
             </div>
-        <?php else: ?>
-            <p>No <?= htmlspecialchars($active_filter) ?> institutions.</p>
-        <?php endif; ?>
-        <?php else: ?>
-        <h3>Managed external sources</h3>
-        <p>Registry lookups are <?= EXT_REGISTRY_ENABLED ? 'enabled' : 'disabled by default' ?>. Source settings are encrypted at rest; secret values are never shown again.</p>
-        <?php if (!empty($errors['source'])): ?><div class="alert alert-danger"><?= htmlspecialchars($errors['source']) ?></div><?php endif; ?>
-        <?php
-        $sources = $db->query('SELECT id,slug,label,type,enabled,allowed_host,rate_limit FROM external_sources ORDER BY label')->fetchAll();
-        ?>
-        <?php if ($sources): ?><div class="table-wrap"><table class="table"><thead><tr><th>Source</th><th>Type</th><th>Allowed hosts</th><th>Rate/min</th><th>State</th><th>Actions</th></tr></thead><tbody>
-        <?php foreach ($sources as $s): ?><tr><td><?= htmlspecialchars($s['label']) ?> (<?= htmlspecialchars($s['slug']) ?>)</td><td><?= htmlspecialchars($s['type']) ?></td><td><?= htmlspecialchars($s['allowed_host']) ?></td><td><?= (int)$s['rate_limit'] ?></td><td><?= $s['enabled'] ? 'Enabled' : 'Disabled' ?></td><td><a class="btn btn-secondary" href="super_admin.php?tab=external_sources&amp;edit_source=<?= (int)$s['id'] ?>">Edit</a> <form method="POST" class="inline-form"><input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>"><input type="hidden" name="tab" value="external_sources"><button class="btn btn-danger" name="source_disable" value="<?= (int)$s['id'] ?>">Disable</button></form></td></tr><?php endforeach; ?>
-        </tbody></table></div><?php endif; ?>
-        <h3><?= $source_form['id'] ? 'Edit' : 'Add' ?> source</h3>
-        <form method="POST" class="card"><input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>"><input type="hidden" name="tab" value="external_sources"><input type="hidden" name="source_id" value="<?= (int)$source_form['id'] ?>">
-            <div class="form-group"><label>Slug</label><input name="slug" required pattern="[a-z0-9][a-z0-9_-]{1,63}" data-validate="required|min:2|max:64" value="<?= htmlspecialchars((string)$source_form['slug']) ?>"></div>
-            <div class="form-group"><label>Label</label><input name="label" required maxlength="120" data-validate="required|min:1|max:120" value="<?= htmlspecialchars((string)$source_form['label']) ?>"></div>
-            <div class="form-group"><label>Type</label><select name="type"><option value="open_badges" <?= $source_form['type']==='open_badges'?'selected':'' ?>>Open Badges / Credly</option><option value="remote_db" <?= $source_form['type']==='remote_db'?'selected':'' ?>>Remote database</option></select></div>
-            <div class="form-group"><label>Allowed hosts (comma-separated)</label><input name="allowed_host" required data-validate="required|max:255" value="<?= htmlspecialchars((string)$source_form['allowed_host']) ?>" placeholder="api.credly.com,www.credly.com"></div>
-            <div class="form-group"><label>Rate limit / 10 minutes / IP</label><input type="number" name="rate_limit" min="1" max="1000" value="<?= (int)$source_form['rate_limit'] ?>" data-validate="required|number|range:1,1000" required></div>
-            <div class="form-group"><label>Adapter configuration (JSON; secrets encrypted)</label><textarea name="config_json" rows="7" data-validate="json" placeholder='Credly: {"provider":"credly"}; Open Badges: {"template":"https://…/{id}"}; remote DB: {"dsn":"mysql:…","user":"…","pass":"…","table":"external_certificates","cols":{"id":"certificate_id","holder":"holder","title":"title","issuer":"issuer","date":"issue_date","status":"status"}}'><?= htmlspecialchars((string)$source_form['config_json']) ?></textarea></div>
-            <label><input type="checkbox" name="enabled" value="1" <?= $source_form['enabled']?'checked':'' ?>> Enable this source</label>
-            <div class="form-group"><label>Sample lookup ID (optional)</label><input name="sample_id" maxlength="255"></div>
-            <button class="btn btn-primary" name="source_save" value="1">Save source</button>
-            <button class="btn btn-secondary" name="source_test" value="1">Test connection (without saving)</button>
-        </form>
-        <p><small>To enable lookups set <code>EXT_REGISTRY_ENABLED</code> to true in <code>src/config/config.php</code> or local configuration. Legacy EXT_* config remains a fallback.</small></p>
+            <?php if (!empty($errors['source'])): ?><div class="alert alert-danger" role="alert"><?= htmlspecialchars($errors['source']) ?></div><?php endif; ?>
+            <?php
+            $sources = $db->query('SELECT id,slug,label,type,enabled,allowed_host,rate_limit FROM external_sources ORDER BY label')->fetchAll();
+            ?>
+            <?php if ($sources): ?><div class="table-wrap"><table class="table admin-table"><thead><tr><th scope="col">Source</th><th scope="col">Type</th><th scope="col">Allowed hosts</th><th scope="col">Rate/min</th><th scope="col">State</th><th scope="col" class="actions-cell">Actions</th></tr></thead><tbody>
+            <?php foreach ($sources as $s): ?><tr>
+                <td data-label="Source"><span class="cell-stack"><span class="cell-title"><?= htmlspecialchars($s['label']) ?></span><span class="cell-sub">(<?= htmlspecialchars($s['slug']) ?>)</span></span></td>
+                <td data-label="Type"><?= htmlspecialchars($s['type']) ?></td>
+                <td data-label="Allowed hosts" class="wrap-anywhere"><?= htmlspecialchars($s['allowed_host']) ?></td>
+                <td data-label="Rate/min" class="num"><?= (int)$s['rate_limit'] ?></td>
+                <td data-label="State"><span class="badge-status badge-<?= $s['enabled'] ? 'valid' : 'invalid' ?>"><?= $s['enabled'] ? 'Enabled' : 'Disabled' ?></span></td>
+                <td data-label="Actions" class="actions-cell"><span class="row-actions"><a class="btn btn-secondary btn-sm" href="super_admin.php?tab=external_sources&amp;edit_source=<?= (int)$s['id'] ?>"><?= cv_icon('pen') ?> Edit</a> <form method="POST" class="inline-form"><input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>"><input type="hidden" name="tab" value="external_sources"><button class="btn btn-danger btn-sm" name="source_disable" value="<?= (int)$s['id'] ?>">Disable</button></form></span></td>
+            </tr><?php endforeach; ?>
+            </tbody></table></div><?php else: ?>
+                <div class="empty-state">
+                    <span class="empty-state-icon"><?= cv_icon('database') ?></span>
+                    <h3>No external sources yet</h3>
+                    <p>Add an Open Badges / Credly source or a remote database below.</p>
+                </div>
+            <?php endif; ?>
+        </section>
+
+        <section class="card form-card" aria-labelledby="sourceFormTitle">
+            <div class="card-head">
+                <div class="card-head-text">
+                    <h2 id="sourceFormTitle"><?= $source_form['id'] ? 'Edit' : 'Add' ?> source</h2>
+                    <p>Hosts are allow-listed; anything else is refused.</p>
+                </div>
+            </div>
+            <form method="POST" class="source-form"><input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>"><input type="hidden" name="tab" value="external_sources"><input type="hidden" name="source_id" value="<?= (int)$source_form['id'] ?>">
+                <fieldset class="form-section">
+                    <legend class="form-section-title"><span class="form-section-num" aria-hidden="true">1</span> Identity</legend>
+                    <div class="form-row">
+                        <div class="form-group"><label for="src_slug">Slug</label><input id="src_slug" name="slug" required pattern="[a-z0-9][a-z0-9_-]{1,63}" data-validate="required|min:2|max:64" value="<?= htmlspecialchars((string)$source_form['slug']) ?>"></div>
+                        <div class="form-group"><label for="src_label">Label</label><input id="src_label" name="label" required maxlength="120" data-validate="required|min:1|max:120" value="<?= htmlspecialchars((string)$source_form['label']) ?>"></div>
+                    </div>
+                    <div class="form-group"><label for="src_type">Type</label><select id="src_type" name="type"><option value="open_badges" <?= $source_form['type']==='open_badges'?'selected':'' ?>>Open Badges / Credly</option><option value="remote_db" <?= $source_form['type']==='remote_db'?'selected':'' ?>>Remote database</option></select></div>
+                </fieldset>
+                <fieldset class="form-section">
+                    <legend class="form-section-title"><span class="form-section-num" aria-hidden="true">2</span> Network &amp; limits</legend>
+                    <div class="form-row">
+                        <div class="form-group"><label for="src_hosts">Allowed hosts (comma-separated)</label><input id="src_hosts" name="allowed_host" required data-validate="required|max:255" value="<?= htmlspecialchars((string)$source_form['allowed_host']) ?>" placeholder="api.credly.com,www.credly.com"></div>
+                        <div class="form-group"><label for="src_rate">Rate limit / 10 minutes / IP</label><input id="src_rate" type="number" name="rate_limit" min="1" max="1000" value="<?= (int)$source_form['rate_limit'] ?>" data-validate="required|number|range:1,1000" required></div>
+                    </div>
+                </fieldset>
+                <fieldset class="form-section">
+                    <legend class="form-section-title"><span class="form-section-num" aria-hidden="true">3</span> Adapter</legend>
+                    <div class="form-group"><label for="src_config">Adapter configuration (JSON; secrets encrypted)</label><textarea id="src_config" class="mono" name="config_json" rows="7" data-validate="json" placeholder='Credly: {"provider":"credly"}; Open Badges: {"template":"https://…/{id}"}; remote DB: {"dsn":"mysql:…","user":"…","pass":"…","table":"external_certificates","cols":{"id":"certificate_id","holder":"holder","title":"title","issuer":"issuer","date":"issue_date","status":"status"}}'><?= htmlspecialchars((string)$source_form['config_json']) ?></textarea></div>
+                    <label class="checkbox-row"><input type="checkbox" name="enabled" value="1" <?= $source_form['enabled']?'checked':'' ?>> Enable this source</label>
+                    <div class="form-group"><label for="src_sample">Sample lookup ID (optional)</label><input id="src_sample" name="sample_id" maxlength="255"></div>
+                </fieldset>
+                <div class="form-actions">
+                    <p class="config-hint">To enable lookups set <code>EXT_REGISTRY_ENABLED</code> to true in <code>src/config/config.php</code> or local configuration. Legacy EXT_* config remains a fallback.</p>
+                    <div class="btn-row m-0">
+                        <button class="btn btn-primary" name="source_save" value="1"><?= cv_icon('check') ?> Save source</button>
+                        <button class="btn btn-secondary" name="source_test" value="1"><?= cv_icon('activity') ?> Test connection (without saving)</button>
+                    </div>
+                </div>
+            </form>
+        </section>
         <?php endif; ?>
     </div>
 </main>
 <?php require __DIR__ . '/../src/partials/footer.php'; ?>
     <script src="assets/js/validation.js"></script>
+    <script src="assets/js/admin-ui.js" defer></script>
 </body>
 </html>

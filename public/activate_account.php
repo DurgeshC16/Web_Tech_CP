@@ -142,67 +142,97 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 ?>
 <?php $page_title = 'Activate Account - CertiVault'; require __DIR__ . '/../src/partials/head.php'; ?>
 <?php require __DIR__ . '/../src/partials/header.php'; ?>
-<main id="main">
-    <div class="auth-wrap">
-    <div class="auth-card">
-        <div class="auth-brand">
-            <svg width="40" height="40" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="14" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="16" cy="16" r="9" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M16 10 L18.2 14.2 L22.5 14.8 L19.2 17.8 L20.2 22 L16 19.6 L11.8 22 L12.8 17.8 L9.5 14.8 L13.8 14.2 Z" fill="currentColor"/></svg>
-            <div class="brand-name">CertiVault</div>
-        </div>
-        <h2>Activate Your Account</h2>
-        <?php if ($password_known): ?>
-            <p>Enter the 6-digit code sent to <strong><?= htmlspecialchars($masked) ?></strong> to verify your email. Your password is the one you just chose.</p>
-        <?php else: ?>
-            <p>Enter the 6-digit code sent to <strong><?= htmlspecialchars($masked) ?></strong> and set your password.</p>
-        <?php endif; ?>
-        <?php if ($is_institution): ?>
-            <p class="text-muted">After verification, the CertiVault administrator reviews your institution; you can sign in once it is approved.</p>
-        <?php endif; ?>
-        <?php if ($notice): ?>
-            <div class="alert alert-info"><?= htmlspecialchars($notice) ?></div>
-        <?php endif; ?>
-        <?php if ($error): ?>
-            <div class="alert alert-danger"><?= htmlspecialchars($error) ?></div>
-        <?php endif; ?>
-        <?php if ($info): ?>
-            <div class="alert alert-success"><?= htmlspecialchars($info) ?></div>
-        <?php endif; ?>
+<main id="main" class="auth-page">
+    <div class="auth-split auth-shell">
+        <div class="auth-main">
+        <div class="auth-card">
+            <ol class="stepper auth-stepper" aria-label="Registration progress">
+                <li class="is-done">Your details</li>
+                <li class="is-current" aria-current="step">Verify email</li>
+                <li><?= $is_institution ? 'Admin review' : 'Sign in' ?></li>
+            </ol>
+            <div class="auth-card-head">
+                <span class="auth-icon auth-icon-mail" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M3 7.5l9 6 9-6"/></svg>
+                </span>
+                <h1>Activate Your Account</h1>
+                <?php if ($password_known): ?>
+                    <p class="auth-sub">Enter the 6-digit code sent to <strong class="auth-email-chip"><?= htmlspecialchars($masked) ?></strong> to verify your email. Your password is the one you just chose.</p>
+                <?php else: ?>
+                    <p class="auth-sub">Enter the 6-digit code sent to <strong class="auth-email-chip"><?= htmlspecialchars($masked) ?></strong> and set your password.</p>
+                <?php endif; ?>
+            </div>
+            <?php if ($is_institution): ?>
+                <p class="auth-note auth-note-box">After verification, the CertiVault administrator reviews your institution; you can sign in once it is approved.</p>
+            <?php endif; ?>
+            <?php if ($notice): ?>
+                <div class="alert alert-info"><?= htmlspecialchars($notice) ?></div>
+            <?php endif; ?>
+            <?php if ($error): ?>
+                <div class="alert alert-danger" role="alert"><?= htmlspecialchars($error) ?></div>
+            <?php endif; ?>
+            <?php if ($info): ?>
+                <div class="alert alert-success" role="status"><?= htmlspecialchars($info) ?></div>
+            <?php endif; ?>
 
-        <form method="POST" action="">
-            <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
-            <input type="hidden" name="user_id" value="<?= (int)$user_id ?>">
-            <div class="form-group">
-                <label for="otp_code">Verification Code:</label>
-                <input type="text" name="otp_code" id="otp_code" maxlength="6" inputmode="numeric" autocomplete="one-time-code" class="otp-input" data-validate="required|otp" required>
-                <?php render_field_error($errors, 'otp_code'); ?>
-            </div>
-            <?php if (!$password_known): ?>
-            <div class="form-group">
-                <label for="password">Set Password:</label>
-                <input type="password" name="password" id="password" autocomplete="new-password" data-validate="required|min:8|max:72|strong" required>
-                <?php render_field_error($errors, 'password'); ?>
-            </div>
-            <div class="form-group">
-                <label for="confirm_password">Confirm Password:</label>
-                <input type="password" name="confirm_password" id="confirm_password" autocomplete="new-password" data-validate="required|match:#password" required>
-                <?php render_field_error($errors, 'confirm_password'); ?>
-            </div>
-            <?php endif; ?>
-            <button type="submit" class="btn btn-primary">Activate Account</button>
-        </form>
-        <form method="POST" action="" style="margin-top:12px;">
-            <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
-            <input type="hidden" name="user_id" value="<?= (int)$user_id ?>">
-            <input type="hidden" name="resend_otp" value="1">
-            <?php $resend_wait = otp_cooldown_remaining($db, $user_id, 'activation'); ?>
-            <button type="submit" class="btn btn-secondary" id="resendBtn" <?php if ($resend_wait > 0) echo 'data-wait="' . (int)$resend_wait . '"'; ?>>Resend verification code</button>
-            <?php if ($resend_wait > 0): ?>
-                <small class="field-note" style="margin-left:8px;" id="resendCountdown">Try again in <?= (int)$resend_wait ?> second<?= $resend_wait === 1 ? '' : 's' ?>.</small>
-            <?php endif; ?>
-        </form>
+            <form method="POST" action="" class="auth-form" data-loading>
+                <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
+                <input type="hidden" name="user_id" value="<?= (int)$user_id ?>">
+                <div class="form-group auth-otp-group">
+                    <label for="otp_code">Verification Code</label>
+                    <input type="text" name="otp_code" id="otp_code" maxlength="6" inputmode="numeric" autocomplete="one-time-code" class="otp-input otp-slots" data-validate="required|otp" required>
+                    <?php render_field_error($errors, 'otp_code'); ?>
+                </div>
+                <?php if (!$password_known): ?>
+                <div class="form-group">
+                    <label for="password">Set Password</label>
+                    <input type="password" name="password" id="password" autocomplete="new-password" data-validate="required|min:8|max:72|strong" required>
+                    <?php render_field_error($errors, 'password'); ?>
+                </div>
+                <div class="form-group">
+                    <label for="confirm_password">Confirm Password</label>
+                    <input type="password" name="confirm_password" id="confirm_password" autocomplete="new-password" data-validate="required|match:#password" required>
+                    <?php render_field_error($errors, 'confirm_password'); ?>
+                </div>
+                <?php endif; ?>
+                <button type="submit" class="btn btn-primary btn-lg btn-block">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 13l4 4L19 7"/></svg>
+                    Activate Account
+                </button>
+            </form>
+            <form method="POST" action="" class="auth-resend">
+                <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
+                <input type="hidden" name="user_id" value="<?= (int)$user_id ?>">
+                <input type="hidden" name="resend_otp" value="1">
+                <?php $resend_wait = otp_cooldown_remaining($db, $user_id, 'activation'); ?>
+                <span class="auth-resend-text">No email after a minute? Check your spam folder, or</span>
+                <button type="submit" class="btn btn-secondary" id="resendBtn" <?php if ($resend_wait > 0) echo 'data-wait="' . (int)$resend_wait . '"'; ?>>Resend verification code</button>
+                <?php if ($resend_wait > 0): ?>
+                    <small class="field-note" id="resendCountdown">Try again in <?= (int)$resend_wait ?> second<?= $resend_wait === 1 ? '' : 's' ?>.</small>
+                <?php endif; ?>
+            </form>
+        </div>
+        </div>
+
+        <aside class="auth-aside" aria-labelledby="authAsideTitle">
+            <span class="auth-eyebrow"><span class="eyebrow-dot" aria-hidden="true"></span> Check your inbox</span>
+            <h2 id="authAsideTitle">One code and you are in.</h2>
+            <p>We emailed a 6-digit code to confirm the address belongs to you. It keeps your certificates tied to the right person.</p>
+            <ol class="auth-flow">
+                <li class="is-done" data-reveal="left" data-reveal-delay="1"><span class="auth-flow-num" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M5 13l4 4L19 7"/></svg>
+                </span><span><strong>Account details</strong> saved</span></li>
+                <li data-reveal="left" data-reveal-delay="2"><span class="auth-flow-num" aria-hidden="true">2</span><span><strong>Enter the code</strong> from the email</span></li>
+                <?php if ($is_institution): ?>
+                <li data-reveal="left" data-reveal-delay="3"><span class="auth-flow-num" aria-hidden="true">3</span><span><strong>Administrator review</strong> &mdash; then start issuing</span></li>
+                <?php else: ?>
+                <li data-reveal="left" data-reveal-delay="3"><span class="auth-flow-num" aria-hidden="true">3</span><span><strong>Sign in</strong> and see your certificates</span></li>
+                <?php endif; ?>
+            </ol>
+            <svg class="auth-aside-art" viewBox="0 0 200 200" aria-hidden="true" focusable="false"><g fill="none" stroke="#fff" stroke-width="2"><circle cx="100" cy="100" r="92" stroke-opacity=".35"/><circle cx="100" cy="100" r="70" stroke-opacity=".5" stroke-dasharray="4 8"/><rect x="52" y="66" width="96" height="68" rx="10" stroke-width="5"/><path d="M52 76l48 32 48-32" stroke-width="5" stroke-linejoin="round"/></g></svg>
+        </aside>
     </div>
     <script src="assets/js/validation.js"></script>
-</div>
 </main>
 <?php require __DIR__ . '/../src/partials/footer.php'; ?>
 </body>

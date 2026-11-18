@@ -48,19 +48,61 @@ $stmt = $db->prepare('SELECT i.name,k.key_id,k.public_key,k.valid_from FROM inst
 $stmt->execute(['iid'=>$institutionId]);
 $activeKey = $stmt->fetch(PDO::FETCH_ASSOC);
 ?>
-<?php $page_title='Rotate Institution Key - CertiVault'; require __DIR__ . '/../src/partials/head.php'; ?>
-<?php require __DIR__ . '/../src/partials/header.php'; ?>
-<main id="main"><div class="container shell-narrow">
-    <h2>Rotate signing key</h2>
-    <p><?= htmlspecialchars((string)($activeKey['name'] ?? 'Your institution')) ?>’s certificates retain their key version. Rotating changes the key used for future certificates only.</p>
-    <?php if ($message): ?><div class="alert alert-info"><?= htmlspecialchars($message) ?></div><?php endif; ?>
-    <?php if ($error): ?><div class="alert alert-danger"><?= htmlspecialchars($error) ?></div><?php endif; ?>
-    <?php if ($activeKey): ?><div class="card"><strong>Current key v<?= (int)$activeKey['key_id'] ?></strong><p>SHA-256: <?= htmlspecialchars(CryptoService::fingerprintPublicKey($activeKey['public_key'])) ?></p></div><?php endif; ?>
-    <form method="POST" class="card" data-confirm="Generate a new signing key? Old certificates will continue using their recorded key version.">
+<?php
+require_once __DIR__ . '/../src/utils/admin_ui.php';
+$page_title = 'Rotate Institution Key - CertiVault';
+require __DIR__ . '/../src/partials/head.php';
+require __DIR__ . '/../src/partials/header.php';
+?>
+<main id="main"><div class="admin-shell admin-shell-narrow">
+    <header class="admin-head admin-head-warn">
+        <div class="admin-head-row">
+            <span class="admin-head-icon" aria-hidden="true"><?= cv_icon('key') ?></span>
+            <div class="admin-head-text">
+                <ol class="crumbs" aria-label="Breadcrumb"><li><a href="admin_dashboard.php">Dashboard</a></li><li aria-current="page">Rotate key</li></ol>
+                <h1>Rotate signing key</h1>
+                <p class="admin-head-sub"><?= htmlspecialchars((string)($activeKey['name'] ?? 'Your institution')) ?>’s certificates retain their key version. Rotating changes the key used for future certificates only.</p>
+            </div>
+        </div>
+    </header>
+    <?php if ($message): ?><div class="alert alert-info" role="status"><?= htmlspecialchars($message) ?></div><?php endif; ?>
+    <?php if ($error): ?><div class="alert alert-danger" role="alert"><?= htmlspecialchars($error) ?></div><?php endif; ?>
+    <?php if ($activeKey): ?>
+        <section class="card zone-card" aria-labelledby="currentKeyTitle">
+            <div class="key-card-head">
+                <div class="zone-head">
+                    <span class="zone-icon" aria-hidden="true"><?= cv_icon('shield') ?></span>
+                    <div><h2 id="currentKeyTitle">Current key v<?= (int)$activeKey['key_id'] ?></h2><p>Active since <?= htmlspecialchars(date('M j, Y', strtotime((string)$activeKey['valid_from']))) ?></p></div>
+                </div>
+                <span class="badge-status badge-valid">active</span>
+            </div>
+            <div>
+                <p class="text-sm text-muted mb-1">SHA-256 fingerprint</p>
+                <div class="token-row">
+                    <code class="fingerprint" id="currentFingerprint"><?= htmlspecialchars(CryptoService::fingerprintPublicKey($activeKey['public_key'])) ?></code>
+                    <button type="button" class="btn btn-ghost btn-sm btn-icon-sm" data-copy-target="currentFingerprint" data-copy-message="Fingerprint copied" aria-label="Copy fingerprint" title="Copy"><?= cv_icon('copy') ?></button>
+                </div>
+            </div>
+        </section>
+    <?php endif; ?>
+    <form method="POST" class="card zone-card zone-warn" data-confirm="Generate a new signing key? Old certificates will continue using their recorded key version." data-loading>
         <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
-        <p>The new private key is encrypted at rest. Download or publish its fingerprint after rotation so verifiers can pin it independently.</p>
-        <button type="submit" class="btn btn-warn">Rotate key</button>
-        <a href="admin_dashboard.php" class="btn btn-secondary">Cancel</a>
+        <div class="zone-head">
+            <span class="zone-icon" aria-hidden="true"><?= cv_icon('refresh') ?></span>
+            <div><h2>Generate a new key</h2><p>Use this after a suspected compromise or as routine hygiene.</p></div>
+        </div>
+        <ul class="consequences">
+            <li><span class="cq-icon cq-ok" aria-hidden="true"><?= cv_icon('check') ?></span><span><strong>Old certificates keep verifying</strong> with the key version recorded on each of them.</span></li>
+            <li><span class="cq-icon cq-info" aria-hidden="true"><?= cv_icon('key') ?></span><span><strong>New certificates use the new key.</strong> The current key is retired, not deleted.</span></li>
+            <li><span class="cq-icon cq-warn" aria-hidden="true"><?= cv_icon('lock') ?></span><span>The new private key is encrypted at rest. Download or publish its fingerprint after rotation so verifiers can pin it independently.</span></li>
+        </ul>
+        <div class="form-actions">
+            <a href="admin_dashboard.php" class="btn btn-secondary">Cancel</a>
+            <button type="submit" class="btn btn-warn"><?= cv_icon('key') ?> Rotate key</button>
+        </div>
     </form>
 </div></main>
 <?php require __DIR__ . '/../src/partials/footer.php'; ?>
+<script src="assets/js/admin-ui.js" defer></script>
+</body>
+</html>

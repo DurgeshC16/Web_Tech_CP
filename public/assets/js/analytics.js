@@ -5,6 +5,7 @@
  *   • daily chart: a crosshair snaps to the day under the pointer (or the
  *     focused day) and the tooltip shows value + date
  *   • ranked bars: the hovered/focused row lifts and shows its value
+ *   • bar lengths come from data-bar (percent) -> --bar (CSSOM, CSP-safe)
  */
 (function () {
     'use strict';
@@ -57,6 +58,22 @@
         });
         svg.addEventListener('pointerleave', clear);
     }
+
+    // ── Bar lengths ──────────────────────────────────────────────────────
+    // The markup carries data-bar="<percent>" instead of a style="" attribute
+    // (CSP: no inline styles); the width is applied through the --bar custom
+    // property (CSSOM is allowed). Set after two frames so the CSS width
+    // transition grows each bar from zero; immediate under reduced motion.
+    var reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    var bars = root.querySelectorAll('.viz-bar[data-bar]');
+    var sizeBars = function () {
+        bars.forEach(function (bar) {
+            var pct = parseFloat(bar.getAttribute('data-bar'));
+            if (isFinite(pct)) { bar.style.setProperty('--bar', Math.max(0, Math.min(100, pct)) + '%'); }
+        });
+    };
+    if (reduceMotion || !window.requestAnimationFrame) { sizeBars(); }
+    else { window.requestAnimationFrame(function () { window.requestAnimationFrame(sizeBars); }); }
 
     // ── Ranked bars ──────────────────────────────────────────────────────
     root.querySelectorAll('.viz-bar-row').forEach(function (row) {

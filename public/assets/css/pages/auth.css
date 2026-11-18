@@ -1,0 +1,672 @@
+/* ==========================================================================
+   CertiVault — page styles: auth
+   Auth pages: login.php, login_2fa.php, register_student.php, register_institution.php, forgot_password.php, reset_password.php, activate_account.php, change_password.php, two_factor.php
+
+   Loaded on every page by src/partials/head.php AFTER style.css, so rules
+   here may refine the shared design system (docs/12_DESIGN_SYSTEM.md).
+   Use the tokens from style.css (var(--accent), var(--glass-bg), var(--sp-*),
+   var(--radius*) ...) — never hard-code theme colours, and remember every
+   rule must work in BOTH [data-theme="light"] and [data-theme="dark"].
+   Scope selectors to the page (e.g. .page-auth ... or a page-specific
+   wrapper class) so they cannot leak into other pages.
+   No style="" attributes in markup: add a class here instead.
+   ========================================================================== */
+
+/* Every selector below starts with an auth-only hook: main.auth-page
+   (the eight sign-in / account pages), .tfa-* (two_factor.php), or the
+   page classes body.page-<script>. Nothing here styles other areas.
+
+   Contents
+     A. Split shell (gradient side panel + frosted form panel)
+     B. Card head, form polish, CAPTCHA, divider, alt links
+     C. Code fields (.otp-slots six-slot field, .code-input)
+     D. Password meter integration, resend rows, notes
+     E. Side panel: points, flow, stats, art
+     F. two_factor.php (.tfa-*)
+     G. Responsive, reduced motion, print                                 */
+
+/* ── A. Split shell ────────────────────────────────────────────────────── */
+main#main.auth-page { padding-top: var(--sp-5); }
+
+.auth-page .auth-shell {
+    position: relative;
+    max-width: 1080px;
+    background: var(--surface);
+    border-color: var(--border);
+}
+.auth-page .auth-shell .auth-main {
+    position: relative;
+    background: var(--surface);
+}
+/* Gradient hairline along the top of the form panel. */
+.auth-page .auth-shell .auth-main::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 3px;
+    background: var(--grad-btn);
+}
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+    .auth-page .auth-shell {
+        background: var(--glass-bg);
+        border-color: var(--glass-border);
+        -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(150%);
+        backdrop-filter: blur(var(--glass-blur)) saturate(150%);
+    }
+    /* Strong glass so form text keeps >= 7:1 over the page blobs. */
+    .auth-page .auth-shell .auth-main { background: var(--glass-bg-strong); }
+}
+.auth-page .auth-card { max-width: 440px; }
+.auth-page .auth-card.auth-card-wide { max-width: 500px; }
+.auth-page .auth-card h1 { text-align: center; }
+
+/* ── B. Card head + form polish ────────────────────────────────────────── */
+.auth-card-head { text-align: center; margin-bottom: var(--sp-5); }
+.auth-card-head h1 {
+    margin: 0 0 var(--sp-2);
+    font-size: clamp(1.55rem, 1.25rem + 0.9vw, 2rem);
+    letter-spacing: -0.02em;
+}
+.auth-sub { margin: 0 auto; max-width: 40ch; color: var(--muted); font-size: 0.975rem; line-height: 1.55; }
+
+.auth-page .auth-icon,
+.tfa-page .auth-icon {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 58px;
+    height: 58px;
+    margin-bottom: var(--sp-3);
+    border-radius: 18px;
+    color: #fff;
+    background: var(--grad-btn);
+    box-shadow: var(--shadow-glow), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+    animation: cv-pop .5s var(--ease-spring) both;
+}
+.auth-page .auth-icon svg, .tfa-page .auth-icon svg { width: 28px; height: 28px; }
+/* Pulsing ring (2FA step, mail icon) — cv-ring is defined in components.css. */
+.auth-page .auth-icon-pulse::after,
+.auth-page .auth-icon-mail::after {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    border: 2px solid var(--brand-2);
+    opacity: 0;
+    animation: cv-ring 2.4s var(--ease-out) .6s infinite;
+    pointer-events: none;
+}
+
+.auth-page .auth-form { margin-bottom: 0; }
+.auth-page .auth-form .form-group:last-of-type { margin-bottom: var(--sp-5); }
+.auth-page .auth-form .btn-lg { margin-top: var(--sp-1); }
+
+.auth-label-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--sp-2);
+    margin-bottom: 6px;
+}
+.auth-page .auth-form .form-group .auth-label-row > label { margin-bottom: 0; }
+.auth-label-link { font-size: 0.85rem; font-weight: 600; white-space: nowrap; }
+.auth-optional { font-weight: 500; color: var(--muted); }
+
+.auth-options { display: grid; gap: 2px; margin: calc(-1 * var(--sp-1)) 0 var(--sp-4); }
+.auth-page .auth-options .checkbox-row {
+    margin: 0;
+    padding: 6px 0;
+    align-items: center;
+    font-size: 0.9rem;
+    color: var(--ink-2);
+}
+.auth-page .auth-options .checkbox-row input { margin-top: 0; }
+
+/* CAPTCHA (markup comes from captcha_field_html(): label + chip + input). */
+.auth-page .auth-form .form-group.auth-captcha {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--sp-2) var(--sp-3);
+    padding: var(--sp-3) var(--sp-4);
+    background: var(--surface-2);
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius);
+}
+.auth-page .auth-form .form-group.auth-captcha > label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    font-size: 0.8125rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+.auth-page .auth-captcha .captcha-chip { margin: 0; }
+.auth-page .auth-captcha input { flex: 1 1 140px; width: auto; min-width: 0; }
+.auth-page .auth-captcha .field-error { flex-basis: 100%; margin-top: 0; }
+.auth-page .auth-captcha .g-recaptcha { max-width: 100%; overflow: hidden; }
+
+.auth-divider {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+    margin: var(--sp-5) 0 var(--sp-3);
+    color: var(--muted);
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+.auth-divider::before, .auth-divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+.auth-alt-links { display: grid; gap: var(--sp-2); }
+.auth-page .auth-alt-links .btn { justify-content: center; font-size: 0.9rem; }
+
+.auth-role-tabs.tabs { display: flex; width: 100%; margin: 0 0 var(--sp-5); }
+.auth-role-tabs .tab { flex: 1 1 0; }
+
+.auth-page .auth-stepper { margin-bottom: var(--sp-5); }
+.auth-page .auth-stepper a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+.auth-page .auth-stepper a:hover { color: var(--accent); }
+
+.auth-card-top { display: flex; justify-content: flex-start; margin-bottom: var(--sp-4); }
+.auth-back-link { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+.auth-back-link svg { transition: transform var(--dur-1) var(--ease-out); }
+.auth-back-link:hover svg { transform: translateX(-3px); }
+.auth-page .auth-foot a { font-weight: 600; }
+.auth-page .auth-foot.auth-foot-tight { margin-top: var(--sp-2); }
+.auth-page .auth-foot + .auth-note { margin-top: var(--sp-2); }
+
+.auth-note { margin: var(--sp-3) 0 0; color: var(--muted); font-size: 0.85rem; text-align: center; line-height: 1.5; }
+.auth-note.auth-note-box {
+    margin: 0 0 var(--sp-4);
+    padding: var(--sp-3) var(--sp-4);
+    text-align: left;
+    color: var(--ink-2);
+    background: var(--accent-soft);
+    border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+    border-radius: var(--radius);
+}
+.auth-email-chip {
+    display: inline-block;
+    padding: 0 10px;
+    border-radius: var(--radius-pill);
+    color: var(--ink);
+    background: var(--accent-soft);
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+.auth-resend-activation { margin: 0 0 var(--sp-4); }
+.auth-page .auth-have-code { margin: var(--sp-5) 0 0; }
+
+/* ── C. Code fields ────────────────────────────────────────────────────── */
+/* .otp-slots: six visible digit slots drawn as background boxes behind a
+   monospace, letter-spaced value. Geometry (all in ch of the input font):
+   each digit is 1ch wide + 1ch letter-spacing = a 2ch cell; slot i is a
+   1.6ch box centred on digit i. Left padding = 1ch + 12px and right padding
+   = 12px leave equal gaps (0.7ch + 12px) on both sides, and the content box
+   is exactly 12ch so the field never scrolls while typing. */
+.auth-page input.otp-input.otp-slots {
+    --otp-pad: calc(1ch + 12px);
+    --otp-slot: color-mix(in srgb, var(--accent) 13%, transparent);
+    --otp-box: linear-gradient(var(--otp-slot), var(--otp-slot));
+    display: block;
+    width: calc(13ch + 26px);
+    max-width: 100%;
+    margin-inline: auto;
+    font-size: 1.75rem !important;
+    letter-spacing: 1ch;
+    text-align: left;
+    padding: 0 12px 0 var(--otp-pad) !important;
+    caret-color: var(--accent);
+    background-image: var(--otp-box), var(--otp-box), var(--otp-box), var(--otp-box), var(--otp-box), var(--otp-box);
+    background-repeat: no-repeat;
+    background-size: 1.6ch 64%;
+    background-position:
+        calc(var(--otp-pad) - 0.3ch) 50%,
+        calc(var(--otp-pad) + 1.7ch) 50%,
+        calc(var(--otp-pad) + 3.7ch) 50%,
+        calc(var(--otp-pad) + 5.7ch) 50%,
+        calc(var(--otp-pad) + 7.7ch) 50%,
+        calc(var(--otp-pad) + 9.7ch) 50%;
+}
+.auth-page input.otp-input.otp-slots:focus { --otp-slot: color-mix(in srgb, var(--accent) 20%, transparent); }
+.auth-page input.otp-input.otp-slots[aria-invalid="true"] { --otp-slot: color-mix(in srgb, var(--danger) 16%, transparent); }
+.auth-otp-group { text-align: center; }
+.auth-page .auth-form .auth-otp-group > label { text-align: center; }
+.auth-otp-group .field-error { justify-content: center; text-align: left; }
+
+/* .code-input: authenticator / recovery code (accepts 6 digits or xxxx-xxxx). */
+.auth-page input.code-input,
+.tfa-page input.code-input {
+    font-family: var(--font-mono);
+    font-size: 1.35rem;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-align: center;
+    min-height: 56px;
+    caret-color: var(--accent);
+}
+.auth-page input.code-input::placeholder,
+.tfa-page input.code-input::placeholder { font-size: 0.95rem; letter-spacing: 0.04em; font-weight: 500; }
+.tfa-page input.code-input.code-input-sm { font-size: 1.1rem; min-height: 46px; }
+
+/* ── D. Password meter + resend rows ───────────────────────────────────── */
+.auth-page .auth-form .pw-meter {
+    padding: var(--sp-2) var(--sp-3) var(--sp-3);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    animation: cv-slide-down .3s var(--ease-out);
+}
+.auth-page .auth-form .pw-meter-bar { height: 8px; }
+.auth-page .auth-form .pw-rules { margin-top: var(--sp-2); }
+/* The live checklist repeats the static hint: keep the hint for assistive
+   tech (aria-describedby) but hide it visually once the meter exists. */
+.auth-page .auth-password-group .pw-meter ~ .help-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.auth-page .auth-resend {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: var(--sp-2) var(--sp-3);
+    margin: var(--sp-4) 0 0;
+    padding-top: var(--sp-4);
+    border-top: 1px dashed var(--border-strong);
+    text-align: center;
+}
+.auth-resend-text { color: var(--muted); font-size: 0.9rem; }
+.auth-page .auth-resend .field-note { flex-basis: 100%; margin: 0; }
+
+/* ── E. Side panel ─────────────────────────────────────────────────────── */
+.auth-page .auth-aside {
+    --focus: #ffffff;
+    isolation: isolate;
+    padding: var(--sp-7) var(--sp-6);
+}
+/* Soft light orbs (pure CSS gradients; no images). */
+.auth-page .auth-aside::before,
+.auth-page .auth-aside::after {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    border-radius: 50%;
+    pointer-events: none;
+    animation: cv-orb 14s ease-in-out infinite alternate;
+}
+.auth-page .auth-aside::before {
+    width: 340px;
+    height: 340px;
+    top: -140px;
+    left: -120px;
+    background: radial-gradient(circle, rgba(165, 180, 252, 0.45), transparent 65%);
+}
+.auth-page .auth-aside::after {
+    width: 300px;
+    height: 300px;
+    bottom: -120px;
+    right: 10%;
+    background: radial-gradient(circle, rgba(103, 232, 249, 0.32), transparent 65%);
+    animation-duration: 18s;
+}
+.auth-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-2);
+    align-self: flex-start;
+    padding: 6px 14px;
+    border-radius: var(--radius-pill);
+    color: #fff;
+    background: rgba(255, 255, 255, 0.14);
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+.auth-page .auth-aside h2 {
+    margin: var(--sp-4) 0 var(--sp-3);
+    font-size: clamp(1.45rem, 1.05rem + 1.2vw, 2.1rem);
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+}
+.auth-page .auth-aside > p { margin: 0; max-width: 46ch; color: rgba(255, 255, 255, 0.92); line-height: 1.6; }
+.auth-page .auth-aside a { color: #fff; text-decoration: underline; text-underline-offset: 3px; font-weight: 600; }
+.auth-page .auth-aside strong { color: #fff; }
+
+.auth-points, .auth-flow { list-style: none; padding: 0; margin: var(--sp-5) 0 0; display: grid; gap: var(--sp-3); }
+.auth-page .auth-aside .auth-points li,
+.auth-page .auth-aside .auth-flow li {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+    color: rgba(255, 255, 255, 0.94);
+    line-height: 1.45;
+    transition: transform var(--dur-2) var(--ease-out);
+}
+.auth-page .auth-aside .auth-points li::before,
+.auth-page .auth-aside .auth-flow li::before { content: none; display: none; }
+.auth-page .auth-aside .auth-points li:hover,
+.auth-page .auth-aside .auth-flow li:hover { transform: translateX(4px); }
+.auth-point-icon, .auth-flow-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    border-radius: 11px;
+    color: #fff;
+    background: rgba(255, 255, 255, 0.16);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    font-weight: 800;
+}
+.auth-flow-num { border-radius: 50%; }
+.auth-page .auth-flow li.is-done .auth-flow-num { background: #fff; color: #3730a3; border-color: #fff; }
+
+.auth-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+    gap: var(--sp-3);
+    margin-top: var(--sp-6);
+}
+.auth-stat {
+    padding: var(--sp-3) var(--sp-4);
+    border-radius: var(--radius);
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    transition: transform var(--dur-2) var(--ease-out), background-color var(--dur-2) ease;
+}
+.auth-stat:hover { transform: translateY(-3px); background: rgba(255, 255, 255, 0.16); }
+.auth-stat-num {
+    display: block;
+    color: #fff;
+    font-family: var(--font-display);
+    font-size: 1.6rem;
+    font-weight: 800;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+}
+.auth-stat-label { display: block; margin-top: 2px; color: rgba(255, 255, 255, 0.9); font-size: 0.8rem; line-height: 1.35; }
+
+/* Top-right corner: the copy is vertically centred, so the corner stays
+   clear of the stat tiles. */
+.auth-page .auth-aside-art {
+    z-index: -1;
+    top: -40px;
+    right: -50px;
+    bottom: auto;
+    width: 260px;
+    height: 260px;
+    opacity: .18;
+    animation: cv-float 7s ease-in-out infinite;
+}
+
+/* ── F. two_factor.php ─────────────────────────────────────────────────── */
+.tfa-page .tfa-head { align-items: center; }
+.tfa-head-title { display: flex; align-items: center; gap: var(--sp-4); min-width: 0; }
+.tfa-page .tfa-head-title .auth-icon { margin: 0; flex-shrink: 0; }
+.tfa-page h1 { margin: 0; font-size: clamp(1.5rem, 1.2rem + 1vw, 2rem); letter-spacing: -0.02em; }
+.tfa-page .page-head-actions .badge-status { font-size: 0.8rem; padding: 6px 12px; }
+.tfa-grid { align-items: start; }
+.tfa-page .tfa-main > .card { margin: 0; }
+.tfa-page .card .card-title { margin-bottom: var(--sp-2); }
+
+/* Recovery codes */
+.tfa-page .tfa-codes { animation: cv-fade-up .5s var(--ease-out) both; }
+.tfa-page .tfa-codes .card-head { align-items: center; }
+.tfa-page .recovery-codes {
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 150px), 1fr));
+    gap: var(--sp-2);
+    margin: var(--sp-3) 0 0;
+    counter-reset: tfa-code;
+}
+.tfa-page .recovery-codes li { counter-increment: tfa-code; position: relative; }
+.tfa-page .recovery-codes li::before {
+    content: counter(tfa-code);
+    position: absolute;
+    left: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--muted);
+    font-size: 0.7rem;
+    font-weight: 700;
+}
+.tfa-page .recovery-codes code {
+    padding: 10px 10px 10px 26px;
+    color: var(--ink);
+    background: var(--surface);
+    border-color: var(--border-strong);
+    font-size: 1.02rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    transition: transform var(--dur-1) var(--ease-out), border-color var(--dur-1) ease;
+}
+.tfa-page .recovery-codes code:hover { transform: translateY(-2px); border-color: var(--accent); }
+.tfa-codes-actions { align-items: center; }
+
+/* Status + remaining-codes meter */
+.tfa-status-row { display: flex; align-items: flex-start; gap: var(--sp-4); }
+.tfa-status-icon {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    color: #fff;
+    background: var(--verified-solid);
+    box-shadow: 0 0 0 6px var(--verified-soft);
+    animation: cv-pop .5s var(--ease-spring) both;
+}
+.tfa-page .tfa-status .card-title { color: var(--verified); }
+.tfa-remaining {
+    margin: var(--sp-4) 0;
+    padding: var(--sp-3) var(--sp-4);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
+.tfa-remaining-label {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: var(--sp-2);
+    margin-bottom: var(--sp-2);
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+.tfa-remaining-label strong { font-size: 1.05rem; font-variant-numeric: tabular-nums; }
+.tfa-meter {
+    display: block;
+    width: 100%;
+    height: 10px;
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: var(--border);
+    -webkit-appearance: none;
+    appearance: none;
+}
+.tfa-meter::-webkit-meter-bar { height: 10px; border: 0; border-radius: var(--radius-pill); background: var(--border); }
+.tfa-meter::-webkit-meter-optimum-value { border-radius: var(--radius-pill); background: linear-gradient(90deg, #15803d, #0e7490); }
+.tfa-meter::-webkit-meter-suboptimum-value { border-radius: var(--radius-pill); background: var(--warn-solid); }
+.tfa-meter::-webkit-meter-even-less-good-value { border-radius: var(--radius-pill); background: var(--danger-solid); }
+.tfa-meter::-moz-meter-bar { border-radius: var(--radius-pill); background: linear-gradient(90deg, #15803d, #0e7490); }
+.tfa-meter:-moz-meter-sub-optimum::-moz-meter-bar { background: var(--warn-solid); }
+.tfa-meter:-moz-meter-sub-sub-optimum::-moz-meter-bar { background: var(--danger-solid); }
+.tfa-page .tfa-regen .form-group { flex: 1 1 200px; margin: 0; }
+.tfa-page .tfa-danger .card-title { color: var(--danger); }
+
+/* Setup: QR + confirm side by side from 768px */
+.tfa-setup-grid { display: grid; gap: var(--sp-6); }
+.tfa-page .tfa-setup .card-title { display: flex; align-items: center; gap: var(--sp-2); }
+.tfa-step-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    color: #fff;
+    background: var(--grad-btn);
+    box-shadow: var(--shadow-glow);
+    font-size: 0.9rem;
+    font-weight: 800;
+}
+.tfa-qr-frame {
+    display: flex;
+    justify-content: center;
+    width: fit-content;
+    max-width: 100%;
+    margin: var(--sp-4) auto;
+    padding: 14px;
+    border: 2px solid transparent;
+    border-radius: var(--radius-lg);
+    background:
+        linear-gradient(#fff, #fff) padding-box,
+        var(--grad-btn) border-box;
+    box-shadow: var(--shadow-lg);
+    animation: cv-pop .5s var(--ease-spring) both;
+}
+.tfa-page .tfa-qr-frame .totp-qr {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    border: 0;
+    border-radius: 4px;
+    box-shadow: none;
+}
+.tfa-key {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--sp-2);
+    padding: var(--sp-2) var(--sp-3);
+    background: var(--surface);
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius);
+}
+.tfa-page .tfa-key code {
+    flex: 1 1 180px;
+    min-width: 0;
+    padding: 0;
+    color: var(--ink);
+    background: none;
+    font-size: 0.95rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    overflow-wrap: anywhere;
+}
+
+/* Intro (2FA off) */
+.tfa-benefits { list-style: none; padding: 0; margin: var(--sp-4) 0 var(--sp-5); display: grid; gap: var(--sp-3); }
+.tfa-benefits li { display: flex; align-items: center; gap: var(--sp-3); color: var(--ink-2); font-weight: 500; }
+.tfa-benefit-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    border-radius: 11px;
+    color: var(--accent);
+    background: var(--accent-soft);
+}
+
+/* Aside "How it works" */
+.tfa-how { list-style: none; padding: 0; margin: var(--sp-3) 0 var(--sp-4); counter-reset: tfa-how; display: grid; gap: var(--sp-4); }
+.tfa-how li { counter-increment: tfa-how; position: relative; padding-left: 44px; color: var(--ink-2); line-height: 1.5; }
+.tfa-how li::before {
+    content: counter(tfa-how);
+    position: absolute;
+    left: 0;
+    top: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    color: #fff;
+    background: var(--grad-btn);
+    font-size: 0.85rem;
+    font-weight: 800;
+}
+.tfa-how strong { color: var(--ink); }
+
+/* ── G. Responsive, reduced motion, print ──────────────────────────────── */
+@media (min-width: 480px) {
+    .auth-alt-links { grid-template-columns: 1fr 1fr; }
+}
+@media (min-width: 768px) {
+    .tfa-setup-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
+/* Two narrow columns are too tight inside the split form panel. */
+@media (min-width: 768px) and (max-width: 1199px) {
+    .auth-page .auth-shell .form-row { display: block; }
+}
+@media (min-width: 900px) {
+    .auth-page .auth-shell .auth-aside { order: -1; }
+}
+@media (min-width: 1024px) {
+    .tfa-page .tfa-aside { position: sticky; top: calc(var(--header-h) + var(--sp-4)); }
+}
+/* Below 900px the design system hides .auth-aside; here it stays as a
+   compact gradient panel under the form so phones keep the context. */
+@media (max-width: 899px) {
+    .auth-page .auth-shell .auth-aside { display: block; padding: var(--sp-6) var(--sp-5); }
+    .auth-page .auth-aside h2 { font-size: 1.4rem; }
+    .auth-page .auth-aside-art { width: 170px; height: 170px; top: -30px; right: -40px; opacity: .14; }
+    .auth-stats { grid-template-columns: repeat(auto-fit, minmax(86px, 1fr)); gap: var(--sp-2); }
+    .auth-stat { padding: var(--sp-2) var(--sp-3); }
+    .auth-stat-num { font-size: 1.35rem; }
+    .auth-page .auth-shell .auth-main { padding: var(--sp-6) var(--sp-5); }
+}
+@media (max-width: 479px) {
+    main#main.auth-page { padding: var(--sp-4) var(--sp-3) var(--sp-7); }
+    .auth-page .auth-shell { border-radius: var(--radius-lg); }
+    .auth-page .auth-shell .auth-main { padding: var(--sp-5) var(--sp-4); }
+    .auth-page .auth-shell .auth-aside { padding: var(--sp-5) var(--sp-4); }
+    .auth-page .auth-stepper li { font-size: 0.75rem; }
+    .auth-page .auth-alt-links .btn, .auth-page .auth-resend .btn { width: 100%; }
+    .tfa-head-title { gap: var(--sp-3); }
+    .tfa-page .tfa-head-title .auth-icon { width: 48px; height: 48px; border-radius: 14px; }
+    .tfa-page .tfa-head-title .auth-icon svg { width: 24px; height: 24px; }
+    .tfa-qr-frame { padding: 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .auth-page .auth-aside::before, .auth-page .auth-aside::after, .auth-page .auth-aside-art,
+    .auth-page .auth-icon-pulse::after, .auth-page .auth-icon-mail::after { animation: none !important; }
+    .auth-page .auth-aside .auth-points li:hover, .auth-page .auth-aside .auth-flow li:hover,
+    .auth-stat:hover, .tfa-page .recovery-codes code:hover { transform: none; }
+}
+@media print {
+    .auth-page .auth-aside { display: none !important; }
+    .auth-page .auth-shell { box-shadow: none; border: 0; }
+    /* Fresh recovery codes on screen: print only the codes. */
+    body.page-two-factor:has(#recoveryCodes) .tfa-main > :not(#recoveryCodes),
+    body.page-two-factor:has(#recoveryCodes) .tfa-aside,
+    body.page-two-factor:has(#recoveryCodes) .alert,
+    body.page-two-factor:has(#recoveryCodes) .page-head-actions,
+    .tfa-codes-actions { display: none !important; }
+    .tfa-page .recovery-codes code { color: #000; background: #fff; border: 1px solid #888; }
+    .tfa-page .tfa-grid { display: block; }
+}

@@ -137,7 +137,10 @@
                 var d = new Date(i.value + 'T00:00:00');
                 if (!isNaN(d.getTime())) {
                     d.setFullYear(d.getFullYear() + n);
-                    e.value = d.toISOString().slice(0, 10);
+                    // Local date parts: toISOString() is UTC and lands a
+                    // day early in time zones east of UTC.
+                    e.value = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
+                        + '-' + String(d.getDate()).padStart(2, '0');
                 }
             }
         });
@@ -166,4 +169,227 @@
             }
         });
     })();
+
+    /* ==================================================================
+     * Design-system enhancements (docs/12_DESIGN_SYSTEM.md). All optional:
+     * with JS off every element is already visible and final.
+     *   [data-reveal]              fade/slide in when scrolled into view
+     *                              (data-reveal="left|right|zoom",
+     *                              data-reveal-delay="1..5" staggers)
+     *   [data-count-to="191"]      count up from 0 when visible; the
+     *                              server-rendered text is the final value
+     *   .btn                       material-style ripple on press
+     *   [data-tilt]                subtle 3D tilt + glare (fine pointers)
+     *   .site-header               .is-scrolled once the page scrolls
+     *   [data-copy="text"] / [data-copy-target="id"]  copy + toast
+     *   form[data-loading]         spinner on the submit button
+     *   [data-print]               button that opens the print dialog
+     *   window.CertiVaultUI.toast(message, 'success'|'error'|'info', ms)
+     * Reduced motion: reveal, counters, ripple and tilt are skipped.
+     * ================================================================== */
+    var mq = function (q) { return !!(window.matchMedia && window.matchMedia(q).matches); };
+    var reduceMotion = mq('(prefers-reduced-motion: reduce)');
+    var finePointer = mq('(hover: hover) and (pointer: fine)');
+
+    // ── Toast helper ─────────────────────────────────────────────────────
+    var toastStack = null;
+    function toast(message, type, ms) {
+        if (!toastStack) {
+            toastStack = document.createElement('div');
+            toastStack.className = 'toast-stack';
+            toastStack.setAttribute('role', 'status');
+            toastStack.setAttribute('aria-live', 'polite');
+            document.body.appendChild(toastStack);
+        }
+        var t = document.createElement('div');
+        t.className = 'toast' + (type ? ' toast-' + type : '');
+        t.textContent = message;
+        toastStack.appendChild(t);
+        setTimeout(function () {
+            t.classList.add('is-leaving');
+            setTimeout(function () { if (t.parentNode) { t.parentNode.removeChild(t); } }, reduceMotion ? 0 : 320);
+        }, ms || 3000);
+        return t;
+    }
+    window.CertiVaultUI = { toast: toast };
+
+    // ── Header condenses on scroll ───────────────────────────────────────
+    (function () {
+        var header = document.querySelector('.site-header');
+        if (!header) { return; }
+        var ticking = false;
+        function update() {
+            ticking = false;
+            header.classList.toggle('is-scrolled', (window.scrollY || window.pageYOffset) > 8);
+        }
+        window.addEventListener('scroll', function () {
+            if (!ticking) { ticking = true; window.requestAnimationFrame(update); }
+        }, { passive: true });
+        update();
+    })();
+
+    // ── Animated counters ────────────────────────────────────────────────
+    function runCounter(el) {
+        if (el.getAttribute('data-counted')) { return; }
+        el.setAttribute('data-counted', '1');
+        var raw = String(el.getAttribute('data-count-to'));
+        var target = parseFloat(raw);
+        if (!isFinite(target)) { return; }
+        var finalText = el.textContent;
+        var suffix = el.getAttribute('data-count-suffix') || '';
+        var duration = parseInt(el.getAttribute('data-count-duration') || '1400', 10);
+        var decimals = (raw.split('.')[1] || '').length;
+        var start = null;
+        function fmt(v) {
+            return v.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals }) + suffix;
+        }
+        function frame(ts) {
+            if (start === null) { start = ts; }
+            var p = Math.min(1, (ts - start) / duration);
+            var eased = 1 - Math.pow(1 - p, 3);
+            el.textContent = p < 1 ? fmt(target * eased) : finalText;
+            if (p < 1) { window.requestAnimationFrame(frame); }
+        }
+        el.textContent = fmt(0);
+        window.requestAnimationFrame(frame);
+    }
+
+    // ── Scroll reveal (+ counters when visible) ──────────────────────────
+    (function () {
+        if (reduceMotion || !('IntersectionObserver' in window)) { return; }
+        var revealEls = document.querySelectorAll('[data-reveal], .steps-line');
+        var counters = document.querySelectorAll('[data-count-to]');
+        document.documentElement.classList.add('js-reveal');
+        var io = new IntersectionObserver(function (entries) {
+            entries.forEach(function (entry) {
+                if (!entry.isIntersecting) { return; }
+                var el = entry.target;
+                io.unobserve(el);
+                if (el.hasAttribute('data-count-to')) { runCounter(el); }
+                if (el.hasAttribute('data-reveal') || el.classList.contains('steps-line')) { el.classList.add('is-revealed'); }
+            });
+        }, { threshold: 0.12, rootMargin: '0px 0px -6% 0px' });
+        revealEls.forEach(function (el) { io.observe(el); });
+        counters.forEach(function (el) { io.observe(el); });
+    })();
+
+    // ── Button ripple ────────────────────────────────────────────────────
+    if (!reduceMotion) {
+        document.addEventListener('pointerdown', function (e) {
+            var btn = e.target instanceof Element ? e.target.closest('.btn') : null;
+            if (!btn || btn.disabled || btn.getAttribute('aria-disabled') === 'true' || e.button > 0) { return; }
+            var rect = btn.getBoundingClientRect();
+            var size = Math.max(rect.width, rect.height) * 2.2;
+            var r = document.createElement('span');
+            r.className = 'ripple';
+            r.setAttribute('aria-hidden', 'true');
+            r.style.setProperty('--rx', (e.clientX - rect.left) + 'px');
+            r.style.setProperty('--ry', (e.clientY - rect.top) + 'px');
+            r.style.setProperty('--rs', size + 'px');
+            btn.appendChild(r);
+            var done = function () { if (r.parentNode) { r.parentNode.removeChild(r); } };
+            r.addEventListener('animationend', done);
+            setTimeout(done, 900);
+        }, { passive: true });
+    }
+
+    // ── 3D tilt on [data-tilt] (fine pointers, motion allowed) ───────────
+    if (!reduceMotion && finePointer) {
+        document.querySelectorAll('[data-tilt]').forEach(function (card) {
+            var raf = 0;
+            card.addEventListener('pointermove', function (e) {
+                var rect = card.getBoundingClientRect();
+                var px = (e.clientX - rect.left) / rect.width - 0.5;
+                var py = (e.clientY - rect.top) / rect.height - 0.5;
+                if (raf) { return; }
+                raf = window.requestAnimationFrame(function () {
+                    raf = 0;
+                    card.classList.add('is-tilting');
+                    card.style.setProperty('--tilt-x', (-py * 6).toFixed(2) + 'deg');
+                    card.style.setProperty('--tilt-y', (px * 8).toFixed(2) + 'deg');
+                    card.style.setProperty('--glow-x', ((px + 0.5) * 100).toFixed(1) + '%');
+                    card.style.setProperty('--glow-y', ((py + 0.5) * 100).toFixed(1) + '%');
+                });
+            });
+            card.addEventListener('pointerleave', function () {
+                if (raf) { window.cancelAnimationFrame(raf); raf = 0; }
+                card.classList.remove('is-tilting');
+            });
+        });
+    }
+
+    // ── Copy buttons ─────────────────────────────────────────────────────
+    function legacyCopy(text) {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.className = 'visually-hidden';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); } finally { document.body.removeChild(ta); }
+    }
+    function copyText(text) {
+        if (navigator.clipboard && window.isSecureContext) {
+            return navigator.clipboard.writeText(text).catch(function () { legacyCopy(text); });
+        }
+        legacyCopy(text);
+        return Promise.resolve();
+    }
+    document.addEventListener('click', function (e) {
+        var btn = e.target instanceof Element ? e.target.closest('[data-copy], [data-copy-target]') : null;
+        if (!btn) { return; }
+        var text = btn.getAttribute('data-copy');
+        if (text === null || text === '') {
+            var src = document.getElementById(btn.getAttribute('data-copy-target') || '');
+            if (!src) { return; }
+            text = typeof src.value === 'string' ? src.value : src.textContent;
+        }
+        e.preventDefault();
+        copyText(String(text).trim()).then(function () {
+            toast(btn.getAttribute('data-copy-message') || 'Copied to clipboard', 'success', 2200);
+        });
+    });
+
+    // ── Missing images (e.g. a QR PNG absent from this checkout) ─────────
+    // Swap the broken-image icon for a dashed placeholder with a note.
+    function markMissing(img) {
+        if (!(img instanceof HTMLImageElement) || img.classList.contains('img-missing')) { return; }
+        img.classList.add('img-missing');
+        var note = document.createElement('span');
+        note.className = 'img-missing-note';
+        note.textContent = /qr/i.test(img.getAttribute('alt') || img.getAttribute('src') || '') ? 'QR image unavailable' : 'Image unavailable';
+        img.insertAdjacentElement('afterend', note);
+    }
+    document.addEventListener('error', function (e) { if (e.target instanceof HTMLImageElement) { markMissing(e.target); } }, true);
+    Array.prototype.forEach.call(document.images, function (img) {
+        if (img.complete && img.getAttribute('src') && img.naturalWidth === 0) { markMissing(img); }
+    });
+
+    // ── Print buttons ────────────────────────────────────────────────────
+    document.addEventListener('click', function (e) {
+        var btn = e.target instanceof Element ? e.target.closest('[data-print]') : null;
+        if (!btn) { return; }
+        e.preventDefault();
+        window.print();
+    });
+
+    // ── Loading state on opt-in forms ────────────────────────────────────
+    // Bubble phase: the capture-phase data-confirm handler above runs first,
+    // so a cancelled confirm never shows a spinner. The button is NOT
+    // disabled (that would drop its name/value from the submission).
+    document.addEventListener('submit', function (e) {
+        var form = e.target;
+        if (e.defaultPrevented || !(form instanceof HTMLFormElement) || !form.hasAttribute('data-loading')) { return; }
+        var btn = e.submitter || form.querySelector('[type=submit]');
+        if (btn && btn.classList.contains('btn')) {
+            btn.classList.add('is-loading');
+            btn.setAttribute('aria-busy', 'true');
+        }
+    });
+    window.addEventListener('pageshow', function () {
+        document.querySelectorAll('.btn.is-loading').forEach(function (b) {
+            b.classList.remove('is-loading');
+            b.removeAttribute('aria-busy');
+        });
+    });
 })();

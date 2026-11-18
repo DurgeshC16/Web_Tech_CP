@@ -20,6 +20,7 @@ reference.
 | 08 | [Research Summary](08_RESEARCH_SUMMARY.md) | Summary of the accompanying IEEE-style research paper: research questions, evaluation and results |
 | 09 | [Status & Roadmap](09_STATUS_AND_ROADMAP.md) | What is done, known bugs and gaps, and the prioritised next steps |
 | 10 | [Running & Demo Guide](10_RUNNING_AND_DEMO_GUIDE.md) | **Start here to run it:** step-by-step setup (Windows/XAMPP, Apache, Linux), a guided tour of every feature, a 5-minute presentation script, reset & troubleshooting |
+| 12 | [Design System](12_DESIGN_SYSTEM.md) | Tokens, components, motion rules of the redesigned UI |
 | 11 | [Novelties & Comparison](11_NOVELTIES_AND_COMPARISON.md) | How Credly, Certifier, Accredible, Sertifier, Blockcerts, Open Badges 3.0 / W3C VC, Europass and DigiLocker/NAD work; feature matrix; CertiVault's novelties (with file paths); where others are stronger; prioritised roadmap of features still to add |
 | — | [Requirements Matrix](REQUIREMENTS_MATRIX.md) | Course requirement → where it is implemented |
 | — | [Manual Test Plan](TEST_PLAN.md) | Manual / end-to-end test cases with expected results |

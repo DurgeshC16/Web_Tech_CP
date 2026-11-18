@@ -54,10 +54,24 @@ to git-ignored `docs/private/`.
 | New features | Signed credentials + browser verifier, bulk issuance, 2FA, analytics, issuance emails |
 | Bugs found on the way | Issuer refs from uploaded files dropped (`_candidates` typo); audit rows lost when detail > 255 chars; undefined `$trusted` on result views; status API counted website lookups against its limit; mixed table collations (migration 016); DST gap in day series; non-strict XAMPP SQL mode hiding errors (strict mode now set per session); tests reading dev key pins |
 
+## 2b. Change log of 2026-11-18
+
+| Item | Result |
+|------|--------|
+| Dummy certificate dataset | `scripts/generate_dataset.php` — 100 people, 5 institutions, 191 signed certificates (VALID/EXPIRED/REVOKED/SUPERSEDED); CSVs in `docs/samples/dataset/` |
+| Novelties & comparison | [11_NOVELTIES_AND_COMPARISON.md](11_NOVELTIES_AND_COMPARISON.md) (Credly, Certifier, Accredible, Blockcerts, OB 3.0/VC, DigiLocker) |
+| Incomplete-registration bug | Re-registering an unverified email resumes it; login checks email verification before institution approval (pending vs rejected) |
+| Password entered twice | Registration has one password field + show/hide toggle + strength checklist |
+| Forgot password had no code field | Code + new-password step always reachable ("Already have a code?", resend, no session needed) |
+| Guest verification limit | 5 free verifications / 24 h for visitors, then "free limit reached — log in or register" (`GuestQuotaService`, migration 017) |
+| Frontend redesign | Gradient + glass design system ([12_DESIGN_SYSTEM.md](12_DESIGN_SYSTEM.md)), new landing page, all pages restyled; zero `style=""` attributes left |
+| Test-harness bug | `config.local.php` overrode `CV_DB_NAME`, so local HTTP suites hit the dev DB; env now wins |
+
 ## 3. Still open
 
 ### Security
-* `style-src 'unsafe-inline'` — move 82 `style=""` attributes into classes.
+* `style-src 'unsafe-inline'` — done: all `style=""` attributes moved into
+  classes and the allowance removed (kept only when reCAPTCHA is enabled).
 * Optionally **require** 2FA for admin roles (today it is opt-in).
 * Pin file location: in production put `CV_KEY_PINS_FILE` on storage the
   web/DB user cannot write and publish `--export` out of band.

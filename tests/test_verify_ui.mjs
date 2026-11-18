@@ -246,7 +246,7 @@ async function main() {
   const server = spawn(PHP, ['-S', `127.0.0.1:${port}`, '-t', 'public'], { cwd: ROOT, env: serverEnv, stdio: 'ignore' });
   let up = false;
   for (let i = 0; i < 60 && !up; i++) {
-    try { const r = await fetch(`${BASE}/verify.php`); up = r.ok; } catch { /* not yet */ }
+    try { const r = await fetch(`${BASE}/verify.php`); await r.arrayBuffer(); up = r.ok; } catch { /* not yet */ }
     if (!up) await sleep(150);
   }
   if (!up) { console.log('SKIP verify-ui: PHP server did not start.'); server.kill(); process.exit(0); }

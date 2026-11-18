@@ -102,7 +102,7 @@ async function main() {
     env: { ...phpEnv, CV_DB_NAME: process.env.CV_TEST_DB || 'certivault_test', CV_MAIL_TRANSPORT: 'file', CV_ENV: 'development', CV_BASE_URL: BASE, CV_GUEST_VERIFY_LIMIT: '0' },
   });
   let up = false;
-  for (let i = 0; i < 80 && !up; i++) { try { up = (await fetch(`${BASE}/index.php`)).ok; } catch { /* starting */ } if (!up) await sleep(150); }
+  for (let i = 0; i < 80 && !up; i++) { try { const r = await fetch(`${BASE}/index.php`); await r.arrayBuffer(); up = r.ok; } catch { /* starting */ } if (!up) await sleep(150); }
   if (!up) { console.log('SKIP pages-browser: php -S did not start'); server.kill(); process.exit(0); }
 
   // 2) Chrome
@@ -183,7 +183,7 @@ async function main() {
     const ran = await ev(anon, `(() => { const s = document.createElement('script'); s.textContent = 'window.__inlineRan = true'; document.body.appendChild(s); return new Promise((r) => setTimeout(() => r(!!window.__inlineRan), 300)); })()`);
     ok('CSP blocks an injected inline <script>', ran === false);
     ok('CSP violation was reported for the injected script', (problems.get(anon.sessionId) || []).some((x) => x.startsWith('csp:')));
-    const hdr = await (await fetch(`${BASE}/index.php`)).headers.get('content-security-policy');
+    const cspRes = await fetch(`${BASE}/index.php`); await cspRes.arrayBuffer(); const hdr = cspRes.headers.get('content-security-policy');
     ok("CSP header: script-src 'self' without 'unsafe-inline'", /script-src 'self'[^;]*;/.test(hdr) && !/script-src[^;]*unsafe-inline/.test(hdr), hdr);
 
     // data-confirm (ui.js): dismissing the dialog cancels the submit.

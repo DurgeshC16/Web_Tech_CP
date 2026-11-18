@@ -198,7 +198,40 @@
         });
         box.hidden = false;
         box.setAttribute('data-overall', o.cls);
+        // Presentation: replay the entrance animation and bring the result
+        // into view (instant jump when the user prefers reduced motion).
+        box.classList.remove('is-shown');
+        void box.offsetWidth;
+        box.classList.add('is-shown');
+        if (box.scrollIntoView) {
+            var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            box.scrollIntoView({ behavior: still ? 'auto' : 'smooth', block: 'nearest' });
+        }
     }
+
+    // ── Presentation: drop zones (offline_verify.php) ────────────────────
+    // The native file inputs keep working without this; with it they are
+    // laid over a styled drop area that shows the chosen file name.
+    form.classList.add('sv-enhanced');
+    Array.prototype.forEach.call(form.querySelectorAll('.sv-dropzone'), function (zone) {
+        var input = zone.querySelector('input[type=file]');
+        var out = zone.querySelector('.sv-drop-file');
+        if (!input) { return; }
+        ['dragenter', 'dragover'].forEach(function (ev) {
+            zone.addEventListener(ev, function () { zone.classList.add('is-dragover'); });
+        });
+        ['dragleave', 'dragend', 'drop'].forEach(function (ev) {
+            zone.addEventListener(ev, function () { zone.classList.remove('is-dragover'); });
+        });
+        input.addEventListener('change', function () {
+            var f = input.files && input.files[0];
+            zone.classList.toggle('has-file', !!f);
+            if (out) {
+                out.hidden = !f;
+                out.textContent = f ? f.name + ' — ' + Math.max(1, Math.round(f.size / 1024)) + ' KB' : '';
+            }
+        });
+    });
 
     form.addEventListener('submit', function (e) {
         e.preventDefault();

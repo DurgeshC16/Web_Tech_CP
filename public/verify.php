@@ -20,6 +20,47 @@ require_once __DIR__ . '/../src/utils/validators.php';
 require_once __DIR__ . '/../src/utils/helpers.php';
 require_once __DIR__ . '/../src/utils/qrdecoder/autoload.php';
 
+// ── Presentation helpers (markup only — no lookups) ────────────────────
+/** Decorative inline SVG icon (aria-hidden); unknown names give ''. */
+function sv_icon(string $name): string {
+    static $paths = [
+        'id'       => '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="M6.5 16c.6-1.4 1.5-2 2.5-2s1.9.6 2.5 2M14 10h4M14 13h3"/>',
+        'link'     => '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+        'file'     => '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M12 18v-6M9.5 14.5 12 12l2.5 2.5"/>',
+        'qr'       => '<path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><rect x="8" y="8" width="3" height="3"/><rect x="13" y="8" width="3" height="3"/><rect x="8" y="13" width="3" height="3"/><path d="M13 13h3v3"/>',
+        'lock'     => '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+        'shield'   => '<path d="M12 3 5 6v5c0 4.4 3 8.3 7 10 4-1.7 7-5.6 7-10V6z"/><path d="m9 12 2 2 4-4"/>',
+        'copy'     => '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/>',
+        'download' => '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
+        'refresh'  => '<path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/>',
+        'key'      => '<circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M17 6l3 3M14 9l2 2"/>',
+        'external' => '<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
+        'info'     => '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>',
+        'log'      => '<path d="M4 6h16M4 12h16M4 18h10"/><circle cx="19" cy="18" r="2"/>',
+        'camera'   => '<path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.5" r="3.5"/>',
+        'check'    => '<path d="M5 13l4 4L19 7"/>',
+        'cross'    => '<path d="M7 7l10 10M17 7 7 17"/>',
+        'json'     => '<path d="M8 4H7a2 2 0 0 0-2 2v4l-2 2 2 2v4a2 2 0 0 0 2 2h1M16 4h1a2 2 0 0 1 2 2v4l2 2-2 2v4a2 2 0 0 1-2 2h-1"/>',
+    ];
+    if (!isset($paths[$name])) {
+        return '';
+    }
+    return '<svg class="sv-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">'
+        . $paths[$name] . '</svg>';
+}
+
+/** Guest-quota "limit reached" notice wrapped as a call-to-action card. */
+function sv_limit_notice(array $quota): string {
+    return '<div class="sv-limit">'
+        . '<span class="sv-limit-badge" aria-hidden="true">' . sv_icon('lock') . '</span>'
+        . GuestQuotaService::renderLimitNotice($quota)
+        . '<ul class="sv-limit-perks" aria-label="Why create an account">'
+        . '<li>' . sv_icon('check') . 'No daily limit when signed in</li>'
+        . '<li>' . sv_icon('check') . 'Free to create</li>'
+        . '<li>' . sv_icon('check') . 'Same instant verification</li>'
+        . '</ul></div>';
+}
+
 $db = Database::getInstance();
 
 // ── Rate limiting — BEFORE any certificate lookup ─────────────────────
@@ -72,7 +113,14 @@ if ($sv_rate_key !== null) {
         http_response_code(429);
         header('Retry-After: ' . (VerificationService::VERIFY_RATE_WINDOW_MINUTES * 60));
         send_security_headers(); // this exit path never reaches head.php
-        die('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Too Many Requests</title><link rel="stylesheet" href="assets/css/style.css"></head><body><div class="container" style="max-width:500px;text-align:center;margin-top:60px;"><h2>429 — Too Many Requests</h2><p>You have made too many verification lookups. Please wait a few minutes and try again.</p><a href="verify.php" class="btn">Back to Verification</a></div></body></html>');
+        die('<!DOCTYPE html><html lang="en" data-theme="' . htmlspecialchars(current_theme()) . '"><head><meta charset="UTF-8">'
+            . '<meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Too Many Requests</title>'
+            . '<link rel="stylesheet" href="assets/css/style.css"><link rel="stylesheet" href="assets/css/components.css">'
+            . '<link rel="stylesheet" href="assets/css/features.css"><link rel="stylesheet" href="assets/css/pages/verify.css"></head>'
+            . '<body class="page-verify"><main id="main"><div class="container verify-shell sv-notice-page"><div class="sv-body text-center">'
+            . '<span class="sv-notice-icon sv-tone-warn" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>'
+            . '<h1 class="sv-notice-title">429 — Too Many Requests</h1><p class="sv-notice-text">You have made too many verification lookups. Please wait a few minutes and try again.</p>'
+            . '<a href="verify.php" class="btn btn-primary">Back to Verification</a></div></div></main></body></html>');
     }
 }
 
@@ -90,7 +138,7 @@ if ($sv_rate_key !== null && !$sv_quota['allowed']) {
     $page_title = 'Free verification limit reached - CertiVault';
     require __DIR__ . '/../src/partials/head.php';
     require __DIR__ . '/../src/partials/header.php';
-    echo '<main id="main"><div class="container shell-narrow">' . GuestQuotaService::renderLimitNotice($sv_quota) . '</div></main>';
+    echo '<main id="main"><div class="container verify-shell sv-limit-shell"><div class="sv-body">' . sv_limit_notice($sv_quota) . '</div></div></main>';
     require __DIR__ . '/../src/partials/footer.php';
     echo '</body></html>';
     exit;
@@ -623,81 +671,174 @@ if ($query_type !== null) {
 ?>
 <?php $page_title = 'Verify Certificate - CertiVault'; require __DIR__ . '/../src/partials/head.php'; ?>
 <?php require __DIR__ . '/../src/partials/header.php'; ?>
-<main id="main">
-    <div class="container shell-narrow">
-        <h2 style="text-align:center;">CertiVault — Smart Certificate Verification</h2>
-
-        <?php if ($verdict === null && !empty($sv_quota['enabled']) && empty($sv_quota['exempt']) && (int)$sv_quota['remaining'] === 0): ?>
-        <!-- Guest has used every free verification: say so before the form. -->
-        <?= GuestQuotaService::renderLimitNotice($sv_quota) ?>
-        <?php endif; ?>
+<?php
+// ── View helpers (presentation only) ──────────────────────────────────
+$sv_verdict_icons = [
+    'VALID' => '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true" focusable="false"><path d="M5 13l4 4L19 7"/></svg>',
+    'TAMPERED' => '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+    'EXPIRED' => '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>',
+    'REVOKED' => '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M6 6l12 12"/></svg>',
+    'SUPERSEDED' => '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true" focusable="false"><path d="M4 16l4-4-4-4M12 16l4-4-4-4"/></svg>',
+    'INVALID' => '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg>',
+];
+$sv_headlines = [
+    'VALID'      => 'Authentic certificate',
+    'TAMPERED'   => 'Tampering detected',
+    'EXPIRED'    => 'Authentic, but expired',
+    'REVOKED'    => 'Certificate revoked',
+    'SUPERSEDED' => 'Replaced by a newer version',
+    'INVALID'    => 'Could not be verified',
+];
+?>
+<main id="main" class="sv-main">
+    <div class="container verify-shell<?= $verdict === null ? ' sv-shell-form' : ' sv-shell-result' ?>">
 
         <?php if ($verdict === null): ?>
-        <!-- ── Smart Verify panel ───────────────────────────────── -->
-        <form method="POST" action="" class="card" id="smartVerifyForm" enctype="multipart/form-data"
-              data-pdf-lib="assets/js/vendor/pdf.min.js" data-pdf-worker="assets/js/vendor/pdf.worker.min.js"
-              data-pdf-max-pages="10" data-scan-max-ms="20000" data-render-max-width="1600">
-            <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
-            <input type="hidden" name="MAX_FILE_SIZE" value="5242880">
+        <!-- ── Hero ─────────────────────────────────────────────────── -->
+        <header class="sv-hero">
+            <p class="sv-eyebrow"><span class="eyebrow-dot" aria-hidden="true"></span> Public verification · no login needed</p>
+            <h1 class="sv-hero-title">Verify any certificate <span class="hero-highlight">in seconds</span></h1>
+            <p class="sv-hero-sub">Paste an ID or link, drop the certificate file, or scan its QR code. CertiVault checks the issuer’s digital signature and the certificate fingerprint for you.</p>
+            <ul class="sv-trust-chips">
+                <li><?= sv_icon('shield') ?>RSA-signed</li>
+                <li><?= sv_icon('key') ?>SHA-256 fingerprint</li>
+                <li><?= sv_icon('lock') ?>Private by design</li>
+            </ul>
+            <svg class="sv-hero-art" viewBox="0 0 120 120" aria-hidden="true" focusable="false"><path d="M60 8 20 24v30c0 26 17 47 40 58 23-11 40-32 40-58V24z" fill="none" stroke="currentColor" stroke-width="3"/><path d="m42 60 13 13 25-26" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </header>
 
-            <div class="form-group">
-                <label for="smart_id">Certificate ID, QR token or verification link (optional if you upload a file)</label>
-                <input type="text" id="smart_id" name="smart_id" placeholder="Paste an ID (any format), a QR token, or a verification URL">
-                <small>Any format works, e.g. CV-2026-000001, cv20260001, a 43-character QR token, or a full verify link. Enter at least one: the ID or the file below.</small>
-            </div>
+        <div class="sv-body">
+            <?php if (!empty($sv_quota['enabled']) && empty($sv_quota['exempt']) && (int)$sv_quota['remaining'] === 0): ?>
+            <!-- Guest has used every free verification: say so before the form. -->
+            <?= sv_limit_notice($sv_quota) ?>
+            <?php endif; ?>
 
-            <div class="form-group">
-                <label for="issuer">Issuer (optional)</label>
-                <select id="issuer" name="issuer">
-                    <option value="certivault" selected>CertiVault (default)</option>
-                    <option value="coursera">Coursera</option>
-                    <option value="credly">Credly</option>
-                    <option value="other">Other (public link)</option>
-                </select>
-            </div>
-            <div class="form-group" id="otherUrlGroup" hidden>
-                <label for="other_url">Public verification link</label>
-                <input type="text" id="other_url" name="other_url" placeholder="https://…">
-                <small>Only https links to public pages. CertiVault never opens or scrapes it for you.</small>
-            </div>
+            <?php if (is_post_overflow()): ?>
+                <p class="field-error sv-form-error" role="alert">The upload is larger than the server allows (post_max_size). Please use a smaller file.</p>
+            <?php endif; ?>
+            <?php if ($sv_file_error !== null): ?>
+                <p class="field-error sv-form-error" role="alert"><?= htmlspecialchars($sv_file_error) ?></p>
+            <?php endif; ?>
+            <?php if ($sv_either_or !== null): ?>
+                <p class="field-error sv-form-error" role="alert"><?= htmlspecialchars($sv_either_or) ?></p>
+            <?php endif; ?>
 
-            <div class="form-group">
-                <label for="smart_file">Certificate file (optional if you entered an ID — PDF, PNG or JPG, max 5 MB)</label>
-                <input type="file" id="smart_file" name="smart_file" accept=".pdf,.png,.jpg,.jpeg" data-validate="upload_optional">
-                <small>Drop the certificate file here or pick it. We try the exact file fingerprint first, then the QR code inside it (read in your browser, PDFs included), then a text scan.</small>
-            </div>
+            <!-- ── Smart Verify panel ───────────────────────────────── -->
+            <form method="POST" action="" class="sv-form" id="smartVerifyForm" enctype="multipart/form-data" data-loading
+                  data-pdf-lib="assets/js/vendor/pdf.min.js" data-pdf-worker="assets/js/vendor/pdf.worker.min.js"
+                  data-pdf-max-pages="10" data-scan-max-ms="20000" data-render-max-width="1600">
+                <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
+                <input type="hidden" name="MAX_FILE_SIZE" value="5242880">
 
-            <button type="button" class="btn btn-ghost btn-sm privacy-toggle" id="privacyHashToggle" aria-pressed="false">
-                🔒 Hash in my browser (the file never leaves your device)
-            </button>
+                <!-- Method picker: shown by smart-verify.js; without JS every
+                     section below is simply visible. -->
+                <div class="tablist sv-tabs" id="svTabs" role="tablist" aria-label="How do you want to verify?" hidden>
+                    <button type="button" class="tab" role="tab" id="svTabId" data-sv-tab="id" aria-controls="svPanelText" aria-selected="true"><?= sv_icon('id') ?><span>ID</span></button>
+                    <button type="button" class="tab" role="tab" id="svTabLink" data-sv-tab="link" aria-controls="svPanelText" aria-selected="false" tabindex="-1"><?= sv_icon('link') ?><span>Link</span></button>
+                    <button type="button" class="tab" role="tab" id="svTabFile" data-sv-tab="file" aria-controls="svPanelFile" aria-selected="false" tabindex="-1"><?= sv_icon('file') ?><span>File</span></button>
+                    <button type="button" class="tab" role="tab" id="svTabScan" data-sv-tab="scan" aria-controls="svPanelScan" aria-selected="false" tabindex="-1"><?= sv_icon('qr') ?><span>Scan QR</span></button>
+                </div>
 
-            <button type="submit" class="btn btn-primary btn-block">Smart Verify</button>
-            <p id="svStatus" class="sv-status" role="status" aria-live="polite" hidden></p>
-        </form>
-        <?php if ((int)($sv_quota['remaining'] ?? 0) > 0): ?>
-        <?= GuestQuotaService::renderCounter($sv_quota) ?>
-        <?php endif; ?>
+                <!-- ID / token / link -->
+                <section class="sv-pane tabpanel" id="svPanelText" aria-labelledby="svTabId">
+                    <h2 class="sv-pane-title"><?= sv_icon('id') ?>Certificate ID or link</h2>
+                    <div class="form-group">
+                        <label for="smart_id" id="smartIdLabel"
+                               data-sv-label-id="Certificate ID or QR token"
+                               data-sv-label-link="Verification link">Certificate ID, QR token or verification link (optional if you upload a file)</label>
+                        <div class="sv-input-icon">
+                            <?= str_replace('class="sv-ico"', 'class="sv-ico sv-ico-id"', sv_icon('id')) ?>
+                            <?= str_replace('class="sv-ico"', 'class="sv-ico sv-ico-link"', sv_icon('link')) ?>
+                            <input type="text" id="smart_id" name="smart_id" placeholder="Paste an ID (any format), a QR token, or a verification URL" autocomplete="off" spellcheck="false"
+                                   data-sv-ph-id="e.g. CV-2026-000001"
+                                   data-sv-ph-link="https://…/verify.php?token=…">
+                        </div>
+                        <small id="smartIdHint"
+                               data-sv-hint-id="Any format works: CV-2026-000001, cv20260001, CV 2026 000001 or the QR token printed under the code."
+                               data-sv-hint-link="Paste the full verification URL from a QR code, an e-mail or a shared post.">Any format works, e.g. CV-2026-000001, cv20260001, a 43-character QR token, or a full verify link. Enter at least one: the ID or the file below.</small>
+                    </div>
 
-        <?php if (is_post_overflow()): ?>
-            <p class="field-error" role="alert">The upload is larger than the server allows (post_max_size). Please use a smaller file.</p>
-        <?php endif; ?>
-        <?php if ($sv_file_error !== null): ?>
-            <p class="field-error" role="alert"><?= htmlspecialchars($sv_file_error) ?></p>
-        <?php endif; ?>
-        <?php if ($sv_either_or !== null): ?>
-            <p class="field-error" role="alert" style="text-align:center;"><?= htmlspecialchars($sv_either_or) ?></p>
-        <?php endif; ?>
+                    <details class="sv-advanced">
+                        <summary>Issued on Coursera, Credly or another platform?</summary>
+                        <div class="form-group">
+                            <label for="issuer">Issuer (optional)</label>
+                            <select id="issuer" name="issuer">
+                                <option value="certivault" selected>CertiVault (default)</option>
+                                <option value="coursera">Coursera</option>
+                                <option value="credly">Credly</option>
+                                <option value="other">Other (public link)</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="otherUrlGroup" hidden>
+                            <label for="other_url">Public verification link</label>
+                            <input type="text" id="other_url" name="other_url" placeholder="https://…">
+                            <small>Only https links to public pages. CertiVault never opens or scrapes it for you.</small>
+                        </div>
+                    </details>
+                </section>
 
-        <!-- ── QR camera scan (progressive enhancement; manual entry above always works) ── -->
-        <div style="text-align:center; margin-top:16px;">
-            <button type="button" class="btn btn-secondary" id="scanQrBtn">Scan QR with camera</button>
-        </div>
-        <div id="qrScanner" class="qr-scanner" hidden>
-            <div id="qrReader" style="max-width:400px; margin:0 auto;"></div>
-            <p class="field-error" id="qrError" role="alert" hidden></p>
-            <div style="text-align:center; margin-top:8px;">
-                <button type="button" class="btn btn-ghost btn-sm" id="qrStopBtn">Stop camera</button>
-            </div>
+                <!-- Certificate file -->
+                <section class="sv-pane tabpanel" id="svPanelFile" aria-labelledby="svTabFile">
+                    <h2 class="sv-pane-title"><?= sv_icon('file') ?>Certificate file</h2>
+                    <div class="form-group">
+                        <label for="smart_file">Certificate file (optional if you entered an ID — PDF, PNG or JPG, max 5 MB)</label>
+                        <div class="sv-dropzone" id="svDropzone">
+                            <span class="sv-drop-icon" aria-hidden="true"><?= sv_icon('file') ?></span>
+                            <span class="sv-drop-title">Drop your certificate here</span>
+                            <span class="sv-drop-sub">or <span class="sv-drop-link">browse your files</span> · PDF, PNG, JPG up to 5 MB</span>
+                            <input type="file" id="smart_file" name="smart_file" accept=".pdf,.png,.jpg,.jpeg" data-validate="upload_optional">
+                            <span class="sv-drop-file" id="svFileName" aria-live="polite" hidden></span>
+                        </div>
+                        <small>We try the exact file fingerprint first, then the QR code inside it (read in your browser, PDFs included), then a text scan.</small>
+                    </div>
+
+                    <button type="button" class="privacy-toggle" id="privacyHashToggle" aria-pressed="false">
+                        <span class="sv-switch" aria-hidden="true"><span class="sv-switch-thumb"></span></span>
+                        <span class="sv-switch-text">
+                            <strong><?= sv_icon('lock') ?>Hash in my browser</strong>
+                            <span>The file never leaves your device — only its SHA-256 fingerprint is sent.</span>
+                        </span>
+                    </button>
+                </section>
+
+                <!-- QR camera scan (progressive enhancement; manual entry always works) -->
+                <section class="sv-pane tabpanel" id="svPanelScan" aria-labelledby="svTabScan">
+                    <h2 class="sv-pane-title"><?= sv_icon('qr') ?>Scan the QR code</h2>
+                    <div class="sv-scan">
+                        <div class="sv-scan-art" aria-hidden="true">
+                            <span class="sv-scan-corners"></span>
+                            <?= sv_icon('qr') ?>
+                            <span class="sv-scan-line"></span>
+                        </div>
+                        <p class="sv-scan-text">Point your camera at the QR code printed on the certificate. Your browser asks for camera permission first; nothing is recorded.</p>
+                        <button type="button" class="btn btn-primary" id="scanQrBtn"><?= sv_icon('camera') ?>Scan QR with camera</button>
+                    </div>
+                    <div id="qrScanner" class="qr-scanner" hidden>
+                        <div id="qrReader" class="sv-qr-reader"></div>
+                        <p class="field-error" id="qrError" role="alert" hidden></p>
+                        <div class="text-center mt-2">
+                            <button type="button" class="btn btn-ghost btn-sm" id="qrStopBtn">Stop camera</button>
+                        </div>
+                    </div>
+                </section>
+
+                <button type="submit" class="btn btn-primary btn-block btn-lg sv-submit"><?= sv_icon('shield') ?><span>Smart Verify</span></button>
+                <p id="svStatus" class="sv-status" role="status" aria-live="polite" hidden></p>
+            </form>
+
+            <?php if ((int)($sv_quota['remaining'] ?? 0) > 0): ?>
+            <?= GuestQuotaService::renderCounter($sv_quota) ?>
+            <?php endif; ?>
+
+            <ol class="sv-how" aria-label="How verification works">
+                <li data-reveal data-reveal-delay="1"><span class="sv-how-num">1</span><strong>Enter or scan</strong><span>ID, link, file or QR code — any format.</span></li>
+                <li data-reveal data-reveal-delay="2"><span class="sv-how-num">2</span><strong>We check the proof</strong><span>Issuer signature, fingerprint and live status.</span></li>
+                <li data-reveal data-reveal-delay="3"><span class="sv-how-num">3</span><strong>Instant verdict</strong><span>Valid, expired, revoked or tampered — explained.</span></li>
+            </ol>
+            <p class="sv-more-links">
+                <a href="offline_verify.php"><?= sv_icon('json') ?>Verify a credential file offline</a>
+                <a href="institutions.php"><?= sv_icon('key') ?>Institution public keys</a>
+            </p>
         </div>
 
         <?php else: ?>
@@ -714,212 +855,241 @@ if ($query_type !== null) {
                 $trusted = null;
             }
         }
+        $sv_v = strtolower($verdict);
         ?>
         <!-- ── Verdict Display ───────────────────────────────────── -->
-        <div class="verdict-wrap" style="text-align:center; margin-top:20px;">
-            <?php
-            $verdict_icons = [
-                'VALID' => '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 13l4 4L19 7"/></svg>',
-                'TAMPERED' => '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 6l12 12M18 6L6 18"/></svg>',
-                'EXPIRED' => '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>',
-                'REVOKED' => '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="9"/><path d="M6 6l12 12"/></svg>',
-                'SUPERSEDED' => '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M4 16l4-4-4-4M12 16l4-4-4-4"/></svg>',
-                'INVALID' => '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg>',
-            ];
-            ?>
-            <div class="verdict-seal verdict-seal-<?= strtolower($verdict) ?>">
-                <?= $verdict_icons[$verdict] ?? '' ?>
-                <?= $verdict ?>
+        <section class="verdict-wrap sv-verdict sv-v-<?= htmlspecialchars($sv_v) ?>" aria-labelledby="svVerdictTitle">
+            <p class="sv-eyebrow">Verification result</p>
+            <div class="sv-seal-stage">
+                <?php if ($verdict === 'VALID'): ?>
+                <span class="sv-confetti" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+                <?php endif; ?>
+                <div class="verdict-seal verdict-seal-<?= strtolower($verdict) ?>">
+                    <?= $sv_verdict_icons[$verdict] ?? '' ?>
+                    <?= $verdict ?>
+                </div>
             </div>
-            <p class="verdict-detail" style="text-align:center;"><?= htmlspecialchars($detail) ?></p>
+            <h1 class="sv-verdict-title" id="svVerdictTitle"><?= htmlspecialchars($sv_headlines[$verdict] ?? 'Verification result') ?></h1>
+            <p class="verdict-detail"><?= htmlspecialchars($detail) ?></p>
             <?php if ($cert && !empty($cert['public_key']) && defined('CERTIFICATE_TRANSPARENCY_ENABLED') && CERTIFICATE_TRANSPARENCY_ENABLED): ?>
                 <?php $certFingerprint = CryptoService::fingerprintPublicKey((string)$cert['public_key']); $fingerprintPrefix = implode(':', array_slice(explode(':', $certFingerprint), 0, 6)); ?>
-                <p style="text-align:center;font-size:0.9em;"><strong>Signed by key <?= htmlspecialchars($fingerprintPrefix) ?>:… v<?= (int)($cert['key_id'] ?? 1) ?></strong>
+                <p class="sv-signer"><?= sv_icon('key') ?><strong>Signed by key <?= htmlspecialchars($fingerprintPrefix) ?>:… v<?= (int)($cert['key_id'] ?? 1) ?></strong>
                     <a href="institutions.php#institution-<?= (int)$cert['institution_id'] ?>">Compare full fingerprint</a></p>
             <?php endif; ?>
             <?php if ($sv_both_note !== null): ?>
-            <p style="text-align:center;color:var(--muted);font-size:0.9em;margin-top:6px;"><?= htmlspecialchars($sv_both_note) ?></p>
+            <p class="sv-note"><?= sv_icon('info') ?><?= htmlspecialchars($sv_both_note) ?></p>
             <?php endif; ?>
+        </section>
+
+        <div class="sv-body sv-result-body">
             <?php if ($sv_tips && $verdict === 'INVALID' && $external_ref === null): ?>
-            <div style="max-width:480px;margin:14px auto 0;text-align:left;background:rgba(0,0,0,0.06);border-radius:8px;padding:12px 16px;">
-                <strong>Why not found?</strong>
-                <ul style="margin:8px 0 0 18px;color:var(--muted);">
+            <div class="panel-muted sv-tips">
+                <strong><?= sv_icon('info') ?>Why not found?</strong>
+                <ul>
                     <li><?= htmlspecialchars('A re-saved, cropped or screenshot copy will not match the original file. Try the ID or QR code.') ?></li>
                     <li>Check for typos, or use QR / ID formats shown above.</li>
                 </ul>
             </div>
             <?php endif; ?>
-        </div>
 
-        <?php if ($cert && is_array($transparency)): ?>
-        <div class="card" style="margin-top:14px;border-left:4px solid <?= !empty($transparency['reconciled']) ? 'var(--verified)' : 'var(--warn)' ?>;">
-            <strong>Transparency log</strong>
-            <?php if (!empty($transparency['reconciled']) && !empty($transparency['proof'])): ?>
-                <p>Certificate is included at sequence <?= (int)$transparency['proof']['seq'] ?> in a checkpoint signed by CertiVault’s platform key.</p>
-                <p><small>Merkle root: <code class="break-all"><?= htmlspecialchars($transparency['proof']['root_hash']) ?></code></small></p>
-                <details><summary>Inclusion proof</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere;"><?= htmlspecialchars(json_encode($transparency['proof'], JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)) ?></pre></details>
-            <?php else: ?>
-                <p class="text-warn"><?= htmlspecialchars((string)($transparency['warning'] ?? 'WARNING: transparency log could not be reconciled.')) ?></p>
-            <?php endif; ?>
-            <a href="checkpoints/latest.json">Latest public checkpoint</a>
-        </div>
-        <?php endif; ?>
-
-        <?php if ($external_ref !== null): ?>
-        <!-- ── External reference card: NEVER a CertiVault verdict ── -->
-        <div class="card external-ref-card" style="margin-top:16px; border-left:4px solid #8a72c9;">
-            <p style="font-weight:600; margin-bottom:4px;">EXTERNAL REFERENCE FOUND
-                <?= $external_ref['code'] !== '' ? '— ' . htmlspecialchars($external_ref['code']) : '' ?></p>
-            <p style="color:var(--warn); font-size:0.92em; margin-bottom:10px;">
-                <?php if (!empty($external_ref['unsafe'])): ?>
-                This link is NOT the official <?= htmlspecialchars($external_ref['issuer_label']) ?> domain. Do not open it.
-                <?php else: ?>
-                Not verified by CertiVault. This is an issuer self-verification link
-                generated from an allow-listed map; opening it takes you to the
-                issuer's own public page.
-                <?php endif; ?>
-            </p>
-            <?php if (empty($external_ref['unsafe'])): ?>
-            <a href="<?= htmlspecialchars($external_ref['url']) ?>" target="_blank" rel="noopener noreferrer" class="btn btn-secondary">
-                Open at <?= htmlspecialchars($external_ref['issuer_label']) ?> →
-            </a>
-            <?php endif; ?>
-        </div>
-        <?php endif; ?>
-
-        <?php if ($external !== null && $verdict === 'INVALID' && $external_ref === null): ?>
-        <!-- ── External source result: informational, NEVER a CertiVault verdict ── -->
-        <div class="card external-source-card" style="margin-top:16px; border-left:4px solid #8a72c9;">
-            <p style="font-weight:600; margin-bottom:4px;">
-                Found in external source: <?= htmlspecialchars($external['source']) ?>.
-            </p>
-            <p style="color:var(--warn); font-size:0.92em; margin-bottom:10px;">
-                CertiVault has not verified this record's signature or contents. Treat it as
-                unverified information from the source named above, not as a CertiVault result.
-            </p>
-            <dl class="cert-details">
-                <dt>Certificate ID</dt><dd><?= htmlspecialchars($query_value) ?></dd>
-                <dt>Awarded To</dt><dd><?= htmlspecialchars($external['fields']['holder']) ?></dd>
-                <dt>Title</dt><dd><?= htmlspecialchars($external['fields']['title']) ?></dd>
-                <dt>Issued By</dt><dd><?= htmlspecialchars($external['fields']['issuer']) ?></dd>
-                <dt>Issue Date</dt><dd><?= htmlspecialchars($external['fields']['issue_date']) ?></dd>
-                <dt>Status (per source)</dt>
-                <dd><span class="badge-status badge-<?= ($external['fields']['status'] ?? '') === 'active' ? 'valid' : htmlspecialchars((string)($external['fields']['status'] ?? 'unknown')) ?>">
-                    <?= htmlspecialchars($external['fields']['status']) ?>
-                </span></dd>
-                <?php if (!empty($external['fields']['source_url'])): ?>
-                    <dt>Source</dt>
-                    <dd><a href="<?= htmlspecialchars($external['fields']['source_url']) ?>" target="_blank" rel="noopener noreferrer">Open record at source</a></dd>
-                <?php endif; ?>
-            </dl>
-        </div>
-        <?php endif; ?>
-
-        <?php if (in_array($verdict, ['VALID', 'EXPIRED'])): ?>
-        <!-- Show certificate details only for VALID / EXPIRED -->
-        <div class="card diploma" style="margin-top:25px;">
-            <h3 class="cert-details-title"><?= htmlspecialchars($cert['title']) ?></h3>
-            <dl class="cert-details">
-                <dt>Certificate ID</dt><dd><?= htmlspecialchars($cert['certificate_id']) ?></dd>
-                <dt>Awarded To</dt><dd><?= htmlspecialchars($cert['student_name']) ?></dd>
-                <dt>Issued By</dt><dd><?= htmlspecialchars($cert['institution_name']) ?></dd>
-                <dt>Issue Date</dt><dd><?= htmlspecialchars(date('F j, Y', strtotime($cert['issue_date']))) ?></dd>
-                <?php if ($cert['expiry_date']): ?>
-                    <dt>Expiry Date</dt><dd><?= htmlspecialchars(date('F j, Y', strtotime($cert['expiry_date']))) ?></dd>
-                <?php endif; ?>
-                <dt>Status</dt>
-                <dd>
-                    <span class="badge-status badge-<?= $cert['status'] === 'active' ? 'valid' : htmlspecialchars($cert['status']) ?>">
-                        <?= htmlspecialchars($cert['status']) ?>
-                    </span>
-                </dd>
-            </dl>
-        </div>
-
-        <?php elseif ($verdict === 'REVOKED'): ?>
-        <!-- For REVOKED show only the cert ID so the verifier knows which record -->
-        <div class="card" style="margin-top:25px;">
-            <p><strong>Certificate ID:</strong> <?= htmlspecialchars($cert['certificate_id']) ?></p>
-            <p style="color:var(--danger);">This certificate has been revoked and is no longer valid. Contact the issuing institution for details.</p>
-        </div>
-
-        <?php elseif ($verdict === 'SUPERSEDED'): ?>
-        <!-- For SUPERSEDED show details + link to current version -->
-        <div class="card" style="margin-top:25px;">
-            <h3 class="cert-details-title"><?= htmlspecialchars($cert['title']) ?></h3>
-            <dl class="cert-details">
-                <dt>Certificate ID</dt><dd><?= htmlspecialchars($cert['certificate_id']) ?> (v<?= $cert['version'] ?>)</dd>
-                <dt>Awarded To</dt><dd><?= htmlspecialchars($cert['student_name']) ?></dd>
-                <dt>Issued By</dt><dd><?= htmlspecialchars($cert['institution_name']) ?></dd>
-            </dl>
-            <p style="color:var(--warn); margin-top:12px;">This version has been superseded by a corrected certificate.</p>
-            <?php if ($superseded_by): ?>
-                <a href="verify.php?token=<?= urlencode($superseded_by['qr_token']) ?>" class="btn btn-primary">Verify Current Version (<?= htmlspecialchars($superseded_by['certificate_id']) ?>) →</a>
-            <?php endif; ?>
-        </div>
-        <?php endif; ?>
-
-        <?= GuestQuotaService::renderCounter($sv_quota) ?>
-        <div style="text-align:center; margin-top:25px;">
-            <a href="verify.php" class="btn">Verify Another Certificate</a>
-        </div>
-            <?php endif; ?>
-        </div>
-
-        <?php if ($trusted && ($trusted['score'] ?? null) !== null): ?>
-        <?php
-        $score_int   = (int)$trusted['score'];
-        $gauge_angle = max(0, min(100, $score_int)) / 100.0 * 180.0;
-        $gauge_rad   = deg2rad(180.0 - $gauge_angle);
-        $gauge_x     = 55.0 + 47.0 * cos($gauge_rad);
-        $gauge_y     = 58.0 - 47.0 * sin($gauge_rad);
-        ?>
-        <div class="card trust-panel" style="margin-top:16px;">
-            <div style="display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;">
-                <svg width="110" height="66" viewBox="0 0 110 66" role="img" aria-label="Trust score gauge">
-                    <path d="M8 58 A47 47 0 0 1 102 58" fill="none" stroke="#e0e0e0" stroke-width="10"/>
-                    <path d="M8 58 A47 47 0 0 1 <?= number_format($gauge_x, 1, '.', '') ?> <?= number_format($gauge_y, 1, '.', '') ?>"
-                          fill="none" stroke="#c9a227" stroke-width="10"/>
-                </svg>
+            <?php if ($external_ref !== null): ?>
+            <!-- ── External reference card: NEVER a CertiVault verdict ── -->
+            <div class="card card-accent-brand external-ref-card sv-ext">
+                <p class="sv-ext-title"><?= sv_icon('external') ?>EXTERNAL REFERENCE FOUND
+                    <?= $external_ref['code'] !== '' ? '— ' . htmlspecialchars($external_ref['code']) : '' ?></p>
+                <p class="sv-ext-warn">
+                    <?php if (!empty($external_ref['unsafe'])): ?>
+                    This link is NOT the official <?= htmlspecialchars($external_ref['issuer_label']) ?> domain. Do not open it.
+                    <?php else: ?>
+                    Not verified by CertiVault. This is an issuer self-verification link
+                    generated from an allow-listed map; opening it takes you to the
+                    issuer's own public page.
+                    <?php endif; ?>
+                </p>
+                <?php if (empty($external_ref['unsafe'])): ?>
                 <div>
-                    <strong style="font-size:1.6em;"><?= $score_int ?></strong> / 100
-                    <p style="color:var(--muted); font-size:0.9em; margin-top:4px;">
-                        Rule-based score from CertiVault's existing checks.
-                    </p>
+                    <a href="<?= htmlspecialchars($external_ref['url']) ?>" target="_blank" rel="noopener noreferrer" class="btn btn-secondary">
+                        Open at <?= htmlspecialchars($external_ref['issuer_label']) ?> →
+                    </a>
                 </div>
+                <?php endif; ?>
             </div>
-            <ul style="margin:10px 0 0 20px; color:var(--muted);">
-                <?php foreach (($trusted['checks'] ?? []) as $check_row): ?>
-                <li style="margin-top:4px;">
-                    <span style="color:<?= $check_row['pass'] ? 'var(--verified)' : 'var(--danger)' ?>; font-weight:600;">
-                        <?= $check_row['pass'] ? '&#10003;' : '&#10007;' ?>
-                    </span>
-                    <?= htmlspecialchars((string)$check_row['label']) ?>
-                    <span>(<?= $check_row['pass'] ? '+' . (int)$check_row['points'] : 0 ?> / <?= (int)$check_row['points'] ?>)</span>
-                </li>
-                <?php endforeach; ?>
-            </ul>
-            <p style="color:var(--muted); font-size:0.85em; margin-top:10px;">
-                <?= htmlspecialchars(TrustScoreService::DISCLAIMER) ?>
-            </p>
-            <p class="btn-row">
-                <a class="btn btn-secondary" href="report.php?cert=<?= rawurlencode((string)$cert['certificate_id']) ?>">
-                    ⬇ Download verification report (PDF)
-                </a>
-                <a class="btn btn-secondary" href="credential.php?certificate_id=<?= rawurlencode((string)$cert['certificate_id']) ?>">
-                    ⬇ Signed credential (JSON)
-                </a>
-            </p>
-            <p class="text-muted small text-center">The JSON file can be re-checked in any browser — no trust in this server needed:
-                <a href="offline_verify.php">verify a credential file</a>.</p>
+            <?php endif; ?>
+
+            <?php if ($external !== null && $verdict === 'INVALID' && $external_ref === null): ?>
+            <!-- ── External source result: informational, NEVER a CertiVault verdict ── -->
+            <div class="card card-accent-brand external-source-card sv-ext">
+                <p class="sv-ext-title"><?= sv_icon('external') ?>
+                    Found in external source: <?= htmlspecialchars($external['source']) ?>.
+                </p>
+                <p class="sv-ext-warn">
+                    CertiVault has not verified this record's signature or contents. Treat it as
+                    unverified information from the source named above, not as a CertiVault result.
+                </p>
+                <dl class="cert-details">
+                    <dt>Certificate ID</dt><dd><?= htmlspecialchars($query_value) ?></dd>
+                    <dt>Awarded To</dt><dd><?= htmlspecialchars($external['fields']['holder']) ?></dd>
+                    <dt>Title</dt><dd><?= htmlspecialchars($external['fields']['title']) ?></dd>
+                    <dt>Issued By</dt><dd><?= htmlspecialchars($external['fields']['issuer']) ?></dd>
+                    <dt>Issue Date</dt><dd><?= htmlspecialchars($external['fields']['issue_date']) ?></dd>
+                    <dt>Status (per source)</dt>
+                    <dd><span class="badge-status badge-<?= ($external['fields']['status'] ?? '') === 'active' ? 'valid' : htmlspecialchars((string)($external['fields']['status'] ?? 'unknown')) ?>">
+                        <?= htmlspecialchars($external['fields']['status']) ?>
+                    </span></dd>
+                    <?php if (!empty($external['fields']['source_url'])): ?>
+                        <dt>Source</dt>
+                        <dd><a href="<?= htmlspecialchars($external['fields']['source_url']) ?>" target="_blank" rel="noopener noreferrer">Open record at source</a></dd>
+                    <?php endif; ?>
+                </dl>
+            </div>
+            <?php endif; ?>
+
+            <?php if (in_array($verdict, ['VALID', 'EXPIRED'])): ?>
+            <!-- Show certificate details only for VALID / EXPIRED -->
+            <?php $sv_link = rtrim(BASE_URL, '/') . '/verify.php?certificate_id=' . rawurlencode((string)$cert['certificate_id']); ?>
+            <article class="card diploma sv-cert" aria-labelledby="svCertTitle">
+                <header class="sv-cert-head">
+                    <span class="sv-cert-mark" aria-hidden="true"><?= sv_icon('shield') ?></span>
+                    <div class="sv-cert-heading">
+                        <p class="sv-cert-kicker">Issued by <?= htmlspecialchars($cert['institution_name']) ?></p>
+                        <h2 class="cert-details-title" id="svCertTitle"><?= htmlspecialchars($cert['title']) ?></h2>
+                    </div>
+                </header>
+                <p class="sv-cert-awarded"><span>Awarded to</span> <strong><?= htmlspecialchars($cert['student_name']) ?></strong></p>
+                <dl class="sv-facts">
+                    <div><dt>Issue Date</dt><dd><?= htmlspecialchars(date('F j, Y', strtotime($cert['issue_date']))) ?></dd></div>
+                    <?php if ($cert['expiry_date']): ?>
+                    <div><dt>Expiry Date</dt><dd><?= htmlspecialchars(date('F j, Y', strtotime($cert['expiry_date']))) ?></dd></div>
+                    <?php else: ?>
+                    <div><dt>Expiry Date</dt><dd>Does not expire</dd></div>
+                    <?php endif; ?>
+                    <?php $sv_status_shown = VerificationService::effectiveStatus($cert); // display only: an active record past its expiry date reads "expired" ?>
+                    <div><dt>Status</dt><dd><span class="badge-status badge-<?= $sv_status_shown === 'active' ? 'valid' : htmlspecialchars((string)$sv_status_shown) ?>"><?= htmlspecialchars((string)$sv_status_shown) ?></span></dd></div>
+                </dl>
+                <div class="sv-copy-row">
+                    <span class="sv-copy-label">Certificate ID</span>
+                    <code class="sv-copy-value" id="svCertId"><?= htmlspecialchars($cert['certificate_id']) ?></code>
+                    <button type="button" class="btn btn-ghost btn-sm sv-copy" data-copy-target="svCertId" data-copy-message="Certificate ID copied" aria-label="Copy certificate ID"><?= sv_icon('copy') ?><span>Copy</span></button>
+                </div>
+                <?php if (!empty($cert['sha256_hash'])): ?>
+                <div class="sv-copy-row">
+                    <span class="sv-copy-label">Content fingerprint (SHA-256)</span>
+                    <code class="sv-copy-value sv-hash" id="svCertHash"><?= htmlspecialchars((string)$cert['sha256_hash']) ?></code>
+                    <button type="button" class="btn btn-ghost btn-sm sv-copy" data-copy-target="svCertHash" data-copy-message="Fingerprint copied" aria-label="Copy content fingerprint"><?= sv_icon('copy') ?><span>Copy</span></button>
+                </div>
+                <?php endif; ?>
+                <div class="sv-cert-actions">
+                    <button type="button" class="btn btn-secondary btn-sm" data-copy="<?= htmlspecialchars($sv_link) ?>" data-copy-message="Verification link copied"><?= sv_icon('link') ?>Copy verification link</button>
+                </div>
+            </article>
+
+            <?php elseif ($verdict === 'REVOKED'): ?>
+            <!-- For REVOKED show only the cert ID so the verifier knows which record -->
+            <div class="card card-accent-danger sv-state-card">
+                <p><strong>Certificate ID:</strong> <code><?= htmlspecialchars($cert['certificate_id']) ?></code></p>
+                <p class="text-danger">This certificate has been revoked and is no longer valid. Contact the issuing institution for details.</p>
+            </div>
+
+            <?php elseif ($verdict === 'SUPERSEDED'): ?>
+            <!-- For SUPERSEDED show details + link to current version -->
+            <article class="card card-accent-info sv-state-card">
+                <h2 class="cert-details-title"><?= htmlspecialchars($cert['title']) ?></h2>
+                <dl class="cert-details">
+                    <dt>Certificate ID</dt><dd><?= htmlspecialchars($cert['certificate_id']) ?> (v<?= $cert['version'] ?>)</dd>
+                    <dt>Awarded To</dt><dd><?= htmlspecialchars($cert['student_name']) ?></dd>
+                    <dt>Issued By</dt><dd><?= htmlspecialchars($cert['institution_name']) ?></dd>
+                </dl>
+                <p class="text-warn mt-3">This version has been superseded by a corrected certificate.</p>
+                <?php if ($superseded_by): ?>
+                    <div>
+                        <a href="verify.php?token=<?= urlencode($superseded_by['qr_token']) ?>" class="btn btn-primary">Verify Current Version (<?= htmlspecialchars($superseded_by['certificate_id']) ?>) →</a>
+                    </div>
+                <?php endif; ?>
+            </article>
+            <?php endif; ?>
+
+            <?php if ($trusted && ($trusted['score'] ?? null) !== null): ?>
+            <?php
+            $score_int  = max(0, min(100, (int)$trusted['score']));
+            $score_band = $score_int >= 80 ? 'high' : ($score_int >= 50 ? 'mid' : 'low');
+            ?>
+            <section class="card trust-panel sv-trust sv-band-<?= $score_band ?>" aria-labelledby="svTrustTitle" data-reveal>
+                <div class="sv-trust-top">
+                    <div class="sv-gauge">
+                        <svg viewBox="0 0 200 116" role="img" aria-label="Trust score gauge: <?= $score_int ?> out of 100" focusable="false">
+                            <defs>
+                                <linearGradient id="svGaugeGrad" x1="0" y1="0" x2="1" y2="0">
+                                    <stop offset="0" class="sv-stop-a"/>
+                                    <stop offset="1" class="sv-stop-b"/>
+                                </linearGradient>
+                            </defs>
+                            <path class="sv-gauge-track" d="M16 100 A84 84 0 0 1 184 100" pathLength="100"/>
+                            <path class="sv-gauge-value" d="M16 100 A84 84 0 0 1 184 100" pathLength="100" stroke="url(#svGaugeGrad)" stroke-dasharray="100 100" stroke-dashoffset="<?= 100 - $score_int ?>"/>
+                        </svg>
+                        <div class="sv-gauge-num"><strong data-count-to="<?= $score_int ?>" data-count-duration="1200"><?= $score_int ?></strong><span>/ 100</span></div>
+                    </div>
+                    <div class="sv-trust-copy">
+                        <h2 class="sv-card-title" id="svTrustTitle">Trust score</h2>
+                        <p class="text-muted text-sm m-0">Rule-based score from CertiVault's existing checks.</p>
+                    </div>
+                </div>
+                <ul class="check-list sv-checks">
+                    <?php foreach (($trusted['checks'] ?? []) as $check_row): ?>
+                    <li class="check <?= $check_row['pass'] ? 'check-pass' : 'check-fail' ?>">
+                        <span class="sv-check-icon" aria-hidden="true"><?= $check_row['pass'] ? '&#10003;' : '&#10007;' ?></span>
+                        <span class="sv-check-label"><span class="visually-hidden"><?= $check_row['pass'] ? 'Passed:' : 'Failed:' ?> </span><?= htmlspecialchars((string)$check_row['label']) ?></span>
+                        <span class="sv-check-pts">(<?= $check_row['pass'] ? '+' . (int)$check_row['points'] : 0 ?> / <?= (int)$check_row['points'] ?>)</span>
+                    </li>
+                    <?php endforeach; ?>
+                </ul>
+                <p class="sv-disclaimer"><?= htmlspecialchars(TrustScoreService::DISCLAIMER) ?></p>
+                <p class="btn-row sv-downloads">
+                    <a class="btn btn-secondary" href="report.php?cert=<?= rawurlencode((string)$cert['certificate_id']) ?>">
+                        <?= sv_icon('download') ?>Download verification report (PDF)
+                    </a>
+                    <a class="btn btn-secondary" href="credential.php?certificate_id=<?= rawurlencode((string)$cert['certificate_id']) ?>">
+                        <?= sv_icon('json') ?>Signed credential (JSON)
+                    </a>
+                </p>
+                <p class="text-muted small text-center m-0">The JSON file can be re-checked in any browser — no trust in this server needed:
+                    <a href="offline_verify.php">verify a credential file</a>.</p>
+            </section>
+            <?php endif; ?>
+
+            <?php if ($cert && is_array($transparency)): ?>
+            <?php $sv_tlog_ok = !empty($transparency['reconciled']) && !empty($transparency['proof']); ?>
+            <section class="card sv-tlog <?= !empty($transparency['reconciled']) ? 'card-accent-valid' : 'card-accent-warn' ?>" aria-labelledby="svTlogTitle" data-reveal>
+                <div class="card-head">
+                    <h2 class="sv-card-title" id="svTlogTitle"><?= sv_icon('log') ?>Transparency log</h2>
+                    <span class="badge-status <?= $sv_tlog_ok ? 'badge-valid' : 'badge-warn' ?>"><?= $sv_tlog_ok ? 'Included' : 'Warning' ?></span>
+                </div>
+                <?php if ($sv_tlog_ok): ?>
+                    <p>Certificate is included at sequence <?= (int)$transparency['proof']['seq'] ?> in a checkpoint signed by CertiVault’s platform key.</p>
+                    <details class="sv-disclosure">
+                        <summary>Merkle root</summary>
+                        <p><small>Merkle root: <code class="break-all"><?= htmlspecialchars($transparency['proof']['root_hash']) ?></code></small></p>
+                    </details>
+                    <details class="sv-disclosure"><summary>Inclusion proof</summary><pre class="sv-pre"><?= htmlspecialchars(json_encode($transparency['proof'], JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)) ?></pre></details>
+                <?php else: ?>
+                    <p class="text-warn"><?= htmlspecialchars((string)($transparency['warning'] ?? 'WARNING: transparency log could not be reconciled.')) ?></p>
+                <?php endif; ?>
+                <p class="m-0"><a href="checkpoints/latest.json">Latest public checkpoint</a></p>
+            </section>
+            <?php endif; ?>
+
+            <?= GuestQuotaService::renderCounter($sv_quota) ?>
+            <div class="sv-again">
+                <a href="verify.php" class="btn btn-primary"><?= sv_icon('refresh') ?>Verify Another Certificate</a>
+            </div>
         </div>
         <?php endif; ?>
+    </div>
 
     <script src="assets/js/validation.js"></script>
     <?php if ($verdict === null): ?>
     <script src="assets/js/html5-qrcode.min.js"></script>
-    <script src="assets/js/smart-verify.js"></script>
     <?php endif; ?>
+    <script src="assets/js/smart-verify.js"></script>
 </main>
 <?php require __DIR__ . '/../src/partials/footer.php'; ?>
 </body>

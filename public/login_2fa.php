@@ -41,21 +41,49 @@ $page_title = 'Two-factor verification - CertiVault';
 require __DIR__ . '/../src/partials/head.php';
 require __DIR__ . '/../src/partials/header.php';
 ?>
-<main id="main">
-    <div class="container shell-narrow">
-        <form method="POST" class="card" id="twoFactorLogin" autocomplete="off">
-            <h2 class="card-title">Two-factor verification</h2>
-            <p class="text-muted">Enter the 6-digit code from your authenticator app. Lost your phone? Enter one of your recovery codes instead.</p>
-            <?php if ($error): ?><div class="alert alert-danger" role="alert"><?= htmlspecialchars($error) ?></div><?php endif; ?>
-            <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
-            <div class="form-group">
-                <label for="code">Authentication code</label>
-                <input type="text" id="code" name="code" inputmode="numeric" autocomplete="one-time-code"
-                       maxlength="12" required autofocus placeholder="123456 or abcd-efgh">
-            </div>
-            <button type="submit" class="btn btn-primary btn-block">Verify and sign in</button>
-            <p class="text-muted small text-center"><a href="login.php">Cancel and go back to login</a></p>
-        </form>
+<main id="main" class="auth-page">
+    <div class="auth-split auth-shell">
+        <div class="auth-main">
+        <div class="auth-card">
+            <ol class="stepper auth-stepper" aria-label="Sign-in progress">
+                <li class="is-done">Password</li>
+                <li class="is-current" aria-current="step">Authenticator code</li>
+            </ol>
+            <form method="POST" class="auth-form" id="twoFactorLogin" autocomplete="off" data-loading>
+                <div class="auth-card-head">
+                    <span class="auth-icon auth-icon-pulse" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M11 18h2"/><path d="M9.5 9.5l2 2 3.5-3.5"/></svg>
+                    </span>
+                    <h1>Two-factor verification</h1>
+                    <p class="auth-sub">Enter the 6-digit code from your authenticator app. Lost your phone? Enter one of your recovery codes instead.</p>
+                </div>
+                <?php if ($error): ?><div class="alert alert-danger" role="alert"><?= htmlspecialchars($error) ?></div><?php endif; ?>
+                <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
+                <div class="form-group auth-otp-group">
+                    <label for="code">Authentication code</label>
+                    <input type="text" id="code" name="code" inputmode="numeric" autocomplete="one-time-code"
+                           maxlength="12" required autofocus placeholder="123456 or abcd-efgh" class="code-input">
+                </div>
+                <button type="submit" class="btn btn-primary btn-lg btn-block">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3l8 3v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg>
+                    Verify and sign in
+                </button>
+                <p class="auth-foot"><a href="login.php" class="auth-back-link"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M19 12H5M11 18l-6-6 6-6"/></svg> Cancel and go back to login</a></p>
+            </form>
+        </div>
+        </div>
+
+        <aside class="auth-aside" aria-labelledby="authAsideTitle">
+            <span class="auth-eyebrow"><span class="eyebrow-dot" aria-hidden="true"></span> One more step</span>
+            <h2 id="authAsideTitle">Your password was right. Now prove it's you.</h2>
+            <p>This account is protected by two-factor authentication, so a stolen password alone is not enough to sign in.</p>
+            <ul class="auth-points">
+                <li data-reveal="left" data-reveal-delay="1"><span class="auth-point-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span><span><strong>Codes refresh</strong> every 30 seconds in your app</span></li>
+                <li data-reveal="left" data-reveal-delay="2"><span class="auth-point-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2L20 3M16 7l3 3M14 9l2 2"/></svg></span><span><strong>Recovery codes</strong> work once each, if your phone is lost</span></li>
+                <li data-reveal="left" data-reveal-delay="3"><span class="auth-point-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M12 3l8 3v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V6z"/></svg></span><span><strong>5 attempts</strong> in 5 minutes, then sign in again</span></li>
+            </ul>
+            <svg class="auth-aside-art" viewBox="0 0 200 200" aria-hidden="true" focusable="false"><g fill="none" stroke="#fff" stroke-width="2"><circle cx="100" cy="100" r="92" stroke-opacity=".35"/><circle cx="100" cy="100" r="70" stroke-opacity=".5" stroke-dasharray="4 8"/><rect x="70" y="44" width="60" height="112" rx="14" stroke-width="5"/><path d="M92 140h16M86 94l10 10 18-18" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></g></svg>
+        </aside>
     </div>
 </main>
 <?php require __DIR__ . '/../src/partials/footer.php'; ?>

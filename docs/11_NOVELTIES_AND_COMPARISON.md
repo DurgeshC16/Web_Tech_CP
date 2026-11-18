@@ -429,7 +429,7 @@ Effort: S ≈ ≤ 2 days, M ≈ 1 week, L ≈ 2–4 weeks (one developer).
 | **Institution domain verification** (DNS TXT or email on the institution's domain) | Stronger vetting before approval | S |
 | **DigiLocker / NAD push** (as an Issuer via API Setu) for degree-type awards | Legal standing in India; CertiVault keeps the long tail of event certificates | L (needs govt onboarding) |
 | **HSM / cloud KMS** or institution-held keys (sign locally, upload signature) | Removes server custody of private keys | L |
-| Remove `style-src 'unsafe-inline'` | Completes the CSP hardening | S–M |
+| ~~Remove `style-src 'unsafe-inline'`~~ (done) | Completes the CSP hardening | S–M |
 
 ### P3 — polish and reach
 | Feature | Why | Effort |

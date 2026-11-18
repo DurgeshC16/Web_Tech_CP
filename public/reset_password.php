@@ -110,58 +110,81 @@ $resend_wait = pw_reset_resend_wait();
 ?>
 <?php $page_title = 'Reset Password - CertiVault'; require __DIR__ . '/../src/partials/head.php'; ?>
 <?php require __DIR__ . '/../src/partials/header.php'; ?>
-<main id="main">
-    <div class="auth-wrap">
-    <div class="auth-card">
-        <div class="auth-brand">
-            <svg width="40" height="40" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="14" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="16" cy="16" r="9" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M16 10 L18.2 14.2 L22.5 14.8 L19.2 17.8 L20.2 22 L16 19.6 L11.8 22 L12.8 17.8 L9.5 14.8 L13.8 14.2 Z" fill="currentColor"/></svg>
-            <div class="brand-name">CertiVault</div>
-        </div>
-        <h2>Reset Password</h2>
-        <p><strong>Step 2 of 2:</strong> enter your email, the 6-digit code we emailed you, and your new password.</p>
-        <?php if ($error): ?>
-            <div class="alert alert-danger" role="alert"><?= htmlspecialchars($error) ?></div>
-        <?php endif; ?>
-        <?php if ($info): ?>
-            <div class="alert alert-success" role="status"><?= htmlspecialchars($info) ?></div>
-        <?php endif; ?>
-
-        <form method="POST" action="" id="resetForm">
-            <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
-            <div class="form-group">
-                <label for="rp_email">Email:</label>
-                <input type="email" name="email" id="rp_email" autocomplete="username" value="<?= htmlspecialchars($email) ?>" data-validate="required|email" required>
-                <?php render_field_error($errors, 'email'); ?>
+<main id="main" class="auth-page">
+    <div class="auth-split auth-shell">
+        <div class="auth-main">
+        <div class="auth-card">
+            <ol class="stepper auth-stepper" aria-label="Password reset progress">
+                <li class="is-done"><a href="forgot_password.php">Request a code</a></li>
+                <li class="is-current" aria-current="step">Choose a new password</li>
+            </ol>
+            <div class="auth-card-head">
+                <span class="auth-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M12 3l8 3v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V6z"/><rect x="9" y="11" width="6" height="5" rx="1"/><path d="M10.5 11V9.5a1.5 1.5 0 0 1 3 0V11"/></svg>
+                </span>
+                <h1>Reset Password</h1>
+                <p class="auth-sub"><span class="visually-hidden">Step 2 of 2: </span>Enter your email, the 6-digit code we emailed you, and your new password.</p>
             </div>
-            <div class="form-group">
-                <label for="otp_code">Verification Code:</label>
-                <input type="text" name="otp_code" id="otp_code" maxlength="6" inputmode="numeric" autocomplete="one-time-code" class="otp-input" data-validate="required|otp" required>
-                <?php render_field_error($errors, 'otp_code'); ?>
-            </div>
-            <div class="form-group">
-                <label for="password">New Password:</label>
-                <input type="password" name="password" id="password" autocomplete="new-password" data-validate="required|min:8|max:72|strong" required>
-                <?php render_field_error($errors, 'password'); ?>
-            </div>
-            <div class="form-group">
-                <label for="confirm_password">Confirm New Password:</label>
-                <input type="password" name="confirm_password" id="confirm_password" autocomplete="new-password" data-validate="required|match:#password" required>
-                <?php render_field_error($errors, 'confirm_password'); ?>
-            </div>
-            <!-- First submit button = the Enter-key default. -->
-            <button type="submit" name="action" value="reset" class="btn btn-primary">Reset Password</button>
-            <!-- Resend posts the same form (email included) but skips the
-                 client-side checks of the code/password fields. -->
-            <button type="submit" name="action" value="resend" formnovalidate class="btn btn-secondary" id="resendBtn" <?php if ($resend_wait > 0) echo 'data-wait="' . (int)$resend_wait . '"'; ?>>Resend code</button>
-            <?php if ($resend_wait > 0): ?>
-                <small class="field-note" id="resendCountdown">You can request another code in <?= (int)$resend_wait ?> second<?= $resend_wait === 1 ? '' : 's' ?>.</small>
+            <?php if ($error): ?>
+                <div class="alert alert-danger" role="alert"><?= htmlspecialchars($error) ?></div>
             <?php endif; ?>
-        </form>
-        <p>Don't have a code yet? <a href="forgot_password.php">Request one</a></p>
-        <p><a href="login.php">Back to Login</a></p>
+            <?php if ($info): ?>
+                <div class="alert alert-success" role="status"><?= htmlspecialchars($info) ?></div>
+            <?php endif; ?>
+
+            <form method="POST" action="" id="resetForm" class="auth-form" data-loading>
+                <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
+                <div class="form-group">
+                    <label for="rp_email">Email</label>
+                    <input type="email" name="email" id="rp_email" autocomplete="username" placeholder="you@example.com" value="<?= htmlspecialchars($email) ?>" data-validate="required|email" required>
+                    <?php render_field_error($errors, 'email'); ?>
+                </div>
+                <div class="form-group auth-otp-group">
+                    <label for="otp_code">Verification Code</label>
+                    <input type="text" name="otp_code" id="otp_code" maxlength="6" inputmode="numeric" autocomplete="one-time-code" class="otp-input otp-slots" aria-describedby="otp_code_hint" data-validate="required|otp" required>
+                    <small id="otp_code_hint" class="help-text">The 6 digits from the email we sent you.</small>
+                    <?php render_field_error($errors, 'otp_code'); ?>
+                </div>
+                <div class="form-group">
+                    <label for="password">New Password</label>
+                    <input type="password" name="password" id="password" autocomplete="new-password" data-validate="required|min:8|max:72|strong" required>
+                    <?php render_field_error($errors, 'password'); ?>
+                </div>
+                <div class="form-group">
+                    <label for="confirm_password">Confirm New Password</label>
+                    <input type="password" name="confirm_password" id="confirm_password" autocomplete="new-password" data-validate="required|match:#password" required>
+                    <?php render_field_error($errors, 'confirm_password'); ?>
+                </div>
+                <!-- First submit button = the Enter-key default. -->
+                <button type="submit" name="action" value="reset" class="btn btn-primary btn-lg btn-block">Reset Password</button>
+                <!-- Resend posts the same form (email included) but skips the
+                     client-side checks of the code/password fields. -->
+                <div class="auth-resend">
+                    <span class="auth-resend-text">Didn't get the code?</span>
+                    <button type="submit" name="action" value="resend" formnovalidate class="btn btn-secondary" id="resendBtn" <?php if ($resend_wait > 0) echo 'data-wait="' . (int)$resend_wait . '"'; ?>>Resend code</button>
+                    <?php if ($resend_wait > 0): ?>
+                        <small class="field-note" id="resendCountdown">You can request another code in <?= (int)$resend_wait ?> second<?= $resend_wait === 1 ? '' : 's' ?>.</small>
+                    <?php endif; ?>
+                </div>
+            </form>
+            <p class="auth-foot">Don't have a code yet? <a href="forgot_password.php">Request one</a></p>
+            <p class="auth-foot auth-foot-tight"><a href="login.php" class="auth-back-link"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M19 12H5M11 18l-6-6 6-6"/></svg> Back to Login</a></p>
+        </div>
+        </div>
+
+        <aside class="auth-aside" aria-labelledby="authAsideTitle">
+            <span class="auth-eyebrow"><span class="eyebrow-dot" aria-hidden="true"></span> Almost there</span>
+            <h2 id="authAsideTitle">Pick a password you have never used here.</h2>
+            <p>A strong password is long and unique. The meter under the field turns green as you meet each rule.</p>
+            <ul class="auth-points">
+                <li data-reveal="left" data-reveal-delay="1"><span class="auth-point-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M4 7h16M4 12h10M4 17h7"/></svg></span><span><strong>8&ndash;72 characters</strong> &mdash; longer is stronger</span></li>
+                <li data-reveal="left" data-reveal-delay="2"><span class="auth-point-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M4 18L9 6l5 12M6 14h6M16 10h5M18.5 7.5v5"/></svg></span><span><strong>Mix it up:</strong> upper and lower case, a digit and a symbol</span></li>
+                <li data-reveal="left" data-reveal-delay="3"><span class="auth-point-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M12 3l8 3v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg></span><span><strong>Codes expire</strong> after a few wrong tries, so guessing is pointless</span></li>
+            </ul>
+            <svg class="auth-aside-art" viewBox="0 0 200 200" aria-hidden="true" focusable="false"><g fill="none" stroke="#fff" stroke-width="2"><circle cx="100" cy="100" r="92" stroke-opacity=".35"/><circle cx="100" cy="100" r="70" stroke-opacity=".5" stroke-dasharray="4 8"/><rect x="62" y="92" width="76" height="56" rx="10" stroke-width="5"/><path d="M76 92V78a24 24 0 0 1 48 0v14M100 112v14" stroke-width="5" stroke-linecap="round"/></g></svg>
+        </aside>
     </div>
     <script src="assets/js/validation.js"></script>
-</div>
 </main>
 <?php require __DIR__ . '/../src/partials/footer.php'; ?>
 </body>

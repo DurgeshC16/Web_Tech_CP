@@ -5,7 +5,7 @@ CertiVault has three layers of automated tests plus a manual plan
 
 | Layer | Command | Size |
 |-------|---------|------|
-| PHP CLI suites (unit + HTTP via `php -S`) | `php tests/run_all.php` | 16 suites, 512 checks |
+| PHP CLI suites (unit + HTTP via `php -S`) | `php tests/run_all.php` | 19 suites, 690 checks |
 | Browser — Smart Verify | `node tests/test_verify_ui.mjs` | 17 checks |
 | Browser — whole app under CSP | `node tests/test_pages_browser.mjs` | 61 checks |
 | CI (GitHub Actions) | every push / PR to `main` | all of the above on Linux |
@@ -48,7 +48,7 @@ Run on a fresh test database, 2026-11-15 (XAMPP PHP 8.2.12, MariaDB 10.4.32):
 | `test_timezone.php` | 2 | PHP ↔ MySQL time zone |
 | `test_workflow.php` | 25 | end-to-end lifecycle |
 | `test_upload_http.php` | 7 | multipart uploads over HTTP |
-| `test_otp.php` | 17 | OTP lifecycle via the dev mail spool |
+| `test_otp.php` | 19 | OTP lifecycle via the dev mail spool |
 | `test_config_guard.php` | 5 | production guard |
 | `test_verify_http.php` | 32 | every verdict via token + GET ID, CSRF, browser-QR fallback, no inline scripts |
 | `test_key_pinning.php` | 20 | the S6 key-swap attack (TAMPERED with pins, VALID without), append-only, fail-closed, strict mode, operator script |
@@ -56,7 +56,10 @@ Run on a fresh test database, 2026-11-15 (XAMPP PHP 8.2.12, MariaDB 10.4.32):
 | `test_bulk_issuance.php` | 33 | shared issuance pipeline, generated PDFs (hash / text / credential), rollback leaves nothing behind, issuance email, CSV parsing edge cases, formula injection |
 | `test_two_factor.php` | 36 | RFC 6238 test vectors, window, replay, encrypted secret, recovery codes, real two-step login over HTTP |
 | `test_analytics.php` | 15 | DST-safe day series, scoping, counts, scales |
-| **Total** | **512** | **16/16** |
+| `test_auth_flows.php` | 65 | registration resume (student/institution, role switch, verified duplicate), activation-takeover guard, login message order (verify email → awaiting approval → rejected with reason), email normalisation + `v_email` rules, forgot→reset always reachable (unknown email, cooldown, no session), registration without `confirm_password` |
+| `test_guest_quota.php` | 66 | GuestQuotaService (5/6 boundary, free repeats, rolling window, session vs IP, login exemption, limit 0, pruning, missing table fails open) + HTTP with the quota on (countdown, limit page without verdict, cleared cookies stay blocked, logged-in unlimited, long padded Smart Verify text can't alias another lookup) |
+| `test_dataset.php` | 47 | dataset generator: dry-run, production refusal, counts, key pinning, every certificate's verdict, CSV formats (bulk CSV parsed by `BulkIssueService`), determinism, refusal on re-run, reset removes only dataset rows |
+| **Total** | **690** | **19/19** |
 
 `test_smtp_live.php` needs real SMTP credentials and is run by hand.
 

@@ -39,6 +39,7 @@ external_sources (managed registry) · tlog_checkpoints (signed Merkle roots) ·
 |-------|---------|-------------|
 | `institution_keys` | Versioned RSA key pairs | PK (`institution_id`, `key_id`), `public_key` (PEM), `encrypted_private_key` (`GCM1.` blob), `status` ∈ {active, retired}, `valid_from`, `valid_to` |
 | `certificates` | Issued certificates | `certificate_id` (unique; `certificate_id_norm` generated lower-case unique), `institution_id`, `key_id`, `student_id`, `title`, `issue_date`, `expiry_date`, `file_path`, `status` ∈ {active, revoked, expired, superseded}, `version`, `previous_version_id`, `superseded_by_id`, `revocation_reason`, `revoked_at`, `revoked_by`, `sha256_hash` (canonical digest), `file_sha256` (raw file hash, for file-upload matching), `stamped_sha256`, `digital_signature` (base64), `qr_token` (unique) |
+| `guest_verify_quota` | Guest verification quota (migration 017); raw IPs are never stored | PK (`subject_hash`, `key_hash`), `is_credit`, `seen_at`; pruned after the window |
 | `verify_rate` | Rate-limiter state (migration 014) | PK (`ip`, `value_hash` = SHA-256 of the lookup key), `seen_at`; at most 30 live rows per IP |
 | `verification_logs` | Audit trail of every lookup | `query_type` ∈ {token, certificate_id, file, qr_image, text, external_ref, external_credential}, `query_value`, `certificate_id_found`, `result` (VALID … WITHDRAWN), `detail`, `verifier_ip`, `verified_at` |
 
@@ -92,6 +93,7 @@ in order. They are written to be idempotent (guarded `ALTER`s /
 | 013 | `013_certificate_file_hash.sql` | `certificates.file_sha256` + index. Afterwards run `php scripts/backfill_file_hashes.php` once |
 | 014 | `014_verify_rate_limiter.sql` | `verify_rate` table (bounded rate-limiter state) |
 | 015 | `015_two_factor_auth.sql` | `users.totp_*` columns + `user_recovery_codes` (2FA) |
+| 017 | `017_guest_verify_quota.sql` | `guest_verify_quota` table: PK (`subject_hash` = keyed hash of the IP or session, `key_hash` = SHA-256 of the lookup), `is_credit`, `seen_at` — guest verification quota (5 / 24 h) |
 | 016 | `016_unify_collation.sql` | Converts the original tables to `utf8mb4_unicode_ci` (mixed collations broke cross-table comparisons on MariaDB 10.11). Rebuilds tables — run in a quiet moment |
 
 Run them in phpMyAdmin (Import tab, select the `certivault` database) or:

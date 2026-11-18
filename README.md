@@ -65,13 +65,16 @@ CertiVault uses plain, well-understood cryptography instead:
 - Students are **emailed** their verify link; new students get an activation email first.
 - Revocation with reason; **supersession** that keeps the version chain.
 
-**Verify** (no account needed)
+**Verify** (no account needed for the first 5 checks)
 - **Smart Verify** — ID in any format, QR token, link, QR image or the
   certificate file. Exact originals match by fingerprint; other copies resolve
   through the **QR read inside the PDF, in the browser** (pdf.js). Privacy
   mode sends only a hash. Camera scanning. Shareable links
   (`verify.php?certificate_id=…`).
 - **Six-verdict cascade** with fixed precedence, audit log and a **trust score**.
+- **Guest quota** — visitors get **5 free verifications per 24 h** (per hashed IP
+  and per session; repeats are free), then a "free limit reached — log in or
+  register" page. Logged-in users are unlimited (`CV_GUEST_VERIFY_LIMIT`).
 - **PDF verification report** and a **public JSON status API**.
 - **Signed credential (JSON)** + **zero-trust verifier**: anyone can re-check a
   certificate **in their own browser** with Web Crypto (or with OpenSSL)
@@ -79,6 +82,13 @@ CertiVault uses plain, well-understood cryptography instead:
 
 **Accounts & security**
 - Email-OTP activation, CAPTCHA, login lockout, remember-me, session timeouts.
+- **Resumable sign-up** — registering again with an unverified email resumes the
+  pending account (fresh code) instead of "already registered"; login asks
+  unverified accounts to verify their email before checking institution approval.
+- One password field with a **show/hide toggle** and live strength checklist.
+- **Forgot password** is a 2-step flow (email → code + new password) with
+  "Already have a code?" and "Resend code"; identical wording whether or not
+  the account exists.
 - **Two-factor authentication (TOTP)** with recovery codes, for every role.
 - **Key pinning**, AES-256-GCM key storage, **CSP with no inline scripts**,
   pre-lookup rate limiting, strict SQL mode.
@@ -174,6 +184,7 @@ php scripts/set_super_admin.php
 
 # 6. Optional demo data
 php scripts/seed_demo.php
+php scripts/generate_dataset.php   # 100 people, 5 institutions, ~190 signed certificates
 
 # 7. Run — serve ONLY the public/ folder
 php -S localhost:8081 -t public
@@ -199,7 +210,9 @@ Open <http://localhost:8081>. With Apache, point the virtual host's
 ## Configuration
 
 Settings come from `src/config/config.local.php`, then environment variables,
-then the defaults in `src/config/config.php`.
+then the defaults in `src/config/config.php`. Exception: an explicitly set
+`CV_DB_NAME` or `CV_MAIL_TRANSPORT` environment variable overrides
+`config.local.php` (so test servers really use `certivault_test`).
 
 | Setting | Purpose |
 |---------|---------|
@@ -210,6 +223,7 @@ then the defaults in `src/config/config.php`.
 | `CV_KEY_PINS_FILE`, `CV_KEY_PINNING_STRICT` | Key-pin file location (keep it out of reach of the web/DB user); strict mode |
 | `CV_RECAPTCHA_SITE_KEY` / `_SECRET_KEY` | Google reCAPTCHA; otherwise an offline arithmetic CAPTCHA |
 | `CV_BASE_URL` | Only behind a proxy; otherwise derived per request |
+| `CV_GUEST_VERIFY_LIMIT` / `CV_GUEST_VERIFY_WINDOW_SECONDS` | Free verifications for visitors who are not logged in (default 5 per 86400 s; `0` = off). `api_status.php` keeps its own limiter |
 | `CV_ENV=production` | Refuses to start with development secrets or the file mail transport |
 | Feature flags | `CV_SMART_VERIFY`, `CV_API_ENABLED` (on); `CV_EXT_REGISTRY_ENABLED`, `CV_ATTESTED_CREDENTIALS_ENABLED`, `CV_CERTIFICATE_TRANSPARENCY_ENABLED` (off) |
 
@@ -228,10 +242,18 @@ After `php scripts/seed_demo.php`:
 
 Local demo credentials only — never reuse them on a server.
 
+**Dummy dataset (100 people).** `php scripts/generate_dataset.php` creates 5 fictional
+institutions, 100 students and ~190 certificates through the real issuance
+pipeline (VALID / EXPIRED / REVOKED / SUPERSEDED mix). Every dataset account is on
+`@dataset.example.com` with the password `Demo@12345` (e.g.
+`registrar.northbridge@dataset.example.com`, `lea.moreau@dataset.example.com`).
+`--reset` removes it again; it refuses to run with `CV_ENV=production`. CSVs and
+column descriptions: [docs/samples/dataset/](docs/samples/dataset/README.md).
+
 ## Testing & CI
 
 ```sh
-php tests/run_all.php              # 16 PHP suites, 512 checks (isolated certivault_test DB)
+php tests/run_all.php              # 19 PHP suites (isolated certivault_test DB)
 node tests/test_verify_ui.mjs      # Smart Verify in headless Chrome — 17 checks
 node tests/test_pages_browser.mjs  # every page under the CSP, issuance, 2FA, analytics — 61 checks
 ```
@@ -270,6 +292,8 @@ Threat model and remaining gaps:
 | [08 Research Summary](docs/08_RESEARCH_SUMMARY.md) | Findings of the accompanying research paper |
 | [09 Status & Roadmap](docs/09_STATUS_AND_ROADMAP.md) | Progress, change log, what is next |
 | [10 Running & Demo Guide](docs/10_RUNNING_AND_DEMO_GUIDE.md) | **Step-by-step setup, guided tour of the website, 5-minute demo script** |
+| [11 Novelties & Comparison](docs/11_NOVELTIES_AND_COMPARISON.md) | CertiVault vs Credly, Certifier, Accredible, Blockcerts, OB 3.0/W3C VC, DigiLocker/NAD + prioritised roadmap |
+| [12 Design System](docs/12_DESIGN_SYSTEM.md) | UI tokens, components, motion rules of the redesigned frontend |
 | [Requirements Matrix](docs/REQUIREMENTS_MATRIX.md) | Course requirements → implementation |
 | [Project Brief (PDF)](docs/reference/CertiVault_Project_Brief.pdf) | Original project brief |
 

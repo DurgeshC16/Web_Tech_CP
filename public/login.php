@@ -202,63 +202,98 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 ?>
 <?php $page_title = 'Login - CertiVault'; require __DIR__ . '/../src/partials/head.php'; ?>
 <?php require __DIR__ . '/../src/partials/header.php'; ?>
-<main id="main">
-    <div class="auth-wrap">
-    <div class="auth-card">
-        <div class="auth-brand">
-            <svg width="40" height="40" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="14" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="16" cy="16" r="9" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M16 10 L18.2 14.2 L22.5 14.8 L19.2 17.8 L20.2 22 L16 19.6 L11.8 22 L12.8 17.8 L9.5 14.8 L13.8 14.2 Z" fill="currentColor"/></svg>
-            <div class="brand-name">CertiVault</div>
-        </div>
-        <h2>Login to CertiVault</h2>
-        <?php if ($error): ?>
-            <div class="alert alert-danger"><?= htmlspecialchars($error) ?></div>
-        <?php endif; ?>
-        <?php if (!empty($errors)): ?>
-            <div class="alert alert-danger">Please correct the highlighted fields below.</div>
-        <?php endif; ?>
-        <?php $remembered_email = $_COOKIE['cv_email'] ?? ''; ?>
-        <?php if ($show_resend): ?>
-            <form method="POST" action="" class="inline-form" style="margin-bottom:12px;">
-                <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
-                <input type="hidden" name="resend_activation" value="1">
-                <button type="submit" class="btn btn-secondary" data-continue-activation>Continue activation (send me a code)</button>
-            </form>
-        <?php endif; ?>
-        <?php if ($success): ?>
-            <div class="alert alert-success"><?= htmlspecialchars($success) ?></div>
-        <?php endif; ?>
-        <?php if ($info): ?>
-            <div class="alert alert-info"><?= htmlspecialchars($info) ?></div>
-        <?php endif; ?>
+<main id="main" class="auth-page">
+    <div class="auth-split auth-shell">
+        <div class="auth-main">
+        <div class="auth-card">
+            <div class="auth-card-head">
+                <span class="auth-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/><path d="M12 14.5v2.5"/></svg>
+                </span>
+                <h1>Welcome back</h1>
+                <p class="auth-sub">Sign in to manage, share and verify your certificates.</p>
+            </div>
+            <?php if ($error): ?>
+                <div class="alert alert-danger" role="alert"><?= htmlspecialchars($error) ?></div>
+            <?php endif; ?>
+            <?php if (!empty($errors)): ?>
+                <div class="alert alert-danger">Please correct the highlighted fields below.</div>
+            <?php endif; ?>
+            <?php $remembered_email = $_COOKIE['cv_email'] ?? ''; ?>
+            <?php if ($show_resend): ?>
+                <form method="POST" action="" class="auth-resend-activation">
+                    <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
+                    <input type="hidden" name="resend_activation" value="1">
+                    <button type="submit" class="btn btn-secondary btn-block" data-continue-activation>Continue activation (send me a code)</button>
+                </form>
+            <?php endif; ?>
+            <?php if ($success): ?>
+                <div class="alert alert-success" role="status"><?= htmlspecialchars($success) ?></div>
+            <?php endif; ?>
+            <?php if ($info): ?>
+                <div class="alert alert-info"><?= htmlspecialchars($info) ?></div>
+            <?php endif; ?>
 
-        <form method="POST" action="">
-            <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
-            <div class="form-group">
-                <label for="login_email">Email:</label>
-                <input type="email" name="email" id="login_email" autocomplete="username" value="<?= htmlspecialchars($email !== '' ? $email : $remembered_email) ?>" data-validate="required|email" required>
-                <?php render_field_error($errors, 'email'); ?>
+            <form method="POST" action="" class="auth-form" data-loading>
+                <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
+                <div class="form-group">
+                    <label for="login_email">Email</label>
+                    <input type="email" name="email" id="login_email" autocomplete="username" placeholder="you@example.com" value="<?= htmlspecialchars($email !== '' ? $email : $remembered_email) ?>" data-validate="required|email" required>
+                    <?php render_field_error($errors, 'email'); ?>
+                </div>
+                <div class="form-group">
+                    <div class="auth-label-row">
+                        <label for="login_password">Password</label>
+                        <a href="forgot_password.php" class="auth-label-link">Forgot password?</a>
+                    </div>
+                    <input type="password" name="password" id="login_password" autocomplete="current-password" data-validate="required" required>
+                    <?php render_field_error($errors, 'password'); ?>
+                </div>
+                <div class="auth-options">
+                    <label class="checkbox-row"><input type="checkbox" name="remember_email" value="1" <?= $remembered_email !== '' ? 'checked' : '' ?>> <span>Remember my email</span></label>
+                    <label class="checkbox-row"><input type="checkbox" name="remember_me" value="1"> <span>Keep me signed in on this device (30 days)</span></label>
+                </div>
+                <div class="form-group auth-captcha">
+                    <?= captcha_field_html($errors) ?>
+                </div>
+                <button type="submit" class="btn btn-primary btn-lg btn-block">
+                    Login
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+                </button>
+            </form>
+
+            <div class="auth-divider"><span>New to CertiVault?</span></div>
+            <div class="auth-alt-links">
+                <a href="register_student.php" class="btn btn-secondary">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M22 10L12 5 2 10l10 5 10-5z"/><path d="M6 12v5c3 2 9 2 12 0v-5"/></svg>
+                    Register as Student
+                </a>
+                <a href="register_institution.php" class="btn btn-secondary">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 21h18M5 21V10M19 21V10M9 21v-6h6v6M2 10l10-6 10 6"/></svg>
+                    Register as Institution
+                </a>
             </div>
-            <div class="form-group">
-                <label><input type="checkbox" name="remember_email" value="1" style="width:auto;" <?= $remembered_email !== '' ? 'checked' : '' ?>> Remember my email</label>
+        </div>
+        </div>
+
+        <aside class="auth-aside" aria-labelledby="authAsideTitle">
+            <span class="auth-eyebrow"><span class="eyebrow-dot" aria-hidden="true"></span> Secure sign-in</span>
+            <h2 id="authAsideTitle">Certificates you can prove, in seconds.</h2>
+            <p>Every CertiVault certificate is digitally signed by its institution, so anyone can check it is genuine &mdash; no phone calls, no paperwork.</p>
+            <ul class="auth-points">
+                <li data-reveal="left" data-reveal-delay="1"><span class="auth-point-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M12 3l8 3v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg></span><span><strong>Tamper-evident</strong> signatures on every record</span></li>
+                <li data-reveal="left" data-reveal-delay="2"><span class="auth-point-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 14h3v3h-3zM21 14v.01M14 21h.01M17 21h4v-4"/></svg></span><span><strong>QR verification</strong> anyone can run instantly</span></li>
+                <li data-reveal="left" data-reveal-delay="3"><span class="auth-point-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M11 18h2"/></svg></span><span><strong>Two-factor sign-in</strong> with any authenticator app</span></li>
+            </ul>
+            <div class="auth-stats">
+                <div class="auth-stat"><span class="auth-stat-num" data-count-to="2048">2048</span><span class="auth-stat-label">bit RSA signing keys</span></div>
+                <div class="auth-stat"><span class="auth-stat-num" data-count-to="256">256</span><span class="auth-stat-label">bit SHA fingerprints</span></div>
+                <div class="auth-stat"><span class="auth-stat-num" data-count-to="30" data-count-suffix="s">30s</span><span class="auth-stat-label">2FA code window</span></div>
             </div>
-            <div class="form-group">
-                <label><input type="checkbox" name="remember_me" value="1" style="width:auto;"> Keep me signed in on this device (30 days)</label>
-            </div>
-            <div class="form-group">
-                <label for="login_password">Password:</label>
-                <input type="password" name="password" id="login_password" autocomplete="current-password" data-validate="required" required>
-                <?php render_field_error($errors, 'password'); ?>
-            </div>
-            <div class="form-group">
-                <?= captcha_field_html($errors) ?>
-            </div>
-            <button type="submit" class="btn btn-primary">Login</button>
-        </form>
-        <p><a href="forgot_password.php">Forgot password?</a></p>
-        <p>Don't have an account? <a href="register_student.php">Register as Student</a> or <a href="register_institution.php">Register as Institution</a></p>
+            <svg class="auth-aside-art" viewBox="0 0 200 200" aria-hidden="true" focusable="false"><g fill="none" stroke="#fff" stroke-width="2"><circle cx="100" cy="100" r="92" stroke-opacity=".35"/><circle cx="100" cy="100" r="70" stroke-opacity=".5" stroke-dasharray="4 8"/><path d="M100 48l38 14v28c0 25-16 43-38 50-22-7-38-25-38-50V62z" stroke-width="5" stroke-linejoin="round"/><path d="M82 98l13 13 24-26" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/></g></svg>
+        </aside>
     </div>
     <script src="assets/js/validation.js"></script>
-</div>
 </main>
 <?php require __DIR__ . '/../src/partials/footer.php'; ?>
 </body>

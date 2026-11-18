@@ -81,40 +81,128 @@ $credentials = $stmt->fetchAll(PDO::FETCH_ASSOC);
 foreach ($credentials as &$credential) $credential['verdict'] = AttestedCredentialService::verdict($db, $credential);
 unset($credential);
 ?>
+<?php
+// ── Presentation only ─────────────────────────────────────────────────
+// Badge colour per verdict (never the green "valid" style: an external
+// credential is at most ATTESTED, never VALID).
+$ec_badge = static function (string $verdict): string {
+    return [
+        'ATTESTED'      => 'info',
+        'SELF_DECLARED' => 'pending',
+        'TAMPERED'      => 'tampered',
+        'WITHDRAWN'     => 'invalid',
+    ][$verdict] ?? 'invalid';
+};
+$ec_icon = static function (string $name): string {
+    $paths = [
+        'globe'  => '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
+        'plus'   => '<path d="M12 5v14M5 12h14"/>',
+        'back'   => '<path d="M19 12H5M11 18l-6-6 6-6"/>',
+        'info'   => '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>',
+        'calendar' => '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/>',
+        'building' => '<path d="M3 21h18M5 21V9l7-5 7 5v12M9 21v-6h6v6"/>',
+        'qr'     => '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM20 14v.01M14 20h.01M17 20h4v-3"/>',
+        'stack'  => '<path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/>',
+    ];
+    return '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">'
+        . ($paths[$name] ?? '') . '</svg>';
+};
+?>
 <?php $page_title = 'External Credentials - CertiVault'; require __DIR__ . '/../src/partials/head.php'; ?>
 <?php require __DIR__ . '/../src/partials/header.php'; ?>
-<main id="main"><div class="container shell-wide">
-    <div class="page-head"><h2>My external credentials</h2><a class="btn btn-secondary" href="student_dashboard.php">Back</a></div>
-    <p>These are credentials you declare from another issuer. CertiVault does not contact or verify the issuer.</p>
+<main id="main" class="stu-main"><div class="stu-shell">
+    <nav class="stu-crumbs" aria-label="Breadcrumb">
+        <ol>
+            <li><a href="student_dashboard.php">My Certificates</a></li>
+            <li aria-current="page">External credentials</li>
+        </ol>
+    </nav>
+    <div class="page-head">
+        <div>
+            <p class="eyebrow">Beyond CertiVault</p>
+            <h1>My external credentials</h1>
+            <p class="page-head-sub">These are credentials you declare from another issuer. CertiVault does not contact or verify the issuer.</p>
+        </div>
+        <div class="page-head-actions"><a class="btn btn-secondary" href="student_dashboard.php"><?= $ec_icon('back') ?>Back</a></div>
+    </div>
     <?php if ($error): ?><div class="alert alert-danger"><?= htmlspecialchars($error) ?></div><?php endif; ?>
     <?php if ($success): ?><div class="alert alert-info"><?= htmlspecialchars($success) ?></div><?php endif; ?>
-    <form method="POST" enctype="multipart/form-data" class="card">
-        <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
-        <h3>Add an external credential</h3>
-        <div class="form-row">
-            <div class="form-group"><label for="issuer">Issuer</label><select id="issuer" name="issuer" required><?php foreach ($issuers as $slug=>$issuerInfo): ?><option value="<?= htmlspecialchars($slug) ?>"><?= htmlspecialchars($issuerInfo['label']) ?></option><?php endforeach; ?></select></div>
-            <div class="form-group"><label for="title">Credential title</label><input id="title" name="title" maxlength="200" data-validate="required|min:3|max:200" required></div>
+
+    <div class="stu-ext-grid">
+        <form method="POST" enctype="multipart/form-data" class="card stu-ext-form" data-reveal>
+            <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
+            <div class="stu-panel-head">
+                <span class="stu-panel-icon"><?= $ec_icon('plus') ?></span>
+                <h2>Add an external credential</h2>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label for="issuer">Issuer</label><select id="issuer" name="issuer" required><?php foreach ($issuers as $slug=>$issuerInfo): ?><option value="<?= htmlspecialchars($slug) ?>"><?= htmlspecialchars($issuerInfo['label']) ?></option><?php endforeach; ?></select></div>
+                <div class="form-group"><label for="title">Credential title</label><input id="title" name="title" maxlength="200" data-validate="required|min:3|max:200" required></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label for="issuer_code">Credential code (optional if URL supplied)</label><input id="issuer_code" name="issuer_code" maxlength="255"></div>
+                <div class="form-group"><label for="issue_date">Issue date</label><input type="date" id="issue_date" name="issue_date" data-validate="required|daterange" required></div>
+            </div>
+            <div class="form-group"><label for="verification_url">Official verification URL (optional if code supplied)</label><input type="url" id="verification_url" name="verification_url" maxlength="2048" placeholder="https://..."><small>Only exact allow-listed HTTPS issuer hosts are accepted. No issuer site is contacted.</small></div>
+            <div class="form-group"><label for="credential_pdf">Optional supporting PDF (max 5 MB)</label><input type="file" id="credential_pdf" name="credential_pdf" accept="application/pdf,.pdf" data-filename-target="credential_pdf_name"><small class="file-name-display" id="credential_pdf_name" aria-live="polite"></small></div>
+            <div class="stu-ext-submit">
+                <button class="btn btn-primary" type="submit"><?= $ec_icon('plus') ?>Add as self-declared</button>
+            </div>
+        </form>
+
+        <aside class="card stu-panel stu-ext-how" aria-labelledby="extHowTitle" data-reveal data-reveal-delay="1">
+            <div class="stu-panel-head">
+                <span class="stu-panel-icon stu-icon-cyan"><?= $ec_icon('info') ?></span>
+                <h2 id="extHowTitle">How attestation works</h2>
+            </div>
+            <ol class="stu-steps">
+                <li><strong>You declare it.</strong> The record starts as <span class="badge-status badge-pending">SELF_DECLARED</span>.</li>
+                <li><strong>An approved institution checks it.</strong> If it attests the record, the status becomes <span class="badge-status badge-info">ATTESTED</span> and is signed.</li>
+                <li><strong>You share it.</strong> Each record has a public page and QR code anyone can open.</li>
+            </ol>
+            <p class="stu-panel-note">External credentials are never shown as VALID &mdash; only CertiVault-issued certificates can be.</p>
+        </aside>
+    </div>
+
+    <section class="stu-section" aria-labelledby="extRecordsTitle">
+        <div class="stu-section-head">
+            <h2 id="extRecordsTitle">Credential records</h2>
+            <?php if ($credentials): ?><span class="pill"><?= count($credentials) ?> total</span><?php endif; ?>
         </div>
-        <div class="form-row">
-            <div class="form-group"><label for="issuer_code">Credential code (optional if URL supplied)</label><input id="issuer_code" name="issuer_code" maxlength="255"></div>
-            <div class="form-group"><label for="issue_date">Issue date</label><input type="date" id="issue_date" name="issue_date" data-validate="required|daterange" required></div>
-        </div>
-        <div class="form-group"><label for="verification_url">Official verification URL (optional if code supplied)</label><input type="url" id="verification_url" name="verification_url" maxlength="2048" placeholder="https://..."><small>Only exact allow-listed HTTPS issuer hosts are accepted. No issuer site is contacted.</small></div>
-        <div class="form-group"><label for="credential_pdf">Optional supporting PDF (max 5 MB)</label><input type="file" id="credential_pdf" name="credential_pdf" accept="application/pdf,.pdf"></div>
-        <button class="btn btn-primary" type="submit">Add as self-declared</button>
-    </form>
-    <h3 style="margin-top:24px;">Credential records</h3>
-    <?php if (!$credentials): ?><p>No external credentials added yet.</p><?php else: ?>
-    <div class="grid-container"><?php foreach ($credentials as $credential): ?>
-        <article class="card"><h3><?= htmlspecialchars($credential['title']) ?></h3>
-            <p><?= htmlspecialchars($credential['issuer_label']) ?><?= $credential['issuer_code'] ? ' — ' . htmlspecialchars($credential['issuer_code']) : '' ?></p>
-            <p>Issued <?= htmlspecialchars($credential['issue_date']) ?></p>
-            <p><strong>Status:</strong> <?= htmlspecialchars($credential['verdict']) ?> (never VALID)</p>
-            <?php $score = TrustScoreService::computeExternalCredential($db, $credential); ?><p>Attestation score: <?= (int)$score['score'] ?>/70</p>
-            <a class="btn btn-secondary" href="external_credential.php?token=<?= rawurlencode($credential['public_token']) ?>">Public share page / QR</a>
-            <?php if (is_file(__DIR__ . '/qrcodes/' . $credential['public_token'] . '.png')): ?><div class="qr-hero"><img src="qrcodes/<?= htmlspecialchars($credential['public_token']) ?>.png" alt="Public external credential QR"></div><?php endif; ?>
-        </article>
-    <?php endforeach; ?></div><?php endif; ?>
+        <?php if (!$credentials): ?>
+            <div class="empty-state" data-reveal="zoom">
+                <span class="empty-state-icon"><?= $ec_icon('stack') ?></span>
+                <h3>No external credentials yet</h3>
+                <p>No external credentials added yet. Add one with the form above to get a shareable public page and QR code.</p>
+            </div>
+        <?php else: ?>
+        <div class="stu-cert-grid"><?php foreach ($credentials as $ec_i => $credential): ?>
+            <?php $score = TrustScoreService::computeExternalCredential($db, $credential); $ec_score = max(0, min(70, (int)$score['score'])); ?>
+            <div class="stu-reveal" data-reveal data-reveal-delay="<?= ($ec_i % 3) + 1 ?>"><article class="card card-hover stu-cert-card stu-ext-card">
+                <div class="stu-cert-top">
+                    <span class="stu-cert-icon"><?= $ec_icon('globe') ?></span>
+                    <span class="badge-status badge-<?= htmlspecialchars($ec_badge((string)$credential['verdict'])) ?>"><?= htmlspecialchars($credential['verdict']) ?></span>
+                </div>
+                <h3 class="card-title"><?= htmlspecialchars($credential['title']) ?></h3>
+                <p class="stu-cert-inst"><?= $ec_icon('building') ?><span><?= htmlspecialchars($credential['issuer_label']) ?><?= $credential['issuer_code'] ? ' — ' . htmlspecialchars($credential['issuer_code']) : '' ?></span></p>
+                <p class="stu-cert-inst"><?= $ec_icon('calendar') ?><span>Issued <?= htmlspecialchars($credential['issue_date']) ?></span></p>
+                <p class="stu-ext-status"><strong>Status:</strong> <?= htmlspecialchars($credential['verdict']) ?> (never VALID)</p>
+                <div class="stu-meter">
+                    <div class="stu-meter-label"><span>Attestation score</span><span><?= (int)$score['score'] ?>/70</span></div>
+                    <svg class="stu-meter-bar" viewBox="0 0 70 8" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+                        <rect class="stu-meter-track" width="70" height="8" rx="4"/>
+                        <rect class="stu-meter-fill" width="<?= $ec_score ?>" height="8" rx="4"/>
+                    </svg>
+                </div>
+                <?php if (is_file(__DIR__ . '/qrcodes/' . $credential['public_token'] . '.png')): ?><div class="qr-hero stu-ext-qr"><img src="qrcodes/<?= htmlspecialchars($credential['public_token']) ?>.png" alt="Public external credential QR" width="140" height="140"></div><?php endif; ?>
+                <div class="card-actions">
+                    <a class="btn btn-secondary btn-sm" href="external_credential.php?token=<?= rawurlencode($credential['public_token']) ?>"><?= $ec_icon('qr') ?>Public share page / QR</a>
+                </div>
+            </article></div>
+        <?php endforeach; ?></div><?php endif; ?>
+    </section>
 </div></main>
 <script src="assets/js/validation.js"></script>
 <?php require __DIR__ . '/../src/partials/footer.php'; ?>
+</body>
+</html>

@@ -38,6 +38,112 @@
         statusEl.className = 'sv-status' + (kind ? ' sv-status-' + kind : '');
     }
 
+    // ── 5. Presentation: method tabs + drop zone (no behaviour change) ──
+    // Without this script every section stays visible and the native file
+    // picker is used, so the form keeps working with JS disabled.
+    form.classList.add('sv-enhanced');
+    var tabList = document.getElementById('svTabs');
+    var tabs = tabList ? Array.prototype.slice.call(tabList.querySelectorAll('[role="tab"]')) : [];
+    var idField = document.getElementById('smart_id');
+    var idLabel = document.getElementById('smartIdLabel');
+    var idHint = document.getElementById('smartIdHint');
+    function retext(el, attr) {
+        if (el && el.getAttribute(attr)) { el.textContent = el.getAttribute(attr); }
+    }
+    function selectTab(tab, focusField) {
+        var mode = tab.getAttribute('data-sv-tab');
+        var panelId = tab.getAttribute('aria-controls');
+        tabs.forEach(function (t) {
+            var on = t === tab;
+            t.setAttribute('aria-selected', on ? 'true' : 'false');
+            t.tabIndex = on ? 0 : -1;
+        });
+        ['svPanelText', 'svPanelFile', 'svPanelScan'].forEach(function (id) {
+            var p = document.getElementById(id);
+            if (p) {
+                p.hidden = id !== panelId;
+                if (id === panelId) { p.setAttribute('aria-labelledby', tab.id); }
+            }
+        });
+        form.classList.toggle('sv-mode-scan', mode === 'scan');
+        form.classList.toggle('sv-mode-link', mode === 'link');
+        if (mode === 'id' || mode === 'link') {
+            retext(idLabel, 'data-sv-label-' + mode);
+            retext(idHint, 'data-sv-hint-' + mode);
+            if (idField && idField.getAttribute('data-sv-ph-' + mode)) {
+                idField.placeholder = idField.getAttribute('data-sv-ph-' + mode);
+                idField.setAttribute('inputmode', mode === 'link' ? 'url' : 'text');
+            }
+            if (focusField && idField) { idField.focus(); }
+        }
+        if (mode !== 'scan') {                         // leaving the camera tab stops the camera
+            var stopBtn = document.getElementById('qrStopBtn');
+            var scanner = document.getElementById('qrScanner');
+            if (stopBtn && scanner && !scanner.hidden) { stopBtn.click(); }
+        }
+    }
+    if (tabList && tabs.length) {
+        tabList.hidden = false;
+        form.classList.add('sv-tabs-ready');
+        ['svPanelText', 'svPanelFile', 'svPanelScan'].forEach(function (id) {
+            var p = document.getElementById(id);
+            if (p) { p.setAttribute('role', 'tabpanel'); p.tabIndex = -1; }
+        });
+        tabs.forEach(function (t, i) {
+            t.addEventListener('click', function () { selectTab(t, true); });
+            t.addEventListener('keydown', function (e) {
+                var next = null;
+                if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { next = tabs[(i + 1) % tabs.length]; }
+                else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { next = tabs[(i - 1 + tabs.length) % tabs.length]; }
+                else if (e.key === 'Home') { next = tabs[0]; }
+                else if (e.key === 'End') { next = tabs[tabs.length - 1]; }
+                if (next) { e.preventDefault(); selectTab(next, false); next.focus(); }
+            });
+        });
+        // verify.php#file / #scan / #link open that method directly.
+        var tabFromHash = function () {
+            var wanted = (window.location.hash || '').replace('#', '');
+            return tabs.filter(function (t) { return t.getAttribute('data-sv-tab') === wanted; })[0] || null;
+        };
+        selectTab(tabFromHash() || tabs[0], false);
+        window.addEventListener('hashchange', function () {
+            var t = tabFromHash();
+            if (t) { selectTab(t, false); }
+        });
+        // A field flagged by validation.js inside a hidden section: show it.
+        form.addEventListener('submit', function () {
+            window.setTimeout(function () {
+                var bad = form.querySelector('[aria-invalid="true"]');
+                var pane = bad && bad.closest('[role="tabpanel"]');
+                if (pane && pane.hidden) {
+                    var owner = tabs.filter(function (t) { return t.getAttribute('aria-controls') === pane.id; })[0];
+                    if (owner) { selectTab(owner, false); }
+                }
+            }, 0);
+        });
+    }
+
+    var drop = document.getElementById('svDropzone');
+    var dropName = document.getElementById('svFileName');
+    if (drop && fileInput) {
+        var showName = function () {
+            var f = fileInput.files && fileInput.files[0];
+            drop.classList.toggle('has-file', !!f);
+            if (dropName) {
+                dropName.hidden = !f;
+                dropName.textContent = f ? f.name + ' — ' + Math.max(1, Math.round(f.size / 1024)) + ' KB' : '';
+            }
+        };
+        ['dragenter', 'dragover'].forEach(function (ev) {
+            drop.addEventListener(ev, function () { drop.classList.add('is-dragover'); });
+        });
+        ['dragleave', 'dragend', 'drop'].forEach(function (ev) {
+            drop.addEventListener(ev, function () { drop.classList.remove('is-dragover'); });
+        });
+        fileInput.addEventListener('change', showName);
+        showName();
+    }
+
     // ── 4. Issuer dropdown ───────────────────────────────────────────────
     var issuerSel = document.getElementById('issuer');
     var otherGroup = document.getElementById('otherUrlGroup');

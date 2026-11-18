@@ -110,9 +110,12 @@ function send_no_store_headers() {
  * the reCAPTCHA hosts when its keys are configured) and
  * script-src-attr 'none', so injected <script> blocks and on*="" handlers
  * do not run. Page behaviour lives in assets/js/ui.js (data attributes)
- * and assets/js/smart-verify.js. style-src still allows 'unsafe-inline'
- * because templates carry style="..." attributes (lower risk: CSS cannot
- * execute script); moving them into classes is a tracked follow-up.
+ * and assets/js/smart-verify.js. style-src has no 'unsafe-inline': the
+ * templates carry no style="" attributes or <style> blocks (classes in
+ * assets/css/*), and JS only styles through the CSSOM (el.style.x /
+ * setProperty), which CSP permits. Exception: when reCAPTCHA is enabled its
+ * third-party widget may inject inline styles, so 'unsafe-inline' is kept
+ * for that configuration only.
  * External hosts are allow-listed exactly: Google Fonts always, plus
  * google.com/gstatic.com for reCAPTCHA when enabled.
  */
@@ -126,7 +129,10 @@ function send_security_headers() {
     $csp = "default-src 'self'; base-uri 'self'; form-action 'self'; "
         . "object-src 'none'; frame-ancestors 'self'; img-src 'self' blob:; "
         . 'font-src \'self\' https://fonts.gstatic.com; '
-        . 'style-src \'self\' \'unsafe-inline\' https://fonts.googleapis.com' . $extra . '; '
+        // No 'unsafe-inline' for styles: the app ships no style="" / <style>.
+        // Only the third-party reCAPTCHA widget (when enabled; cannot be
+        // tested offline) may inject inline styles, so it keeps the old allowance.
+        . 'style-src \'self\' https://fonts.googleapis.com' . ($extra !== '' ? ' \'unsafe-inline\'' . $extra : '') . '; '
         . 'script-src \'self\'' . $extra . '; '
         . "script-src-attr 'none'; "
         . 'frame-src' . $frame . '; '
@@ -458,9 +464,16 @@ function deny_access_403($message = 'Certificate not found or access denied.') {
     $page_title = '403 Forbidden - CertiVault';
     require __DIR__ . '/../partials/head.php';
     require __DIR__ . '/../partials/header.php';
-    echo '<main id="main"><div class="container shell-narrow"><h2>403 — Forbidden</h2><p>'
+    require_once __DIR__ . '/admin_ui.php';
+    echo '<main id="main"><div class="error-wrap"><section class="card error-card" aria-labelledby="errorTitle">'
+        . cv_error_art('lock')
+        . '<span class="error-code">Error 403 · Access denied</span>'
+        . '<h1 id="errorTitle">403 — Forbidden</h1><p>'
         . htmlspecialchars($message)
-        . '</p></div></main>';
+        . '</p><div class="error-actions">'
+        . '<a href="index.php" class="btn btn-primary" data-history-back>Go back</a>'
+        . '<a href="index.php" class="btn btn-secondary">Home</a>'
+        . '</div></section></div></main>';
     require __DIR__ . '/../partials/footer.php';
     echo '</body></html>';
     exit();
@@ -688,11 +701,14 @@ function captcha_field_html($errors) {
         return $h;
     }
     generate_captcha();
-    $h = '<label>CAPTCHA:</label> <span class="captcha-chip">'
+    $capErr = !empty($errors['captcha_answer']);
+    $h = '<label for="captcha_answer">Security check (CAPTCHA):</label> <span class="captcha-chip" id="captcha_question">'
         . htmlspecialchars($_SESSION['captcha_question'] ?? '') . '</span>';
-    $h .= '<input type="text" name="captcha_answer" data-validate="required|number|range:2,18" required autocomplete="off">';
-    if (!empty($errors['captcha_answer'])) {
-        $h .= '<div class="field-error" role="alert">' . htmlspecialchars($errors['captcha_answer']) . '</div>';
+    $h .= '<input type="text" name="captcha_answer" id="captcha_answer" inputmode="numeric" aria-describedby="captcha_question'
+        . ($capErr ? ' captcha_error' : '') . '"' . ($capErr ? ' aria-invalid="true"' : '')
+        . ' data-validate="required|number|range:2,18" required autocomplete="off">';
+    if ($capErr) {
+        $h .= '<div class="field-error" id="captcha_error" role="alert">' . htmlspecialchars($errors['captcha_answer']) . '</div>';
     }
     return $h;
 }
@@ -1517,12 +1533,17 @@ function show_error_page($title, $message) {
     $page_title = $title . ' - CertiVault';
     require __DIR__ . '/../partials/head.php';
     require __DIR__ . '/../partials/header.php';
-    echo '<main id="main">';
-    echo '<div class="container shell-narrow">';
-    echo '<h2>' . htmlspecialchars($title) . '</h2>';
+    require_once __DIR__ . '/admin_ui.php';
+    echo '<main id="main"><div class="error-wrap">';
+    echo '<section class="card error-card" aria-labelledby="errorTitle">';
+    echo cv_error_art('broken');
+    echo '<span class="error-code">Something went wrong</span>';
+    echo '<h1 id="errorTitle">' . htmlspecialchars($title) . '</h1>';
     echo '<p>' . htmlspecialchars($message) . '</p>';
-    echo '<a href="login.php" class="btn">Go to Login</a>';
-    echo '</div></main>';
+    echo '<div class="error-actions">';
+    echo '<a href="login.php" class="btn btn-primary">Go to Login</a>';
+    echo '<a href="index.php" class="btn btn-secondary" data-history-back>Go back</a>';
+    echo '</div></section></div></main>';
     require __DIR__ . '/../partials/footer.php';
     echo '</body></html>';
     exit();

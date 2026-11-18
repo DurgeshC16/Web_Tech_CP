@@ -136,8 +136,9 @@ verdict.
 
 ## 5. Remaining gaps
 
-* `style-src` still allows `'unsafe-inline'` (82 `style=""` attributes; CSS
-  cannot execute script).
+* `style-src` keeps `'unsafe-inline'` only when reCAPTCHA is enabled (its
+  third-party widget may inject inline styles); the app itself ships no
+  `style=""` attributes or `<style>` blocks, so the default policy is strict.
 * Pinning is trust-on-first-use, and its strength depends on keeping the pin
   file out of reach of the web/DB layer.
 * Single operator: availability and trust rest on one server.

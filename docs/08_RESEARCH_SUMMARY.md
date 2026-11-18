@@ -91,6 +91,6 @@ The paper describes an earlier snapshot. Numbers that have changed since:
 | 8 database tables | 15 tables |
 | 78 automated tests | 512 PHP checks in 16 suites + 78 browser checks, run in CI |
 | Key pinning / Merkle anchoring are in-memory prototypes | Both implemented: Merkle transparency log (opt-in) and key pinning in an append-only file outside the DB (`KeyPinService`, on by default) — S6 now verifies as TAMPERED (`test_key_pinning.php`) |
-| CSP permits inline scripts | Scripts are external only (`script-src 'self'`, `script-src-attr 'none'`); `style-src` still allows inline styles |
+| CSP permits inline scripts | Scripts are external only (`script-src 'self'`, `script-src-attr 'none'`); `style-src` has no `'unsafe-inline'` (all styles in external CSS) |
 | Verification via the server only | Portable signed credentials can be verified in the browser (Web Crypto) or with OpenSSL |
 | Redesigned rate limiter (`verify_rate`) | Implemented (migration 014): ≤ 30 rows per IP, checked before any lookup; 0.65 ms vs 22.8 ms for the old query at 30 000 logged rows (XAMPP, Windows) |

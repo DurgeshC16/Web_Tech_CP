@@ -84,53 +84,116 @@ if ($share_blocked) {
 ?>
 <?php $page_title = $share_blocked ? 'Free verification limit reached - CertiVault' : 'Shared Certificate - CertiVault'; require __DIR__ . '/../src/partials/head.php'; ?>
 <?php require __DIR__ . '/../src/partials/header.php'; ?>
-<main id="main">
-    <div class="container" style="max-width: 600px; text-align: center;">
+<?php
+// ── View helpers (presentation only) ──────────────────────────────────
+$sh_icon = static function (string $d): string {
+    return '<svg class="sv-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">' . $d . '</svg>';
+};
+$sh_seal_icons = [
+    'VALID' => '<path d="M5 13l4 4L19 7"/>',
+    'TAMPERED' => '<path d="M6 6l12 12M18 6L6 18"/>',
+    'EXPIRED' => '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/>',
+    'REVOKED' => '<circle cx="12" cy="12" r="9"/><path d="M6 6l12 12"/>',
+    'SUPERSEDED' => '<path d="M4 16l4-4-4-4M12 16l4-4-4-4"/>',
+    'INVALID' => '<circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/>',
+];
+$sh_headlines = [
+    'VALID'      => 'Authentic certificate',
+    'TAMPERED'   => 'Tampering detected',
+    'EXPIRED'    => 'Authentic, but expired',
+    'REVOKED'    => 'Certificate revoked',
+    'SUPERSEDED' => 'Replaced by a newer version',
+    'INVALID'    => 'Could not be verified',
+];
+$sh_check = $sh_icon('<path d="M5 13l4 4L19 7"/>');
+$sh_lock  = $sh_icon('<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>');
+?>
+<main id="main" class="sv-main">
+    <div class="container verify-shell<?= (!$share_blocked && !$error) ? ' sv-shell-result' : '' ?>">
         <?php if ($share_blocked): ?>
-            <?= GuestQuotaService::renderLimitNotice($share_quota) ?>
-        <?php elseif ($error): ?>
-            <h2>Access Denied</h2>
-            <div class="alert alert-danger" style="margin-top: 20px;">
-                <?= htmlspecialchars($error) ?>
+            <div class="sv-body">
+                <div class="sv-limit">
+                    <span class="sv-limit-badge" aria-hidden="true"><?= $sh_lock ?></span>
+                    <?= GuestQuotaService::renderLimitNotice($share_quota) ?>
+                    <ul class="sv-limit-perks" aria-label="Why create an account">
+                        <li><?= $sh_check ?>No daily limit when signed in</li>
+                        <li><?= $sh_check ?>Free to create</li>
+                        <li><?= $sh_check ?>Same instant verification</li>
+                    </ul>
+                </div>
             </div>
-            <p>Please request a new share link from the certificate holder.</p>
+        <?php elseif ($error): ?>
+            <div class="sv-body sv-notice-page text-center">
+                <span class="sv-notice-icon sv-tone-danger" aria-hidden="true"><?= $sh_icon('<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/><path d="M4 4l16 16"/>') ?></span>
+                <h1 class="sv-notice-title">Access Denied</h1>
+                <div class="alert alert-danger">
+                    <?= htmlspecialchars($error) ?>
+                </div>
+                <p class="sv-notice-text">Please request a new share link from the certificate holder.</p>
+                <a class="btn btn-secondary" href="verify.php">Verify a certificate instead</a>
+            </div>
         <?php else: ?>
-            <h2>Shared Certificate</h2>
-
-            <?php if (!empty($share_verdict)): ?>
-                <div style="text-align:center; margin-top:20px;">
+            <?php $sh_v = strtolower((string)($share_verdict ?? '')); ?>
+            <section class="verdict-wrap sv-verdict sv-v-<?= htmlspecialchars($sh_v !== '' ? $sh_v : 'invalid') ?>" aria-labelledby="shTitle">
+                <p class="sv-eyebrow">Shared certificate</p>
+                <?php if (!empty($share_verdict)): ?>
+                <div class="sv-seal-stage">
+                    <?php if ($share_verdict === 'VALID'): ?>
+                    <span class="sv-confetti" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+                    <?php endif; ?>
                     <div class="verdict-seal verdict-seal-<?= strtolower($share_verdict) ?>">
+                        <?php if (isset($sh_seal_icons[$share_verdict])): ?><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true" focusable="false"><?= $sh_seal_icons[$share_verdict] ?></svg><?php endif; ?>
                         <?= htmlspecialchars($share_verdict) ?>
                     </div>
-                    <p class="verdict-detail" style="text-align:center;"><?= htmlspecialchars($share_detail) ?></p>
                 </div>
-            <?php endif; ?>
-
-            <div class="card diploma" style="margin-top: 20px; text-align: left;">
-                <h3><?= htmlspecialchars($cert['title']) ?></h3>
-                <p><strong>Awarded To:</strong> <?= htmlspecialchars($cert['student_name']) ?></p>
-                <p><strong>Certificate ID:</strong> <?= htmlspecialchars($cert['certificate_id']) ?></p>
-                <p><strong>Institution:</strong> <?= htmlspecialchars($cert['institution_name']) ?></p>
-                <p><strong>Issue Date:</strong> <?= htmlspecialchars(date('F j, Y', strtotime($cert['issue_date']))) ?></p>
-                <p>
-                    <strong>Status:</strong>
-                    <span class="status-badge status-<?= htmlspecialchars(VerificationService::effectiveStatus($cert)) ?>">
-                        <?= htmlspecialchars(VerificationService::effectiveStatus($cert)) ?>
-                    </span>
-                </p>
-                
-                <?php if ($cert['qr_token']): ?>
-                    <div style="text-align: center; margin: 20px 0;">
-                        <p><strong>Official Verification QR:</strong></p>
-                        <img src="qrcodes/<?= htmlspecialchars($cert['qr_token']) ?>.png" alt="QR Code" style="max-width: 150px; border: 1px solid #ccc;">
-                    </div>
+                <h1 class="sv-verdict-title" id="shTitle"><?= htmlspecialchars($sh_headlines[$share_verdict] ?? 'Shared Certificate') ?></h1>
+                <p class="verdict-detail"><?= htmlspecialchars($share_detail) ?></p>
+                <?php else: ?>
+                <h1 class="sv-verdict-title" id="shTitle">Shared Certificate</h1>
                 <?php endif; ?>
-                
-                <p style="text-align: center; color: #666; font-size: 0.9em; margin-top: 20px;">
-                    This is a secure, time-limited share link.
-                </p>
+            </section>
+
+            <div class="sv-body sv-result-body">
+                <article class="card diploma sv-cert" aria-labelledby="shCertTitle">
+                    <header class="sv-cert-head">
+                        <span class="sv-cert-mark" aria-hidden="true"><?= $sh_icon('<path d="M12 3 5 6v5c0 4.4 3 8.3 7 10 4-1.7 7-5.6 7-10V6z"/><path d="m9 12 2 2 4-4"/>') ?></span>
+                        <div class="sv-cert-heading">
+                            <p class="sv-cert-kicker">Issued by <?= htmlspecialchars($cert['institution_name']) ?></p>
+                            <h2 class="cert-details-title" id="shCertTitle"><?= htmlspecialchars($cert['title']) ?></h2>
+                        </div>
+                    </header>
+                    <div class="sv-cert-split<?= $cert['qr_token'] ? ' has-qr' : '' ?>">
+                        <div class="sv-cert-main">
+                            <p class="sv-cert-awarded"><span>Awarded To</span> <strong><?= htmlspecialchars($cert['student_name']) ?></strong></p>
+                            <dl class="sv-facts">
+                                <div><dt>Institution</dt><dd><?= htmlspecialchars($cert['institution_name']) ?></dd></div>
+                                <div><dt>Issue Date</dt><dd><?= htmlspecialchars(date('F j, Y', strtotime($cert['issue_date']))) ?></dd></div>
+                                <div><dt>Status</dt><dd>
+                                    <span class="status-badge status-<?= htmlspecialchars(VerificationService::effectiveStatus($cert)) ?>">
+                                        <?= htmlspecialchars(VerificationService::effectiveStatus($cert)) ?>
+                                    </span>
+                                </dd></div>
+                            </dl>
+                            <div class="sv-copy-row">
+                                <span class="sv-copy-label">Certificate ID</span>
+                                <code class="sv-copy-value" id="shCertId"><?= htmlspecialchars($cert['certificate_id']) ?></code>
+                                <button type="button" class="btn btn-ghost btn-sm sv-copy" data-copy-target="shCertId" data-copy-message="Certificate ID copied" aria-label="Copy certificate ID"><?= $sh_icon('<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/>') ?><span>Copy</span></button>
+                            </div>
+                        </div>
+                        <?php if ($cert['qr_token']): ?>
+                            <figure class="sv-qr">
+                                <img src="qrcodes/<?= htmlspecialchars($cert['qr_token']) ?>.png" alt="QR Code" class="sv-qr-img" width="150" height="150">
+                                <figcaption><strong>Official Verification QR</strong></figcaption>
+                            </figure>
+                        <?php endif; ?>
+                    </div>
+                    <p class="sv-share-note"><?= $sh_lock ?>This is a secure, time-limited share link.</p>
+                </article>
+                <?= is_array($share_quota) ? GuestQuotaService::renderCounter($share_quota) : '' ?>
+                <div class="sv-again">
+                    <a href="verify.php" class="btn btn-secondary">Verify another certificate</a>
+                </div>
             </div>
-            <?= is_array($share_quota) ? GuestQuotaService::renderCounter($share_quota) : '' ?>
         <?php endif; ?>
     </div>
 </main>

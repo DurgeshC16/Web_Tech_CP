@@ -193,79 +193,129 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error)) {
     } // end overflow-guard else
 } // end POST
 ?>
-<?php $page_title = 'Supersede Certificate - CertiVault'; require __DIR__ . '/../src/partials/head.php'; ?>
-<?php require __DIR__ . '/../src/partials/header.php'; ?>
+<?php
+require_once __DIR__ . '/../src/utils/admin_ui.php';
+$page_title = 'Supersede Certificate - CertiVault';
+require __DIR__ . '/../src/partials/head.php';
+require __DIR__ . '/../src/partials/header.php';
+?>
 <main id="main">
-    <div class="container shell-wide">
-        <div class="page-head">
-            <h2>Supersede / Correct Certificate</h2>
-            <a href="view_certificate_admin.php?id=<?= (int)$old_cert_id ?>" class="btn btn-secondary">Back</a>
-        </div>
+    <div class="admin-shell">
+        <header class="admin-head admin-head-warn">
+            <div class="admin-head-row">
+                <span class="admin-head-icon" aria-hidden="true"><?= cv_icon('refresh') ?></span>
+                <div class="admin-head-text">
+                    <ol class="crumbs" aria-label="Breadcrumb"><li><a href="admin_dashboard.php">Dashboard</a></li><li><a href="view_certificate_admin.php?id=<?= (int)$old_cert_id ?>"><?= htmlspecialchars($old_cert['certificate_id']) ?></a></li><li aria-current="page">Supersede</li></ol>
+                    <h1>Supersede / Correct Certificate</h1>
+                    <p class="admin-head-sub">Issue a corrected version. The original stays on record but every verifier is pointed to the new one.</p>
+                </div>
+                <div class="admin-head-actions">
+                    <a href="view_certificate_admin.php?id=<?= (int)$old_cert_id ?>" class="btn btn-light"><?= cv_icon('arrow-left') ?> Back</a>
+                </div>
+            </div>
+        </header>
 
-        <div class="alert alert-info">
-            <strong>Original Certificate:</strong> <?= htmlspecialchars($old_cert['certificate_id']) ?> (v<?= $old_cert['version'] ?>)<br>
-            <strong>Title:</strong> <?= htmlspecialchars($old_cert['title']) ?><br>
-            <strong>Student:</strong> <?= htmlspecialchars($old_cert['student_name']) ?> (<?= htmlspecialchars($old_cert['student_email']) ?>)
-        </div>
-        
         <?php if ($error): ?>
-            <div class="alert alert-danger"><?= htmlspecialchars($error) ?></div>
+            <div class="alert alert-danger" role="alert"><?= htmlspecialchars($error) ?></div>
         <?php endif; ?>
         <?php if (!empty($errors)): ?>
             <div class="alert alert-danger">Please correct the highlighted fields below.</div>
         <?php endif; ?>
-        <?php if ($success): ?>
-            <div class="alert alert-success">
-                <strong>Success!</strong> <?= htmlspecialchars($success) ?><br>
-                The original certificate (<?= htmlspecialchars($old_cert['certificate_id']) ?>) is now marked as <strong>superseded</strong>.
-            </div>
-            
-            <div class="seal-frame">
-                <h3>New Certificate QR — Digital Seal</h3>
-                <img src="qrcodes/<?= htmlspecialchars($success_qr_token) ?>.png" alt="QR Code">
-                <br>
-                <a href="qrcodes/<?= htmlspecialchars($success_qr_token) ?>.png" download="Certificate_QR.png" class="btn btn-primary">Download QR Code (PNG)</a>
-            </div>
-            
-            <a href="admin_dashboard.php" class="btn btn-secondary">Back to Dashboard</a>
-        <?php elseif (in_array($old_cert['status'], ['active', 'expired'])): ?>
-        
-        <p>Submit the corrected certificate data below. The original will be preserved but marked as <strong>superseded</strong>.</p>
-        
-        <form method="POST" action="" enctype="multipart/form-data">
-            <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
-            
-            <div class="form-group">
-                <label>Corrected Certificate Title:</label>
-                <input type="text" name="title" value="<?= htmlspecialchars($title !== '' ? $title : $old_cert['title']) ?>" data-validate="required|min:3|max:200" required>
-                <?php render_field_error($errors, 'title'); ?>
-            </div>
-            <div class="form-row">
-            <div class="form-group">
-                <label>Issue Date:</label>
-                <input type="date" name="issue_date" id="issue_date" value="<?= htmlspecialchars($issue_date !== '' ? $issue_date : $old_cert['issue_date']) ?>" data-validate="required|daterange" required>
-                <?php render_field_error($errors, 'issue_date'); ?>
-            </div>
-            <div class="form-group">
-                <label>Expiry Date (Optional):</label>
-                <input type="date" name="expiry_date" value="<?= htmlspecialchars($expiry_date !== '' ? $expiry_date : ($old_cert['expiry_date'] ?? '')) ?>" data-validate="after:#issue_date">
-                <?php render_field_error($errors, 'expiry_date'); ?>
-            </div>
-            </div>
-            <div class="form-group">
-                <label>Updated Certificate File (PDF, PNG, JPG - Max 5MB):</label>
-                <input type="hidden" name="MAX_FILE_SIZE" value="5242880">
-                <input type="file" name="certificate_file" id="certificate_file" data-filename-target="file_name_display" accept=".pdf, .png, .jpg, .jpeg" data-validate="upload" required>
-                <small class="file-name-display" id="file_name_display"></small>
-                <?php render_field_error($errors, 'certificate_file'); ?>
-            </div>
 
-            <button type="submit" class="btn btn-warn btn-block">Issue Corrected Version</button>
-        </form>
-        <?php endif; ?>
+        <div class="zone-layout">
+            <section class="card zone-card" aria-labelledby="origTitle">
+                <div class="zone-head">
+                    <span class="zone-icon" aria-hidden="true"><?= cv_icon('file') ?></span>
+                    <div><h2 id="origTitle">Original Certificate</h2><p>Kept for the record, marked superseded.</p></div>
+                </div>
+                <dl class="summary-list">
+                    <dt>Certificate ID</dt><dd><span class="id-chip"><?= htmlspecialchars($old_cert['certificate_id']) ?></span> <span class="badge badge-info">v<?= (int)$old_cert['version'] ?></span></dd>
+                    <dt>Title</dt><dd><?= htmlspecialchars($old_cert['title']) ?></dd>
+                    <dt>Student</dt><dd><?= htmlspecialchars($old_cert['student_name']) ?> <span class="cell-sub">(<?= htmlspecialchars($old_cert['student_email']) ?>)</span></dd>
+                    <dt>Status</dt><dd><span class="badge-status badge-<?= htmlspecialchars(cv_status_badge($success ? 'superseded' : (string)$old_cert['status'])) ?>"><?= htmlspecialchars($success ? 'superseded' : (string)$old_cert['status']) ?></span></dd>
+                </dl>
+                <h3 class="aside-title mt-3">What superseding does</h3>
+                <ul class="consequences">
+                    <li><span class="cq-icon cq-info" aria-hidden="true"><?= cv_icon('refresh') ?></span><span><strong>The original becomes SUPERSEDED</strong> — verifiers see it was replaced and get a link to the current version.</span></li>
+                    <li><span class="cq-icon cq-ok" aria-hidden="true"><?= cv_icon('award') ?></span><span><strong>A new certificate is signed</strong> with a fresh ID, version v<?= (int)$old_cert['version'] + 1 ?> and its own QR seal.</span></li>
+                    <li><span class="cq-icon cq-warn" aria-hidden="true"><?= cv_icon('alert') ?></span><span><strong>The student keeps both records</strong>; only the new one verifies as VALID.</span></li>
+                </ul>
+            </section>
+
+            <?php if ($success): ?>
+            <section class="card success-card" aria-labelledby="supersededTitle">
+                <span class="success-check" aria-hidden="true"><?= cv_icon('check') ?></span>
+                <h2 id="supersededTitle">Corrected version issued</h2>
+                <div class="alert alert-success" role="status">
+                    <strong>Success!</strong> <?= htmlspecialchars($success) ?><br>
+                    The original certificate (<?= htmlspecialchars($old_cert['certificate_id']) ?>) is now marked as <strong>superseded</strong>.
+                </div>
+                <div class="seal-frame">
+                    <h3>New Certificate QR — Digital Seal</h3>
+                    <img src="qrcodes/<?= htmlspecialchars($success_qr_token) ?>.png" alt="QR code that opens the verification page for the new certificate">
+                    <br>
+                    <a href="qrcodes/<?= htmlspecialchars($success_qr_token) ?>.png" download="Certificate_QR.png" class="btn btn-primary"><?= cv_icon('download') ?> Download QR Code (PNG)</a>
+                </div>
+                <a href="admin_dashboard.php" class="btn btn-secondary">Back to Dashboard</a>
+            </section>
+            <?php elseif (in_array($old_cert['status'], ['active', 'expired'])): ?>
+            <section class="card zone-card zone-warn form-card" aria-labelledby="correctTitle">
+                <div class="zone-head">
+                    <span class="zone-icon" aria-hidden="true"><?= cv_icon('pen') ?></span>
+                    <div><h2 id="correctTitle">Corrected details</h2><p>Submit the corrected certificate data below. The original will be preserved but marked as <strong>superseded</strong>.</p></div>
+                </div>
+
+                <form method="POST" action="" enctype="multipart/form-data" data-confirm="Issue a corrected version and mark <?= htmlspecialchars($old_cert['certificate_id']) ?> as superseded?" data-loading>
+                    <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
+
+                    <div class="form-group">
+                        <label for="ss_title">Corrected Certificate Title</label>
+                        <input type="text" name="title" id="ss_title" value="<?= htmlspecialchars($title !== '' ? $title : $old_cert['title']) ?>" data-validate="required|min:3|max:200" required>
+                        <?php render_field_error($errors, 'title'); ?>
+                    </div>
+                    <div class="form-row">
+                    <div class="form-group">
+                        <label for="issue_date">Issue Date</label>
+                        <input type="date" name="issue_date" id="issue_date" value="<?= htmlspecialchars($issue_date !== '' ? $issue_date : $old_cert['issue_date']) ?>" data-validate="required|daterange" required>
+                        <?php render_field_error($errors, 'issue_date'); ?>
+                    </div>
+                    <div class="form-group">
+                        <label for="ss_expiry">Expiry Date <span class="label-opt">(optional)</span></label>
+                        <input type="date" name="expiry_date" id="ss_expiry" value="<?= htmlspecialchars($expiry_date !== '' ? $expiry_date : ($old_cert['expiry_date'] ?? '')) ?>" data-validate="after:#issue_date">
+                        <?php render_field_error($errors, 'expiry_date'); ?>
+                    </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="certificate_file">Updated Certificate File <span class="label-opt">(PDF, PNG, JPG — max 5 MB)</span></label>
+                        <input type="hidden" name="MAX_FILE_SIZE" value="5242880">
+                        <div class="upload-zone">
+                            <span class="upload-zone-icon" aria-hidden="true"><?= cv_icon('upload') ?></span>
+                            <span class="upload-zone-title" aria-hidden="true">Drag &amp; drop the corrected file, or <span class="link-like">browse</span></span>
+                            <span class="upload-zone-hint" aria-hidden="true">PDF, PNG or JPG · up to 5 MB</span>
+                            <small class="file-name-display" id="file_name_display" aria-live="polite"></small>
+                            <input type="file" name="certificate_file" id="certificate_file" data-filename-target="file_name_display" accept=".pdf, .png, .jpg, .jpeg" data-validate="upload" required>
+                        </div>
+                        <?php render_field_error($errors, 'certificate_file'); ?>
+                    </div>
+
+                    <button type="submit" class="btn btn-warn btn-block btn-lg"><?= cv_icon('refresh') ?> Issue Corrected Version</button>
+                </form>
+            </section>
+            <?php else: ?>
+            <section class="card zone-card">
+                <div class="empty-state">
+                    <span class="empty-state-icon"><?= cv_icon('lock') ?></span>
+                    <h3>This certificate can no longer be corrected</h3>
+                    <p>Only active or expired certificates can be superseded.</p>
+                    <a href="view_certificate_admin.php?id=<?= (int)$old_cert_id ?>" class="btn btn-secondary">Back to the certificate</a>
+                </div>
+            </section>
+            <?php endif; ?>
+        </div>
     </div>
     <script src="assets/js/validation.js"></script>
 </main>
 <?php require __DIR__ . '/../src/partials/footer.php'; ?>
+<script src="assets/js/admin-ui.js" defer></script>
 </body>
 </html>
