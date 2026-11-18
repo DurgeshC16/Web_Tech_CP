@@ -317,3 +317,7 @@ content is true.
 ---
 
 *Web Technology course project — Department of Computer Engineering.*
+
+## License
+
+[MIT](LICENSE) for CertiVault's own code; bundled third-party components keep their own licences (listed in `LICENSE`).
