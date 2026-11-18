@@ -132,6 +132,7 @@ require_once __DIR__ . '/../src/services/CryptoService.php';
 require_once __DIR__ . '/../src/services/KeyPinService.php';
 require_once __DIR__ . '/../src/services/TransparencyLogService.php';
 require_once __DIR__ . '/../src/services/IssuanceService.php';
+require_once __DIR__ . '/../src/services/FileStore.php';
 require_once __DIR__ . '/../src/services/CertificatePdfService.php';
 require_once __DIR__ . '/../src/services/VerificationService.php';
 require_once __DIR__ . '/../src/services/BulkIssueService.php';
@@ -699,6 +700,7 @@ function ds_reset($db, array $knownInstitutionNames): array
     foreach ($certs as $c) {
         foreach ([$uploads . basename((string)$c['file_path']), $qrs . basename((string)$c['qr_token']) . '.png'] as $f) {
             if (basename($f) !== '' && basename($f) !== '.png' && is_file($f) && @unlink($f)) { $files++; }
+            if (basename($f) !== '' && basename($f) !== '.png') { FileStore::forget($f); }
         }
     }
     return ['users' => count($uids), 'certificates' => count($certIds), 'files' => $files, 'skipped' => $skipped];

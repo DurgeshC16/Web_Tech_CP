@@ -100,7 +100,22 @@ In production prefer real environment variables.
 | `SMTP_USERNAME` / `SMTP_PASSWORD` | same | *(empty)* |
 | `SMTP_ENCRYPTION` | `SMTP_ENCRYPTION` | `tls` (`ssl` for port 465) |
 | `SMTP_FROM_EMAIL` / `SMTP_FROM_NAME` | same | username / `CertiVault` |
-| `MAIL_TRANSPORT` | `CV_MAIL_TRANSPORT` | `smtp` (`file` = dev spool in `private_data/mail/`, refused in production) |
+| `MAIL_TRANSPORT` | `CV_MAIL_TRANSPORT` | `smtp` (`brevo` = Brevo HTTPS API for hosts that block SMTP; `file` = dev spool in `private_data/mail/`, refused in production) |
+| `BREVO_API_KEY` | `CV_BREVO_API_KEY` | *(empty)* — required with `brevo` (production refuses `brevo` without it) |
+| `SMTP_FROM_EMAIL` / `SMTP_FROM_NAME` | also `CV_MAIL_FROM_EMAIL` / `CV_MAIL_FROM_NAME` | transport-neutral aliases (the `SMTP_*` names win) |
+
+### Hosting (all off by default — see [13 Deploy on Render](13_DEPLOY_RENDER.md))
+
+| Constant | Env var | Default / meaning |
+|----------|---------|-------------------|
+| `DB_PORT` | `CV_DB_PORT` | *(unset → 3306)* |
+| `DB_SSL_CA` / `DB_SSL_CA_PEM` | `CV_DB_SSL_CA` (path) / `CV_DB_SSL_CA_PEM` (PEM text) | *(unset → no TLS)*; either one turns on TLS **with** server-certificate verification |
+| `TRUST_PROXY` | `CV_TRUST_PROXY` | `0`; `1` = take the client IP from `True-Client-IP` / `CF-Connecting-IP` (never `X-Forwarded-For`) and HTTPS from `X-Forwarded-Proto`. Only behind a proxy that sets those headers |
+| `TRUST_PROXY_HEADERS` | `CV_TRUST_PROXY_HEADERS` | `True-Client-IP,CF-Connecting-IP` |
+| `FILE_STORE` | `CV_FILE_STORE` | *(empty)*; `db` = mirror uploads, PDFs, QR images, key pins and checkpoint files into `stored_files` and restore them at container start |
+| — | `CV_SUPER_ADMIN_EMAIL` / `CV_SUPER_ADMIN_PASSWORD` | read by `scripts/render_boot.php` at container start (create/update the super admin) |
+| — | `CV_ERROR_LOG` | *(empty → `private_data/php_errors.log`)*; `stderr` = the web server's / container's log; any other value = a file path |
+| — | `CV_BOOT_DB_RETRIES` / `CV_BOOT_DB_RETRY_DELAY` / `CV_BOOT_SKIP_SCHEMA` | `render_boot.php` tuning (5 tries, 3 s growing delay; `1` skips the schema step) |
 
 ### CAPTCHA
 
@@ -211,7 +226,7 @@ VALID. It is idempotent and refuses to run over HTTP.
 - [ ] Real SMTP credentials; reCAPTCHA keys
 - [ ] Super-admin credentials set with `set_super_admin.php`; 2FA turned on for every admin
 - [ ] Key pins bootstrapped (`pin_institution_keys.php`), `CV_KEY_PINS_FILE` on storage the web/DB user cannot write, pins backed up and exported out of band
-- [ ] `MAIL_TRANSPORT` left at `smtp`
+- [ ] `MAIL_TRANSPORT` left at `smtp` (or `brevo` with `CV_BREVO_API_KEY` and a verified sender)
 - [ ] `composer install --no-dev`
 - [ ] `private_data/` writable by PHP, not by the web
 - [ ] Schedule `publish_checkpoint.php` and back up `private_data/tlog/`

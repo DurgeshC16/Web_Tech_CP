@@ -4,6 +4,7 @@ require_once __DIR__ . '/../src/utils/helpers.php';
 require_once __DIR__ . '/../src/services/CryptoService.php';
 require_once __DIR__ . '/../src/services/TransparencyLogService.php';
 require_once __DIR__ . '/../src/services/QRService.php';
+require_once __DIR__ . '/../src/services/FileStore.php';
 require_role('admin');
 require_approved_institution();
 
@@ -109,6 +110,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error)) {
                 if (!move_uploaded_file($file['tmp_name'], $destination)) {
                     throw new Exception('Failed to move uploaded file.');
                 }
+                // Durable copy when CV_FILE_STORE=db (inside this transaction).
+                FileStore::persist($destination);
                 
                 // 3. Generate QR Token and QR Code
                 if (defined('QR_CACHE_DIR') && (!is_dir(QR_CACHE_DIR) || !is_writable(QR_CACHE_DIR))) {
@@ -188,6 +191,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($error)) {
                 // Remove orphaned files left behind by a failed supersede attempt
                 if (!empty($destination) && is_file($destination)) { @unlink($destination); }
                 if (!empty($qr_path) && is_file($qr_path)) { @unlink($qr_path); }
+                if (!empty($destination)) { FileStore::forget($destination); }
+                if (!empty($qr_path)) { FileStore::forget($qr_path); }
             }
         }
     } // end overflow-guard else

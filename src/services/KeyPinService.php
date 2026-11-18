@@ -26,6 +26,7 @@
 
 require_once __DIR__ . '/../config/config.php';
 require_once __DIR__ . '/CryptoService.php';
+require_once __DIR__ . '/FileStore.php';
 
 class KeyPinService
 {
@@ -138,6 +139,10 @@ class KeyPinService
                 throw new RuntimeException('Cannot write the key pin store.');
             }
             self::$cache = $pins;
+            // CV_FILE_STORE=db (ephemeral hosts): keep a durable copy so the
+            // pins survive a restart. Weakens "pins outside the DB" — see
+            // docs/13_DEPLOY_RENDER.md. No-op in the default mode.
+            FileStore::persist($file);
             return 'pinned';
         } finally {
             flock($lock, LOCK_UN);

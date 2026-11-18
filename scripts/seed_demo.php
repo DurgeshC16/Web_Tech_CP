@@ -150,6 +150,7 @@ trailer<</Root 1 0 R>>
         . "Certificate: $cert_id
 Title: $title
 ");
+    FileStore::persist($destination); // durable copy (CV_FILE_STORE=db only)
 }
 
 // ── Helpers mirroring the real issuance flow ────────────────────────

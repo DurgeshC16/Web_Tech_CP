@@ -747,6 +747,8 @@ function create_smtp_mailer() {
  * keep their existing try/catch -> 'mail_failed' behaviour.
  *
  *   MAIL_TRANSPORT 'smtp' (default) -> $mail->send() over SMTP.
+ *   MAIL_TRANSPORT 'brevo'          -> HTTPS POST to the Brevo transactional
+ *                                      API (hosts that block SMTP ports).
  *   MAIL_TRANSPORT 'file'           -> write an .eml under MAIL_FILE_DIR
  *                                      (local dev only; refused in production).
  */
@@ -754,8 +756,172 @@ function deliver_mail($mail) {
     if (mail_file_transport_enabled()) {
         return write_mail_to_file($mail);
     }
+    if (mail_brevo_transport_enabled()) {
+        return brevo_send_mail($mail);
+    }
     $mail->send();
     return true;
+}
+
+/** True when MAIL_TRANSPORT === 'brevo' (HTTP API transport). */
+function mail_brevo_transport_enabled() {
+    return defined('MAIL_TRANSPORT') && MAIL_TRANSPORT === 'brevo';
+}
+
+/** True when the Brevo transport is selected AND an API key is present. */
+function brevo_configured() {
+    return mail_brevo_transport_enabled() && defined('BREVO_API_KEY') && trim((string)BREVO_API_KEY) !== '';
+}
+
+/**
+ * Convert a fully-built PHPMailer message into a Brevo transactional-email
+ * request body (POST /v3/smtp/email). Pure function — no network.
+ *
+ * @return array{sender:array, to:array, subject:string, htmlContent?:string, textContent?:string, cc?:array, bcc?:array, replyTo?:array}
+ */
+function brevo_build_payload($mail) {
+    $people = function (array $list) {
+        $out = [];
+        foreach ($list as $addr) {
+            $email = is_array($addr) ? (string)($addr[0] ?? '') : (string)$addr;
+            $name = is_array($addr) ? (string)($addr[1] ?? '') : '';
+            if ($email === '') {
+                continue;
+            }
+            $out[] = $name !== '' ? ['email' => $email, 'name' => $name] : ['email' => $email];
+        }
+        return $out;
+    };
+
+    $fromEmail = (string)$mail->From !== '' && (string)$mail->From !== 'root@localhost'
+        ? (string)$mail->From : (string)SMTP_FROM_EMAIL;
+    $fromName = (string)$mail->FromName !== '' && (string)$mail->FromName !== 'Root User'
+        ? (string)$mail->FromName : (string)SMTP_FROM_NAME;
+    $payload = [
+        'sender'  => ['email' => $fromEmail, 'name' => $fromName],
+        'to'      => $people($mail->getToAddresses()),
+        'subject' => (string)$mail->Subject,
+    ];
+    $isHtml = stripos((string)$mail->ContentType, 'html') !== false;
+    if ($isHtml) {
+        $payload['htmlContent'] = (string)$mail->Body;
+        if ((string)$mail->AltBody !== '') {
+            $payload['textContent'] = (string)$mail->AltBody;
+        }
+    } else {
+        $payload['textContent'] = (string)$mail->Body;
+    }
+    if ($cc = $people($mail->getCcAddresses())) {
+        $payload['cc'] = $cc;
+    }
+    if ($bcc = $people($mail->getBccAddresses())) {
+        $payload['bcc'] = $bcc;
+    }
+    if ($reply = $people(array_values($mail->getReplyToAddresses()))) {
+        $payload['replyTo'] = $reply[0];
+    }
+    return $payload;
+}
+
+/**
+ * The HTTP layer used by brevo_send_mail(). Tests inject a fake client:
+ *   brevo_http_client(function ($url, array $headers, $body) { return ['status' => 201, 'body' => '', 'error' => '']; });
+ * and restore the real one with brevo_http_client(null, true).
+ * A client returns ['status' => int (0 = transport error), 'body' => string, 'error' => string].
+ */
+function brevo_http_client($client = null, $reset = false) {
+    static $current = null;
+    if ($reset) {
+        $current = null;
+    }
+    if ($client !== null) {
+        $current = $client;
+    }
+    return $current ?? 'brevo_http_post';
+}
+
+/** Real HTTPS POST (curl; stream fallback when ext-curl is missing). */
+function brevo_http_post($url, array $headers, $body) {
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => $body,
+            CURLOPT_HTTPHEADER     => $headers,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_TIMEOUT        => 20,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_PROTOCOLS      => CURLPROTO_HTTPS,
+        ]);
+        $resp = curl_exec($ch);
+        $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        $error = $resp === false ? curl_error($ch) : '';
+        curl_close($ch);
+        return ['status' => $resp === false ? 0 : $status, 'body' => $resp === false ? '' : (string)$resp, 'error' => $error];
+    }
+    $ctx = stream_context_create([
+        'http' => ['method' => 'POST', 'header' => implode("\r\n", $headers), 'content' => $body, 'timeout' => 20, 'ignore_errors' => true],
+        'ssl'  => ['verify_peer' => true, 'verify_peer_name' => true],
+    ]);
+    $resp = @file_get_contents($url, false, $ctx);
+    $status = 0;
+    foreach ((array)($http_response_header ?? []) as $h) {
+        if (preg_match('#^HTTP/\S+\s+(\d{3})#', $h, $m)) {
+            $status = (int)$m[1];
+        }
+    }
+    return ['status' => $resp === false ? 0 : $status, 'body' => $resp === false ? '' : (string)$resp, 'error' => $resp === false ? 'HTTP request failed' : ''];
+}
+
+/**
+ * Send a PHPMailer-built message through the Brevo transactional API.
+ * Same contract as $mail->send() with exceptions on: returns true on
+ * success (HTTP 201/202), throws on any failure and sets $mail->ErrorInfo,
+ * so callers' existing catch -> 'mail_failed' / false paths apply.
+ * The API key is never included in an exception or log line.
+ *
+ * @throws RuntimeException
+ */
+function brevo_send_mail($mail) {
+    if (!brevo_configured()) {
+        $mail->ErrorInfo = 'Brevo API key is not configured.';
+        throw new RuntimeException('Brevo API send failed: CV_BREVO_API_KEY is not configured.');
+    }
+    $payload = brevo_build_payload($mail);
+    if (empty($payload['to'])) {
+        $mail->ErrorInfo = 'You must provide at least one recipient email address.';
+        throw new RuntimeException('Brevo API send failed: no recipient.');
+    }
+    $body = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+    $headers = [
+        'accept: application/json',
+        'content-type: application/json',
+        'api-key: ' . BREVO_API_KEY,
+    ];
+    $client = brevo_http_client();
+    try {
+        $res = $client(BREVO_API_URL, $headers, $body);
+    } catch (Throwable $e) {
+        $res = ['status' => 0, 'body' => '', 'error' => get_class($e)];
+    }
+    $status = (int)($res['status'] ?? 0);
+    if ($status === 201 || $status === 202) {
+        return true;
+    }
+    // Brevo error bodies look like {"code":"unauthorized","message":"..."}.
+    $detail = '';
+    $decoded = json_decode((string)($res['body'] ?? ''), true);
+    if (is_array($decoded)) {
+        $detail = trim(($decoded['code'] ?? '') . ' ' . ($decoded['message'] ?? ''));
+    }
+    if ($detail === '') {
+        $detail = $status === 0 ? ('connection failed: ' . (string)($res['error'] ?? '')) : 'unexpected response';
+    }
+    $detail = substr(str_replace((string)BREVO_API_KEY, '[key]', preg_replace('/[\r\n]+/', ' ', $detail)), 0, 300);
+    $mail->ErrorInfo = 'Brevo API HTTP ' . $status . ': ' . $detail;
+    throw new RuntimeException('Brevo API send failed (HTTP ' . $status . '): ' . $detail);
 }
 
 /**
@@ -854,10 +1020,14 @@ function mail_file_transport_enabled() {
 
 /**
  * True when email can be handed to SOME transport: real SMTP credentials,
- * or the dev file spool. Send paths gate on this; smtp_configured() keeps
- * its literal meaning for the SMTP diagnostic.
+ * the Brevo HTTP API (transport 'brevo' with an API key), or the dev file
+ * spool. Send paths gate on this; smtp_configured() keeps its literal
+ * meaning for the SMTP diagnostic.
  */
 function mail_delivery_configured() {
+    if (mail_brevo_transport_enabled()) {
+        return brevo_configured();
+    }
     return mail_file_transport_enabled() || smtp_configured();
 }
 
@@ -941,6 +1111,9 @@ function otp_mail_error_reason($mail, $e) {
     $info = trim((string)($mail->ErrorInfo ?? ''));
     $msg  = trim(($e ? $e->getMessage() : '') . ' ' . $info);
     $l    = strtolower($msg);
+    if (strpos($l, 'brevo') !== false) {
+        return 'Brevo API send failed (check CV_BREVO_API_KEY and that the sender address is verified in Brevo)';
+    }
     if (preg_match('/failed to connect|connection refused|could not connect|timed? ?out|10060|10061|errno ?= ?\d+/', $l)) {
         return 'SMTP connection failed (connection refused or timeout)';
     }

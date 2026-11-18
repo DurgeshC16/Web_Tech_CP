@@ -3,6 +3,7 @@ if (PHP_SAPI !== 'cli') { http_response_code(403); exit("CLI only.\n"); }
 require_once __DIR__ . '/../src/config/Database.php';
 require_once __DIR__ . '/../src/services/CryptoService.php';
 require_once __DIR__ . '/../src/services/TransparencyLogService.php';
+require_once __DIR__ . '/../src/services/FileStore.php';
 if (!CERTIFICATE_TRANSPARENCY_ENABLED) { fwrite(STDERR, "Enable CERTIFICATE_TRANSPARENCY_ENABLED in local config first.\n"); exit(1); }
 
 try {
@@ -23,6 +24,12 @@ try {
     $private = file_get_contents(TLOG_PRIVATE_KEY_FILE);
     $public = file_get_contents(TLOG_PUBLIC_KEY_FILE);
     if (!CryptoService::verifyKeyPair($private, $public)) throw new RuntimeException('Platform private/public key files do not match.');
+    // CV_FILE_STORE=db (ephemeral hosts) keeps the pair across restarts;
+    // this puts the platform signing key in the database (see
+    // docs/13_DEPLOY_RENDER.md). No-op in the default mode; unchanged
+    // files are not rewritten.
+    FileStore::persist(TLOG_PRIVATE_KEY_FILE);
+    FileStore::persist(TLOG_PUBLIC_KEY_FILE);
 
     $db = Database::getInstance();
     $checkpoint = TransparencyLogService::checkpoint($db, $private, $public);
@@ -37,6 +44,7 @@ try {
         if (file_put_contents($dir . '/latest.json', $json, LOCK_EX) === false) throw new RuntimeException('Could not publish latest.json.');
         @unlink($tmp);
     }
+    FileStore::persist($dir . '/latest.json'); // no-op unless CV_FILE_STORE=db
     echo 'Published checkpoint tree_size=' . $checkpoint['tree_size'] . ' root=' . $checkpoint['root_hash'] . "\n";
     echo 'Public URL: ' . rtrim(BASE_URL, '/') . "/checkpoints/latest.json\n";
 } catch (Throwable $e) {

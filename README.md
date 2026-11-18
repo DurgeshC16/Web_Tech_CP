@@ -198,6 +198,10 @@ Open <http://localhost:8081>. With Apache, point the virtual host's
 `docker compose exec -u www-data app php scripts/seed_demo.php` and open
 <http://localhost:8080> (details in the [running guide](docs/10_RUNNING_AND_DEMO_GUIDE.md)).
 
+**Free hosting?** Deploy on Render's free plan with an external MySQL and
+Brevo for email — step by step in
+[docs/13_DEPLOY_RENDER.md](docs/13_DEPLOY_RENDER.md) (`render.yaml` blueprint included).
+
 **Upgrading an existing database:** apply the missing files in
 `database/migrations/` in order (001 → 016), then run once
 `php scripts/backfill_file_hashes.php` and `php scripts/pin_institution_keys.php`
@@ -225,6 +229,7 @@ then the defaults in `src/config/config.php`. Exception: an explicitly set
 | `CV_BASE_URL` | Only behind a proxy; otherwise derived per request |
 | `CV_GUEST_VERIFY_LIMIT` / `CV_GUEST_VERIFY_WINDOW_SECONDS` | Free verifications for visitors who are not logged in (default 5 per 86400 s; `0` = off). `api_status.php` keeps its own limiter |
 | `CV_ENV=production` | Refuses to start with development secrets or the file mail transport |
+| Hosting (all off by default) | `CV_DB_PORT`, `CV_DB_SSL_CA` / `CV_DB_SSL_CA_PEM` (TLS to the DB), `CV_MAIL_TRANSPORT=brevo` + `CV_BREVO_API_KEY` + `CV_MAIL_FROM_EMAIL`, `CV_TRUST_PROXY=1`, `CV_FILE_STORE=db`, `CV_SUPER_ADMIN_EMAIL` / `_PASSWORD`, `CV_ERROR_LOG=stderr` — see [docs/13_DEPLOY_RENDER.md](docs/13_DEPLOY_RENDER.md) |
 | Feature flags | `CV_SMART_VERIFY`, `CV_API_ENABLED` (on); `CV_EXT_REGISTRY_ENABLED`, `CV_ATTESTED_CREDENTIALS_ENABLED`, `CV_CERTIFICATE_TRANSPARENCY_ENABLED` (off) |
 
 Full reference, Gmail setup and the production checklist:
@@ -294,6 +299,7 @@ Threat model and remaining gaps:
 | [10 Running & Demo Guide](docs/10_RUNNING_AND_DEMO_GUIDE.md) | **Step-by-step setup, guided tour of the website, 5-minute demo script** |
 | [11 Novelties & Comparison](docs/11_NOVELTIES_AND_COMPARISON.md) | CertiVault vs Credly, Certifier, Accredible, Blockcerts, OB 3.0/W3C VC, DigiLocker/NAD + prioritised roadmap |
 | [12 Design System](docs/12_DESIGN_SYSTEM.md) | UI tokens, components, motion rules of the redesigned frontend |
+| [13 Deploy on Render (free)](docs/13_DEPLOY_RENDER.md) | **Beginner step-by-step:** external MySQL with TLS, Brevo email, Render Blueprint, UptimeRobot, limitations, troubleshooting |
 | [Requirements Matrix](docs/REQUIREMENTS_MATRIX.md) | Course requirements → implementation |
 | [Project Brief (PDF)](docs/reference/CertiVault_Project_Brief.pdf) | Original project brief |
 

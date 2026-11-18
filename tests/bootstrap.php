@@ -142,6 +142,12 @@ function test_db() {
         root_hash CHAR(64) NOT NULL, signature TEXT NOT NULL, public_key_fingerprint CHAR(95) NOT NULL,
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    // Migration 018 (FileStore, CV_FILE_STORE=db) for older test databases.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS stored_files (
+        path VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL, content LONGBLOB NOT NULL,
+        sha256 CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, size BIGINT UNSIGNED NOT NULL,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, PRIMARY KEY (path)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
     $hasTlogLastSeq=(int)$pdo->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='tlog_checkpoints' AND COLUMN_NAME='last_seq'")->fetchColumn();
     if (!$hasTlogLastSeq) $pdo->exec('ALTER TABLE tlog_checkpoints ADD COLUMN last_seq BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER tree_size');
     return $pdo;

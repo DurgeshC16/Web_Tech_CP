@@ -20,6 +20,7 @@ if (php_sapi_name() !== 'cli') {
 require_once __DIR__ . '/../src/config/config.php';
 require_once __DIR__ . '/../src/config/Database.php';
 require_once __DIR__ . '/../src/utils/helpers.php';
+require_once __DIR__ . '/../src/services/SuperAdminService.php';
 
 fwrite(STDOUT, "Set super admin credentials\n");
 fwrite(STDOUT, "---------------------------\n");
@@ -41,18 +42,14 @@ if ($password !== $confirm) {
     fwrite(STDERR, "Error: passwords do not match.\n");
     exit(1);
 }
-if (($e = validate_password_strength($password)) !== true) {
-    fwrite(STDERR, "Error: $e\n");
-    exit(1);
-}
 
-$db = Database::getInstance();
-$hash = password_hash($password, PASSWORD_BCRYPT);
-$stmt = $db->prepare('UPDATE users SET email = :email, password_hash = :hash, is_verified = 1, failed_login_attempts = 0, locked_until = NULL WHERE role = "super_admin"');
-$stmt->execute(['email' => $email, 'hash' => $hash]);
-
-if ($stmt->rowCount() === 0) {
-    fwrite(STDERR, "Error: no super_admin row found to update.\n");
+// Validation (email, full password policy) + the UPDATE live in
+// SuperAdminService, shared with the CV_SUPER_ADMIN_* bootstrap in
+// scripts/render_boot.php.
+try {
+    SuperAdminService::setCredentials(Database::getInstance(), $email, $password);
+} catch (InvalidArgumentException | RuntimeException $e) {
+    fwrite(STDERR, 'Error: ' . $e->getMessage() . "\n");
     exit(1);
 }
 

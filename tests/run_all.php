@@ -35,6 +35,7 @@ $files = [
     'test_auth_flows.php',    // resumable registration, login message order, forgot->reset always reachable
     'test_guest_quota.php',   // guest verification quota: unit + HTTP (spawns php -S, limit 5)
     'test_dataset.php',       // 100-person demo dataset generator against the test DB
+    'test_render_support.php', // Render free-plan mode: Brevo (mocked), FileStore, proxy, render_boot (temp DB), health.php
     // Browser suite (needs Chrome/Edge + Node >= 21): node tests/test_verify_ui.mjs
     // test_smtp_live.php needs a real SMTP account; run it by hand.
 ];

@@ -22,6 +22,7 @@ require_once __DIR__ . '/../utils/validators.php';
 require_once __DIR__ . '/CryptoService.php';
 require_once __DIR__ . '/QRService.php';
 require_once __DIR__ . '/TransparencyLogService.php';
+require_once __DIR__ . '/FileStore.php';
 
 class IssuanceService
 {
@@ -149,6 +150,9 @@ class IssuanceService
             if (!is_file($destination) || filesize($destination) === 0) {
                 throw new Exception('The certificate file could not be stored.');
             }
+            // Durable copy (CV_FILE_STORE=db only; no-op otherwise). Same
+            // connection + transaction: a rollback removes it again.
+            FileStore::persist($destination);
 
             // 5. Canonical digest over fields + file.
             $expiry = ($f['expiry_date'] ?? '') !== '' ? $f['expiry_date'] : null;
@@ -195,6 +199,8 @@ class IssuanceService
             if ($db->inTransaction()) { $db->rollBack(); }
             if ($destination && is_file($destination)) { @unlink($destination); }
             if ($qrPath && is_file($qrPath)) { @unlink($qrPath); }
+            if ($destination) { FileStore::forget($destination); }
+            if ($qrPath) { FileStore::forget($qrPath); }
             throw $e;
         }
     }

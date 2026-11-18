@@ -53,6 +53,11 @@ can be matched.
   closed; `KEY_PINNING_STRICT` also rejects keys that were never pinned.
   Keep the pin file on storage the web/DB layer cannot write, back it up, and
   publish `pin_institution_keys.php --export` out of band.
+  **Exception — `CV_FILE_STORE=db`** (ephemeral hosts such as Render's free
+  plan, [13 Deploy on Render](13_DEPLOY_RENDER.md)): the pin file is also
+  copied into the `stored_files` table so it survives restarts, which means
+  an attacker with full database write access could alter the pins as well.
+  That mode trades this guarantee for free hosting.
 
 ### 1.5 Portable signed credentials
 

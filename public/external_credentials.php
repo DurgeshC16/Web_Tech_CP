@@ -4,6 +4,7 @@ require_once __DIR__ . '/../src/utils/helpers.php';
 require_once __DIR__ . '/../src/utils/validators.php';
 require_once __DIR__ . '/../src/services/AttestedCredentialService.php';
 require_once __DIR__ . '/../src/services/TrustScoreService.php';
+require_once __DIR__ . '/../src/services/FileStore.php';
 if (!defined('ATTESTED_EXTERNAL_CREDENTIALS_ENABLED') || !ATTESTED_EXTERNAL_CREDENTIALS_ENABLED) { http_response_code(404); exit('External credential attestations are disabled.'); }
 require_role('student');
 $db = Database::getInstance();
@@ -53,6 +54,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $storedFile = bin2hex(random_bytes(24)) . '.pdf';
                 $destination = $dir . '/' . $storedFile;
                 if (!move_uploaded_file($file['tmp_name'], $destination)) throw new RuntimeException('The optional PDF could not be saved.');
+                FileStore::persist($destination); // durable copy (CV_FILE_STORE=db only)
                 $fileHash = hash_file('sha256', $destination);
             }
             $studentStmt = $db->prepare('SELECT full_name FROM students WHERE id=:sid');
@@ -69,6 +71,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $success = 'Credential added as SELF_DECLARED. It is not verified until an approved institution attests it.';
         } catch (Throwable $e) {
             if (!empty($destination) && is_file($destination)) @unlink($destination);
+            if (!empty($destination)) FileStore::forget($destination);
             error_log('[CertiVault] External credential submission failed: ' . $e->getMessage());
             $error = 'The credential could not be saved. Please try again.';
         }
