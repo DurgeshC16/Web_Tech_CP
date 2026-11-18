@@ -24,6 +24,19 @@ if (!function_exists('curl_init')) {
 }
 
 $port = (int)(getenv('CV_TEST_VERIFY_PORT') ?: 8139);
+// Never test against a FOREIGN server: if something already listens on the
+// port (e.g. an orphaned php -S from an interrupted run, started with other
+// env — wrong DB, quota on), the checks below would silently hit it. Move
+// to the next free port instead.
+for ($probe = 0; $probe < 20; $probe++) {
+    $sock = @fsockopen('127.0.0.1', $port, $errno, $errstr, 0.3);
+    if ($sock === false) {
+        break;
+    }
+    fclose($sock);
+    echo "NOTE verify-http: port $port is busy, trying " . ($port + 1) . "\n";
+    $port++;
+}
 $base = "http://127.0.0.1:$port";
 $appRoot = realpath(__DIR__ . '/../public');
 $uploadDir = __DIR__ . '/../private_data/uploads';
@@ -96,6 +109,9 @@ $env = getenv();
 $env['CV_DB_NAME'] = getenv('CV_TEST_DB') ?: 'certivault_test';
 $env['CV_MAIL_TRANSPORT'] = 'file';
 $env['CV_ENV'] = 'development';
+// Guest free-verification quota OFF here: this suite performs many guest
+// lookups on purpose (the quota has its own suite, test_guest_quota.php).
+$env['CV_GUEST_VERIFY_LIMIT'] = '0';
 
 $desc = [0 => ['pipe', 'r'], 1 => ['file', sys_get_temp_dir() . '/cv_verify_http.log', 'a'], 2 => ['file', sys_get_temp_dir() . '/cv_verify_http.log', 'a']];
 $proc = proc_open([PHP_BINARY, '-S', "127.0.0.1:$port", '-t', $appRoot], $desc, $pipes, dirname($appRoot), $env);

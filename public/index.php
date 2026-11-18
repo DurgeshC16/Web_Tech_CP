@@ -3,10 +3,21 @@ require_once __DIR__ . '/../src/config/config.php';
 require_once __DIR__ . '/../src/config/Database.php';
 require_once __DIR__ . '/../src/utils/helpers.php';
 require_once __DIR__ . '/../src/utils/validators.php';
+require_once __DIR__ . '/../src/services/GuestQuotaService.php';
 
 // If already signed in, send the user straight to their area.
 if (isset($_SESSION['user_id']) && isset($_SESSION['role'])) {
     redirect_to_dashboard($_SESSION['role']);
+}
+
+// Guest free-verification counter for the quick-verify box (read-only;
+// the quick verify posts to verify.php, which enforces and records the
+// quota). A DB problem must never break the landing page.
+$index_quota = null;
+try {
+    $index_quota = GuestQuotaService::check(Database::getInstance(), $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0', $_SESSION);
+} catch (Throwable $quotaError) {
+    error_log('[CertiVault] index.php guest quota status unavailable: ' . $quotaError->getMessage());
 }
 
 $page_title = 'CertiVault — Verifiable digital certificates';
@@ -75,6 +86,11 @@ $page_title = 'CertiVault — Verifiable digital certificates';
                 </div>
                 <button type="submit" class="btn btn-primary">Smart Verify</button>
             </form>
+            <?php if (is_array($index_quota) && !empty($index_quota['enabled']) && empty($index_quota['exempt']) && (int)$index_quota['remaining'] === 0): ?>
+                <?= GuestQuotaService::renderLimitNotice($index_quota) ?>
+            <?php elseif (is_array($index_quota)): ?>
+                <?= GuestQuotaService::renderCounter($index_quota) ?>
+            <?php endif; ?>
             <p style="color:var(--muted); font-size:0.9em; text-align:center; margin-top:8px;">
                 Need to verify by file (PDF/PNG/JPG) or external issuers? Use the
                 <a href="verify.php">full Smart Verify panel</a>.

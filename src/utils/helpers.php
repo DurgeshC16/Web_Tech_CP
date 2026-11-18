@@ -1210,6 +1210,288 @@ function send_notification_email($to_email, $subject, $heading, $body_text, $foo
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Email normalisation, registration resume, activation hand-off and the
+// password-reset guard. Shared by the auth pages so every flow treats an
+// address and an unfinished registration the same way.
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Canonical form of a user-typed email: sanitized, trimmed, lowercased.
+ *
+ * users.email uses a case-insensitive collation (utf8mb4_unicode_ci), so
+ * lookups already match "Foo@X.com" to "foo@x.com"; normalising anyway
+ * keeps the stored value, the login rate-limit key (login_attempts.email)
+ * and the remember-email cookie consistent. Non-string input (e.g. an
+ * array injected as email[]=) collapses to '' instead of a TypeError.
+ */
+function normalize_email($raw) {
+    if (!is_string($raw)) {
+        return '';
+    }
+    return strtolower(sanitize_input($raw));
+}
+
+/**
+ * Create a self-registered account — or RESUME an unfinished one.
+ *
+ * Users who abandon registration before entering the emailed code used to
+ * be stuck: the email was "already registered" but login refused the
+ * unverified account. Now an UNVERIFIED account with the same email is
+ * taken over by the new submission (password, role and profile replaced)
+ * in place, keeping the same users.id so the OTP rate-limit history
+ * (60 s cooldown, 5 codes/hour) still applies — deleting and recreating
+ * the row would let anyone bypass those limits and mail-bomb an address.
+ *
+ * Why replacing is safe: a never-activated account cannot sign in, so it
+ * cannot have issued certificates, enabled 2FA or created remember-me
+ * tokens; IssuanceService refuses to issue to an unverified student.
+ * Ownership is still only proven by the emailed code, which the new
+ * registrant must enter (activate_account.php). A role change (student ->
+ * institution or back) drops the stale profile row; as a defensive
+ * check, if that row is referenced by any certificate the takeover is
+ * refused ('blocked') instead of breaking foreign keys.
+ *
+ * Institution status on resume: 'pending' stays pending; 'rejected' stays
+ * rejected (a super-admin decision is not erased by re-submitting);
+ * 'approved' survives only when the name is unchanged, otherwise it goes
+ * back to 'pending' because the approval was for a different name.
+ *
+ * @param  PDO    $db
+ * @param  string $role     'student' | 'admin' (institution)
+ * @param  string $email    Already normalised + validated.
+ * @param  string $password Plaintext, already validated (hashed here).
+ * @param  array  $profile  student: ['full_name','enrollment_number'];
+ *                          admin:   ['name']
+ * @return array{status:string,user_id:int}  status: 'created' | 'resumed' |
+ *                                           'exists' (verified) | 'blocked'
+ */
+function register_or_resume_account($db, $role, $email, $password, array $profile) {
+    if (!in_array($role, ['student', 'admin'], true)) {
+        throw new InvalidArgumentException('Unsupported self-registration role.');
+    }
+    $hash = password_hash($password, PASSWORD_BCRYPT);
+    $db->beginTransaction();
+    try {
+        $stmt = $db->prepare('SELECT id, role, is_verified FROM users WHERE email = :email LIMIT 1 FOR UPDATE');
+        $stmt->execute(['email' => $email]);
+        $existing = $stmt->fetch();
+
+        if (!$existing) {
+            $db->prepare('INSERT INTO users (email, password_hash, role) VALUES (:email, :hash, :role)')
+               ->execute(['email' => $email, 'hash' => $hash, 'role' => $role]);
+            $uid = (int)$db->lastInsertId();
+            registration_write_profile($db, $uid, $role, $profile, null);
+            $db->commit();
+            return ['status' => 'created', 'user_id' => $uid];
+        }
+
+        $uid = (int)$existing['id'];
+        if ((int)$existing['is_verified'] === 1 || !in_array($existing['role'], ['student', 'admin'], true)) {
+            $db->rollBack();
+            return ['status' => 'exists', 'user_id' => $uid];
+        }
+
+        // ── Resume: drop the profile row of the OTHER role, if any ─────
+        if ($role === 'student') {
+            $q = $db->prepare('SELECT COUNT(*) FROM certificates c JOIN institutions i ON c.institution_id = i.id WHERE i.user_id = :u');
+            $q->execute(['u' => $uid]);
+            if ((int)$q->fetchColumn() > 0) {
+                $db->rollBack();
+                return ['status' => 'blocked', 'user_id' => $uid];
+            }
+            $db->prepare('DELETE FROM institutions WHERE user_id = :u')->execute(['u' => $uid]);
+        } else {
+            $q = $db->prepare('SELECT COUNT(*) FROM certificates c JOIN students s ON c.student_id = s.id WHERE s.user_id = :u');
+            $q->execute(['u' => $uid]);
+            if ((int)$q->fetchColumn() > 0) {
+                $db->rollBack();
+                return ['status' => 'blocked', 'user_id' => $uid];
+            }
+            $db->prepare('DELETE FROM students WHERE user_id = :u')->execute(['u' => $uid]);
+        }
+
+        // ── Replace credentials; clear any stale lockout ─────────────
+        $db->prepare('UPDATE users SET email = :email, password_hash = :hash, role = :role,
+                          failed_login_attempts = 0, locked_until = NULL
+                      WHERE id = :id AND is_verified = 0')
+           ->execute(['email' => $email, 'hash' => $hash, 'role' => $role, 'id' => $uid]);
+        // Defensive: nothing persistent may survive a takeover.
+        $db->prepare('DELETE FROM remember_tokens WHERE user_id = :u')->execute(['u' => $uid]);
+
+        registration_write_profile($db, $uid, $role, $profile, $existing['role']);
+        $db->commit();
+        return ['status' => 'resumed', 'user_id' => $uid];
+    } catch (Throwable $e) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        throw $e;
+    }
+}
+
+/**
+ * Insert or update the students / institutions row for a registration.
+ * Internal helper of register_or_resume_account() (runs inside its
+ * transaction).
+ */
+function registration_write_profile($db, $uid, $role, array $profile, $previous_role) {
+    if ($role === 'student') {
+        $params = [
+            'u' => $uid,
+            'n' => (string)($profile['full_name'] ?? ''),
+            'e' => (string)($profile['enrollment_number'] ?? ''),
+        ];
+        $s = $db->prepare('SELECT id FROM students WHERE user_id = :u LIMIT 1');
+        $s->execute(['u' => $uid]);
+        if ($s->fetchColumn()) {
+            $db->prepare('UPDATE students SET full_name = :n, enrollment_number = :e WHERE user_id = :u')->execute($params);
+        } else {
+            $db->prepare('INSERT INTO students (user_id, full_name, enrollment_number) VALUES (:u, :n, :e)')->execute($params);
+        }
+        return;
+    }
+    $name = (string)($profile['name'] ?? '');
+    $s = $db->prepare('SELECT id, name, status FROM institutions WHERE user_id = :u LIMIT 1');
+    $s->execute(['u' => $uid]);
+    $inst = $s->fetch();
+    if (!$inst) {
+        $db->prepare('INSERT INTO institutions (user_id, name, status) VALUES (:u, :n, "pending")')
+           ->execute(['u' => $uid, 'n' => $name]);
+        return;
+    }
+    $status = $inst['status'];
+    if ($status === 'approved' && $inst['name'] !== $name) {
+        $status = 'pending';
+    }
+    $db->prepare('UPDATE institutions SET name = :n, status = :s WHERE id = :id')
+       ->execute(['n' => $name, 's' => $status, 'id' => $inst['id']]);
+}
+
+/**
+ * Remember (for this browser session only) that the user already chose a
+ * password for $user_id — at registration, or by proving it at login —
+ * so activate_account.php asks only for the emailed code instead of a
+ * second password + confirmation. Accounts created by an institution
+ * during issuance never get this marker and still set a password there.
+ *
+ * SECURITY: the marker is bound to a fingerprint of the CURRENT
+ * password_hash, not just the user id. Otherwise: victim registers (marker
+ * for id N in the victim's session) -> attacker "resumes" the same
+ * unverified email with the attacker's password (same id N) -> victim
+ * enters the emailed code with only-the-code -> the account is activated
+ * with the ATTACKER's password. With the fingerprint, a replaced hash
+ * invalidates the marker and the code holder must set the password.
+ */
+function mark_activation_password_known($user_id, $db = null) {
+    $fp = activation_password_fingerprint($user_id, $db);
+    if ($fp === '') {
+        return;
+    }
+    if (!isset($_SESSION['activation_pw_known']) || !is_array($_SESSION['activation_pw_known'])) {
+        $_SESSION['activation_pw_known'] = [];
+    }
+    $_SESSION['activation_pw_known'][(int)$user_id] = $fp;
+}
+
+/** sha256 of the user's current password_hash ('' when unknown). */
+function activation_password_fingerprint($user_id, $db = null) {
+    $db = $db ?: Database::getInstance();
+    $stmt = $db->prepare('SELECT password_hash FROM users WHERE id = :id LIMIT 1');
+    $stmt->execute(['id' => (int)$user_id]);
+    $hash = $stmt->fetchColumn();
+    return is_string($hash) && $hash !== '' ? hash('sha256', $hash) : '';
+}
+
+/**
+ * The fingerprint stored by mark_activation_password_known() for $user_id,
+ * if it still matches the account's current password hash; '' otherwise.
+ * activate_account.php re-checks it atomically in its UPDATE.
+ */
+function activation_password_known($user_id, $db = null) {
+    $stored = $_SESSION['activation_pw_known'][(int)$user_id] ?? '';
+    if (!is_string($stored) || $stored === '') {
+        return '';
+    }
+    $current = activation_password_fingerprint($user_id, $db);
+    return ($current !== '' && hash_equals($current, $stored)) ? $stored : '';
+}
+
+/**
+ * Send an activation code and stash the outcome as a one-shot flash for
+ * activate_account.php. Every outcome still leads to the code-entry page
+ * (a cooldown or limit just means "use the code you already have").
+ */
+function queue_activation_otp($db, $user_id) {
+    $otp_result = create_otp($db, $user_id, 'activation');
+    if ($otp_result === 'sent') {
+        $_SESSION['otp_sent'] = true;
+    } elseif ($otp_result === 'cooldown') {
+        $_SESSION['otp_cooldown_seconds'] = max(otp_cooldown_remaining($db, $user_id, 'activation'), 1);
+    } elseif ($otp_result === 'limit') {
+        $_SESSION['otp_limit'] = true;
+    } elseif ($otp_result === 'smtp_not_configured') {
+        $_SESSION['otp_smtp_unconfigured'] = true;
+    } else {
+        $_SESSION['otp_send_failed'] = true;
+    }
+    return $otp_result;
+}
+
+// ── Password-reset guard (per browser session) ──────────────────────
+// verify_otp() already locks a single code after 5 wrong tries. Because
+// reset_password.php also accepts "email + code" without a prior session,
+// a per-session cap stops one client cycling through many addresses.
+const PW_RESET_MAX_FAILS = 10;
+const PW_RESET_WINDOW = 1800; // 30 minutes
+
+/** Seconds until the per-session reset cap lifts (0 = not blocked). */
+function pw_reset_blocked_for() {
+    $g = $_SESSION['pw_reset_guard'] ?? null;
+    if (!is_array($g) || ($g['since'] ?? 0) + PW_RESET_WINDOW <= time()) {
+        return 0;
+    }
+    return ($g['fails'] ?? 0) >= PW_RESET_MAX_FAILS ? ($g['since'] + PW_RESET_WINDOW - time()) : 0;
+}
+
+/** Record one failed reset verification in this session. */
+function pw_reset_record_failure() {
+    $g = $_SESSION['pw_reset_guard'] ?? null;
+    if (!is_array($g) || ($g['since'] ?? 0) + PW_RESET_WINDOW <= time()) {
+        $g = ['fails' => 0, 'since' => time()];
+    }
+    $g['fails']++;
+    $_SESSION['pw_reset_guard'] = $g;
+}
+
+/**
+ * Request a password-reset code for $email WITHOUT revealing whether an
+ * account exists: the caller always shows the same neutral text. Codes
+ * only go to verified accounts; create_otp()'s DB cooldown/limits still
+ * apply silently. The address is remembered in the session (never in the
+ * URL) so reset_password.php can pre-fill it, together with a per-session
+ * 60 s resend timer that is identical for real and unknown addresses.
+ */
+function request_password_reset_code($db, $email) {
+    $stmt = $db->prepare('SELECT id, is_verified FROM users WHERE email = :email LIMIT 1');
+    $stmt->execute(['email' => $email]);
+    $user = $stmt->fetch();
+    if ($user && (int)$user['is_verified'] === 1) {
+        $r = create_otp($db, (int)$user['id'], 'password_reset');
+        if ($r === 'mail_failed') {
+            error_log('CertiVault password reset: code delivery failed for user_id ' . (int)$user['id']);
+        }
+    }
+    $_SESSION['pw_reset'] = ['email' => $email, 'sent_at' => time()];
+}
+
+/** Seconds left on this session's 60 s "Resend code" timer (0 = free). */
+function pw_reset_resend_wait() {
+    $sent = (int)($_SESSION['pw_reset']['sent_at'] ?? 0);
+    $left = $sent + 60 - time();
+    return $left > 0 ? $left : 0;
+}
+
 /**
  * Validate password strength (length range).
  *

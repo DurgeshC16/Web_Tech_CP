@@ -12,6 +12,21 @@
 // and fill in real values there — it defines the same constants directly and
 // wins over the getenv() fallbacks below. config.local.php is gitignored;
 // never commit real credentials.
+//
+// Exception — an EXPLICITLY set process environment variable for the
+// database name or the mail transport wins over config.local.php. These
+// select WHICH deployment the process talks to; an operator (or a test
+// harness that starts `php -S` with CV_DB_NAME=certivault_test) setting
+// them on purpose must not be silently redirected to the dev database by
+// a local file. Apache/XAMPP does not pass OS env vars, so ordinary local
+// browsing still uses config.local.php exactly as before.
+foreach (['DB_NAME' => 'CV_DB_NAME', 'MAIL_TRANSPORT' => 'CV_MAIL_TRANSPORT'] as $cv_const => $cv_env) {
+    $cv_val = getenv($cv_env);
+    if (is_string($cv_val) && $cv_val !== '' && !defined($cv_const)) {
+        define($cv_const, $cv_val);
+    }
+}
+unset($cv_const, $cv_env, $cv_val);
 $local_config = __DIR__ . '/config.local.php';
 if (file_exists($local_config)) {
     require_once $local_config;
@@ -137,6 +152,16 @@ defined('ATTESTED_EXTERNAL_CREDENTIALS_ENABLED') || define('ATTESTED_EXTERNAL_CR
 // source service above stays a separate, OFF-by-default feature.
 defined('SMART_VERIFY_ENABLED')     || define('SMART_VERIFY_ENABLED', (getenv('CV_SMART_VERIFY') ?: '1') !== '0');
 defined('SMART_EXTERNAL_LINKS')     || define('SMART_EXTERNAL_LINKS', (getenv('CV_SMART_EXTERNAL_LINKS') ?: '1') !== '0');
+
+// ── Guest verification quota (verify.php & friends; ON by default) ───
+// Visitors who are NOT logged in get GUEST_VERIFY_LIMIT free certificate
+// verifications per rolling GUEST_VERIFY_WINDOW seconds; after that the
+// page asks them to log in or register (GuestQuotaService). Logged-in
+// users are never counted. 0 disables the quota (the per-IP rate limiter
+// in VerificationService still applies). api_status.php is NOT covered —
+// it has its own limiter.
+defined('GUEST_VERIFY_LIMIT')  || define('GUEST_VERIFY_LIMIT', max(0, (int)(getenv('CV_GUEST_VERIFY_LIMIT') !== false && getenv('CV_GUEST_VERIFY_LIMIT') !== '' ? getenv('CV_GUEST_VERIFY_LIMIT') : 5)));
+defined('GUEST_VERIFY_WINDOW') || define('GUEST_VERIFY_WINDOW', max(60, (int)(getenv('CV_GUEST_VERIFY_WINDOW_SECONDS') ?: 86400)));
 
 // ── Public status API (api_status.php; read-only, ON by default) ────
 // GET api_status.php?certificate_id=… → JSON verdict + trust score.

@@ -17,6 +17,7 @@ require_once __DIR__ . '/../src/services/CryptoService.php';
 require_once __DIR__ . '/../src/services/VerificationService.php';
 require_once __DIR__ . '/../src/services/TrustScoreService.php';
 require_once __DIR__ . '/../src/services/ReportService.php';
+require_once __DIR__ . '/../src/services/GuestQuotaService.php';
 require_once __DIR__ . '/../src/utils/helpers.php';
 
 send_security_headers();
@@ -58,12 +59,38 @@ if ($certParam === '' || mb_strlen($certParam) > 64
     die('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Not Found</title></head><body style="font-family:sans-serif;text-align:center;margin-top:60px;"><h2>400 — Missing certificate identifier</h2><p><a href="verify.php">Verify a certificate first</a>, then download its report.</p></body></html>');
 }
 
+// ── Guest verification quota (GuestQuotaService) ─────────────────────
+// A report is a verification too, but NOT a second one for a certificate
+// the guest has just verified on verify.php: that page records a free
+// "cert:<id>" alias, so the report link (which carries the canonical ID)
+// is a repeat and costs nothing. A report for a certificate the guest
+// never verified costs one credit. Exhausted guests get the login/register
+// page and no lookup runs. Logged-in users are never counted.
+$gq_keys = [GuestQuotaService::certAlias($certParam), 'id:' . mb_strtolower($certParam)];
+$gq = GuestQuotaService::check($db, $ip, $_SESSION, $gq_keys);
+if (!$gq['allowed']) {
+    GuestQuotaService::sendLimitHeaders($gq);
+    $page_title = 'Free verification limit reached - CertiVault';
+    require __DIR__ . '/../src/partials/head.php';
+    require __DIR__ . '/../src/partials/header.php';
+    echo '<main id="main"><div class="container shell-narrow">' . GuestQuotaService::renderLimitNotice($gq) . '</div></main>';
+    require __DIR__ . '/../src/partials/footer.php';
+    echo '</body></html>';
+    exit;
+}
+
 try {
     $cert = VerificationService::findByFlexibleCertificateId($db, $certParam);
 } catch (Throwable $dbError) {
     error_log("[CertiVault] report.php lookup failed: " . $dbError->getMessage());
     $cert = null;
 }
+
+// The lookup ran: record it. The canonical certificate alias comes first,
+// so a certificate the guest already verified is a free repeat.
+GuestQuotaService::record($db, $ip, $_SESSION, $cert
+    ? [GuestQuotaService::certAlias((string)$cert['certificate_id']), GuestQuotaService::certAlias($certParam)]
+    : $gq_keys);
 
 if (!$cert) {
     http_response_code(404);

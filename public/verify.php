@@ -15,6 +15,7 @@ require_once __DIR__ . '/../src/services/SmartVerifyService.php';
 require_once __DIR__ . '/../src/services/FileVerifyService.php';
 require_once __DIR__ . '/../src/services/TrustScoreService.php';
 require_once __DIR__ . '/../src/services/TransparencyLogService.php';
+require_once __DIR__ . '/../src/services/GuestQuotaService.php';
 require_once __DIR__ . '/../src/utils/validators.php';
 require_once __DIR__ . '/../src/utils/helpers.php';
 require_once __DIR__ . '/../src/utils/qrdecoder/autoload.php';
@@ -42,7 +43,13 @@ function verify_rate_key(): ?string {
     foreach (['smart_id', 'certificate_id', 'smart_hash', 'smart_qr_text', 'issuer', 'other_url'] as $field) {
         $v = trim((string)($_POST[$field] ?? ''));
         if ($v !== '') {
-            $parts[$field] = mb_strtolower(mb_substr($v, 0, 512));
+            // NO truncation: the text pipelines read up to 1–2 KB of these
+            // fields (a URL/ID can sit after char 512), so a truncated key
+            // would let different lookups share one key and count as free
+            // "repeats" — for this limiter and the guest quota alike. Long
+            // values are folded to a digest instead (bounded key size).
+            $v = mb_strtolower($v);
+            $parts[$field] = mb_strlen($v) > 512 ? 'sha256:' . hash('sha256', $v) : $v;
         }
     }
     foreach (['smart_file', 'qr_image'] as $field) {
@@ -69,6 +76,26 @@ if ($sv_rate_key !== null) {
     }
 }
 
+// ── Guest verification quota — also BEFORE any certificate lookup ─────
+// Visitors who are not logged in get GUEST_VERIFY_LIMIT free verifications
+// per window (GuestQuotaService). The key is the limiter key above, so a
+// refresh / the same QR link again is free. Here it is only CHECKED; the
+// credit is recorded after the pipeline, once we know the request really
+// reached a lookup (malformed input never costs a credit). An exhausted
+// guest gets the "log in or register" page and NO lookup runs.
+$sv_guest_ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+$sv_quota = GuestQuotaService::check($db, $sv_guest_ip, $_SESSION, $sv_rate_key !== null ? [$sv_rate_key] : []);
+if ($sv_rate_key !== null && !$sv_quota['allowed']) {
+    GuestQuotaService::sendLimitHeaders($sv_quota);
+    $page_title = 'Free verification limit reached - CertiVault';
+    require __DIR__ . '/../src/partials/head.php';
+    require __DIR__ . '/../src/partials/header.php';
+    echo '<main id="main"><div class="container shell-narrow">' . GuestQuotaService::renderLimitNotice($sv_quota) . '</div></main>';
+    require __DIR__ . '/../src/partials/footer.php';
+    echo '</body></html>';
+    exit;
+}
+$sv_no_lookup = false; // set by the paths that end before any certificate query
 const SV_NOT_FOUND_TIPS = 'A re-saved, cropped or screenshot copy will not match the original file — '
     . 'that changes its bytes. Try the Certificate ID or scan the QR code instead. You can also '
     . 'select your issuer above (Coursera, Credly, or a public link) to open their own verification page.';
@@ -285,6 +312,7 @@ if ($query_type === null && $_SERVER['REQUEST_METHOD'] === 'POST'
     }
 
     if (isset($outcome['__upload_error']) && $outcome['__upload_error'] !== true) {
+        $sv_no_lookup = true; // rejected upload: no certificate query ran
         $sv_file_error = $outcome['__upload_error'];
         $verdict = 'INVALID';
         $detail = $sv_file_error;
@@ -300,6 +328,7 @@ if ($query_type === null && $_SERVER['REQUEST_METHOD'] === 'POST'
             $detail = ($detail ?: '') . ' [' . $outcome['__resolved']['stage'] . ']';
         }
     } elseif (isset($outcome['__upload_error'])) {
+        $sv_no_lookup = true;
         $sv_file_error = $outcome['__upload_error'];
         $verdict = 'INVALID';
         $detail = $sv_file_error;
@@ -417,6 +446,7 @@ if ($query_type === null
     $sv_old_upload = true;
     $img_check = v_qr_image($_FILES['qr_image']);
     if ($img_check !== true) {
+        $sv_no_lookup = true;
         $query_type  = 'token';
         $query_value = '(qr image: invalid upload)';
         $verdict     = 'INVALID';
@@ -432,6 +462,7 @@ if ($query_type === null
         }
         @unlink($tmp); // never stored on the server
         if ($decoded === '') {
+            $sv_no_lookup = true;
             $query_type  = 'token';
             $query_value = '(qr image: no code)';
             $verdict     = 'INVALID';
@@ -476,6 +507,7 @@ if ($query_type !== null && $verdict === null && $cert === null) {
             && (bool)preg_match('/^[A-Za-z0-9\-_\/. ]+$/', $t);
     }
     if (!$well_formed) {
+        $sv_no_lookup = true; // malformed: rejected before the database
         $verdict = 'INVALID';
         $detail  = 'The provided identifier is malformed. Expected format: '
             . ($query_type === 'token'
@@ -528,6 +560,17 @@ if ($query_type !== null && $verdict === null) {
         }
     }
     if ($cert && defined('CERTIFICATE_TRANSPARENCY_ENABLED') && CERTIFICATE_TRANSPARENCY_ENABLED) $transparency = TransparencyLogService::certificateStatus($db, $cert);
+}
+
+// ── Guest quota: record the credit (only lookups that really ran) ─────
+// The resolved certificate is added as a free alias so the PDF report
+// (report.php) and the same certificate entered another way are repeats.
+if ($query_type !== null && !$sv_no_lookup) {
+    $sv_quota_keys = [$sv_rate_key ?? ('q:' . $query_type . ':' . mb_strtolower((string)$query_value))];
+    if ($cert && !empty($cert['certificate_id'])) {
+        $sv_quota_keys[] = GuestQuotaService::certAlias((string)$cert['certificate_id']);
+    }
+    $sv_quota = GuestQuotaService::record($db, $sv_guest_ip, $_SESSION, $sv_quota_keys);
 }
 
 // ── Audit Logging ─────────────────────────────────────────────────
@@ -584,6 +627,11 @@ if ($query_type !== null) {
     <div class="container shell-narrow">
         <h2 style="text-align:center;">CertiVault — Smart Certificate Verification</h2>
 
+        <?php if ($verdict === null && !empty($sv_quota['enabled']) && empty($sv_quota['exempt']) && (int)$sv_quota['remaining'] === 0): ?>
+        <!-- Guest has used every free verification: say so before the form. -->
+        <?= GuestQuotaService::renderLimitNotice($sv_quota) ?>
+        <?php endif; ?>
+
         <?php if ($verdict === null): ?>
         <!-- ── Smart Verify panel ───────────────────────────────── -->
         <form method="POST" action="" class="card" id="smartVerifyForm" enctype="multipart/form-data"
@@ -626,6 +674,9 @@ if ($query_type !== null) {
             <button type="submit" class="btn btn-primary btn-block">Smart Verify</button>
             <p id="svStatus" class="sv-status" role="status" aria-live="polite" hidden></p>
         </form>
+        <?php if ((int)($sv_quota['remaining'] ?? 0) > 0): ?>
+        <?= GuestQuotaService::renderCounter($sv_quota) ?>
+        <?php endif; ?>
 
         <?php if (is_post_overflow()): ?>
             <p class="field-error" role="alert">The upload is larger than the server allows (post_max_size). Please use a smaller file.</p>
@@ -808,6 +859,7 @@ if ($query_type !== null) {
         </div>
         <?php endif; ?>
 
+        <?= GuestQuotaService::renderCounter($sv_quota) ?>
         <div style="text-align:center; margin-top:25px;">
             <a href="verify.php" class="btn">Verify Another Certificate</a>
         </div>

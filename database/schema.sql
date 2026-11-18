@@ -144,6 +144,19 @@ CREATE TABLE verify_rate (
     INDEX idx_verify_rate_seen (seen_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Free-verification quota for visitors who are not logged in (migration 017,
+-- GuestQuotaService). subject_hash = HMAC of the client IP (never the raw
+-- IP), key_hash = SHA-256 of the lookup key. is_credit = 1 for the row that
+-- used a free verification, 0 for free alias rows. Pruned on every check.
+CREATE TABLE guest_verify_quota (
+    subject_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    key_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    is_credit TINYINT(1) NOT NULL DEFAULT 1,
+    seen_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (subject_hash, key_hash),
+    INDEX idx_guest_verify_quota_seen (seen_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Persistent "Remember me" logins (see database/migrations/005_remember_me_tokens.sql).
 -- Cookie holds "selector:validator"; only SHA-256(validator) is stored.
 CREATE TABLE remember_tokens (

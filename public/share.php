@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../src/config/Database.php';
 require_once __DIR__ . '/../src/config/config.php';
 require_once __DIR__ . '/../src/services/VerificationService.php';
+require_once __DIR__ . '/../src/services/GuestQuotaService.php';
 require_once __DIR__ . '/../src/utils/helpers.php';
 
 $token = $_GET['token'] ?? '';
@@ -9,6 +10,8 @@ $error = '';
 $cert = null;
 $share_verdict = null;
 $share_detail  = null;
+$share_quota   = null;  // guest quota status (GuestQuotaService)
+$share_blocked = false; // guest has used every free verification
 
 if (empty($token)) {
     $error = "No share token provided.";
@@ -37,6 +40,15 @@ if (empty($token)) {
                 $error = "This share link has expired.";
             } else {
                 $db = Database::getInstance();
+                // Guest quota: opening a share link runs the full verification
+                // cascade, so it counts like verify.php (re-opening the same
+                // link, or a certificate already verified, is free). Checked
+                // BEFORE the certificate query; logged-in users are exempt.
+                $share_ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+                $share_quota = GuestQuotaService::check($db, $share_ip, $_SESSION, ['share:' . $share_id]);
+                $share_blocked = !$share_quota['allowed'];
+            }
+            if (!$error && !$share_blocked) {
                 $stmt = $db->prepare('
                     SELECT c.*, i.name as institution_name, ik.public_key, ik.status AS signing_key_status, s.full_name as student_name
                     FROM certificates c
@@ -47,6 +59,11 @@ if (empty($token)) {
                 ');
                 $stmt->execute(['id' => $share_id]);
                 $cert = $stmt->fetch();
+                // The lookup ran: record it (the certificate alias makes a
+                // certificate the guest already verified a free repeat).
+                $share_quota = GuestQuotaService::record($db, $share_ip, $_SESSION, $cert
+                    ? ['share:' . $share_id, GuestQuotaService::certAlias((string)$cert['certificate_id'])]
+                    : ['share:' . $share_id]);
 
                 if (!$cert) {
                     $error = "Certificate no longer exists.";
@@ -61,12 +78,17 @@ if (empty($token)) {
         }
     }
 }
+if ($share_blocked) {
+    GuestQuotaService::sendLimitHeaders($share_quota);
+}
 ?>
-<?php $page_title = 'Shared Certificate - CertiVault'; require __DIR__ . '/../src/partials/head.php'; ?>
+<?php $page_title = $share_blocked ? 'Free verification limit reached - CertiVault' : 'Shared Certificate - CertiVault'; require __DIR__ . '/../src/partials/head.php'; ?>
 <?php require __DIR__ . '/../src/partials/header.php'; ?>
 <main id="main">
     <div class="container" style="max-width: 600px; text-align: center;">
-        <?php if ($error): ?>
+        <?php if ($share_blocked): ?>
+            <?= GuestQuotaService::renderLimitNotice($share_quota) ?>
+        <?php elseif ($error): ?>
             <h2>Access Denied</h2>
             <div class="alert alert-danger" style="margin-top: 20px;">
                 <?= htmlspecialchars($error) ?>
@@ -108,6 +130,7 @@ if (empty($token)) {
                     This is a secure, time-limited share link.
                 </p>
             </div>
+            <?= is_array($share_quota) ? GuestQuotaService::renderCounter($share_quota) : '' ?>
         <?php endif; ?>
     </div>
 </main>

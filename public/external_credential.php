@@ -4,15 +4,30 @@ require_once __DIR__ . '/../src/config/config.php';
 require_once __DIR__ . '/../src/utils/helpers.php';
 require_once __DIR__ . '/../src/services/AttestedCredentialService.php';
 require_once __DIR__ . '/../src/services/TrustScoreService.php';
+require_once __DIR__ . '/../src/services/GuestQuotaService.php';
 if (!defined('ATTESTED_EXTERNAL_CREDENTIALS_ENABLED') || !ATTESTED_EXTERNAL_CREDENTIALS_ENABLED) { http_response_code(404); exit('External credential attestations are disabled.'); }
 $db = Database::getInstance();
 $token = (string)($_GET['token'] ?? '');
 $record = null;
 $verdict = null;
+$ec_quota = null;    // guest quota status (GuestQuotaService)
+$ec_blocked = false; // guest has used every free verification
 if (preg_match('/^[A-Za-z0-9_-]{43}$/', $token)) {
-$stmt = $db->prepare('SELECT ec.* FROM external_credentials ec WHERE ec.public_token=:token LIMIT 1');
+    // Guest quota: a public record lookup counts like verify.php (the same
+    // link again is free; logged-in users are exempt). Checked BEFORE the
+    // query; a malformed token never reaches a lookup and costs nothing.
+    $ec_ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+    $ec_quota = GuestQuotaService::check($db, $ec_ip, $_SESSION, ['ext:' . $token]);
+    $ec_blocked = !$ec_quota['allowed'];
+}
+if (preg_match('/^[A-Za-z0-9_-]{43}$/', $token) && !$ec_blocked) {
+    $stmt = $db->prepare('SELECT ec.* FROM external_credentials ec WHERE ec.public_token=:token LIMIT 1');
     $stmt->execute(['token'=>$token]);
     $record = $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+    $ec_quota = GuestQuotaService::record($db, $ec_ip, $_SESSION, ['ext:' . $token]);
+}
+if ($ec_blocked) {
+    GuestQuotaService::sendLimitHeaders($ec_quota);
 }
 if ($record) {
     $verdict = AttestedCredentialService::verdict($db, $record);
@@ -25,7 +40,9 @@ if ($record) {
 <?php $page_title = 'External Credential Record - CertiVault'; require __DIR__ . '/../src/partials/head.php'; ?>
 <?php require __DIR__ . '/../src/partials/header.php'; ?>
 <main id="main"><div class="container shell-narrow">
-    <?php if (!$record): ?>
+    <?php if ($ec_blocked): ?>
+        <?= GuestQuotaService::renderLimitNotice($ec_quota) ?>
+    <?php elseif (!$record): ?>
         <h2>External credential record not found</h2><p>This public link is invalid or no longer available.</p>
     <?php else: ?>
         <h2>Attested external credential</h2>
@@ -52,6 +69,7 @@ if ($record) {
             <?php elseif ($verdict !== 'TAMPERED'): ?><p class="field-error">The stored issuer URL is no longer on the exact allow-list; it is not clickable.</p><?php endif; ?>
             <p style="margin-top:14px;"><small>Shared via a public CertiVault record link. No issuer was contacted to display this page.</small></p>
         </article>
+        <?= is_array($ec_quota) ? GuestQuotaService::renderCounter($ec_quota) : '' ?>
         <?php if (is_file(__DIR__ . '/qrcodes/' . $record['public_token'] . '.png')): ?><div class="qr-hero"><p><strong>Public record QR:</strong></p><img src="qrcodes/<?= htmlspecialchars($record['public_token']) ?>.png" alt="QR code for this external credential record"></div><?php endif; ?>
     <?php endif; ?>
 </div></main>

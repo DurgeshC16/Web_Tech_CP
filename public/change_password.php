@@ -167,18 +167,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['cancel'])) {
         <form method="POST" action="">
             <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
             <div class="form-group">
-                <label>Current Password:</label>
-                <input type="password" name="current_password" data-validate="required" required>
+                <label for="current_password">Current Password:</label>
+                <input type="password" name="current_password" id="current_password" autocomplete="current-password" data-validate="required" required>
                 <?php render_field_error($errors, 'current_password'); ?>
             </div>
             <div class="form-group">
-                <label>New Password:</label>
-                <input type="password" name="new_password" id="new_password" data-validate="required|min:8|max:72|strong" required>
+                <label for="new_password">New Password:</label>
+                <input type="password" name="new_password" id="new_password" autocomplete="new-password" data-validate="required|min:8|max:72|strong" required>
                 <?php render_field_error($errors, 'new_password'); ?>
             </div>
             <div class="form-group">
-                <label>Confirm New Password:</label>
-                <input type="password" name="confirm_password" data-validate="required|match:#new_password" required>
+                <label for="confirm_password">Confirm New Password:</label>
+                <input type="password" name="confirm_password" id="confirm_password" autocomplete="new-password" data-validate="required|match:#new_password" required>
                 <?php render_field_error($errors, 'confirm_password'); ?>
             </div>
             <button type="submit" class="btn btn-primary">Continue</button>

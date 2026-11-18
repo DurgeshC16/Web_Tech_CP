@@ -1,0 +1,6 @@
+﻿code,institution,admin_email,certificates,active_key_id,public_key_fingerprint_sha256
+NBIT,"Northbridge Institute of Technology",registrar.northbridge@dataset.example.com,51,1,69:C1:DE:E3:0B:3D:D9:64:7B:69:94:57:F0:E4:3F:89:5A:93:7E:95:C0:C1:D9:6C:61:50:00:B7:C1:B3:B9:09
+WSD,"Westlake School of Design",registrar.westlake@dataset.example.com,32,1,37:98:18:47:2B:85:CD:B0:9A:35:BA:92:D6:57:91:80:C1:EA:88:6A:66:17:80:B9:37:E8:EC:64:CE:A0:9E:1E
+RCCM,"Riverside College of Commerce and Management",registrar.riverside@dataset.example.com,34,1,C5:EE:7D:FA:35:39:BD:CC:B5:2A:33:63:38:C0:94:6A:CD:1A:90:4F:04:F6:AB:57:CC:02:F6:68:B5:2A:86:48
+LIHS,"Lakeview Institute of Health Sciences",registrar.lakeview@dataset.example.com,37,1,43:4C:D1:C4:7C:1D:02:D1:69:23:D2:C8:15:05:E5:7B:46:7E:20:EA:DB:EE:B3:B4:B0:B6:DD:24:E1:7F:C4:BA
+OSOA,"Open Skills Online Academy",credentials.openskills@dataset.example.com,37,1,D0:EC:5B:C6:24:2F:FA:F3:D3:8A:14:11:1C:E4:8C:6A:9E:86:73:0D:F0:91:F1:95:75:CD:09:55:A8:71:F5:A9

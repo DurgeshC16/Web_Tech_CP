@@ -5,10 +5,11 @@ require_once __DIR__ . '/../src/utils/helpers.php';
 $error = '';
 $errors = [];
 $info = '';
+$notice = '';
 $user_id = (int)($_POST['user_id'] ?? $_GET['user_id'] ?? 0);
 $db = Database::getInstance();
 
-$stmt = $db->prepare('SELECT id, email, is_verified FROM users WHERE id = :id LIMIT 1');
+$stmt = $db->prepare('SELECT id, email, role, is_verified FROM users WHERE id = :id LIMIT 1');
 $stmt->execute(['id' => $user_id]);
 $user = $stmt->fetch();
 
@@ -21,6 +22,22 @@ if ($user['is_verified']) {
 }
 
 $masked = mask_email($user['email']);
+$is_institution = ($user['role'] === 'admin');
+
+// The password was already chosen in THIS browser session (registration
+// form, or proven at login) -> only the emailed code is needed here, so
+// nobody types a password + confirmation twice. In every other case
+// (account created by an institution during issuance, activation opened
+// on another device) the user sets a password now, with a confirmation
+// field (Compare validator).
+// activation_password_known() returns the stored password-hash fingerprint
+// (truthy) only while it still matches the account (see helpers.php).
+$password_known = activation_password_known($user_id, $db);
+
+if (!empty($_SESSION['registration_resumed'])) {
+    $notice = 'We found your unfinished registration for this email and updated it with the details you just entered.';
+    unset($_SESSION['registration_resumed']);
+}
 
 // Flash messages set by registration or resend pages
 if (!empty($_SESSION['otp_send_failed'])) {
@@ -31,8 +48,12 @@ if (!empty($_SESSION['otp_send_failed'])) {
     unset($_SESSION['otp_smtp_unconfigured']);
 } elseif (!empty($_SESSION['otp_cooldown_seconds'])) {
     $sec = (int)$_SESSION['otp_cooldown_seconds'];
-    $error = 'A verification code was sent recently. Try again in ' . $sec . ' second' . ($sec === 1 ? '' : 's') . '.';
+    $info = 'A verification code was sent to ' . $masked . ' less than a minute ago — enter that code below, or request a new one in '
+        . $sec . ' second' . ($sec === 1 ? '' : 's') . '.';
     unset($_SESSION['otp_cooldown_seconds']);
+} elseif (!empty($_SESSION['otp_limit'])) {
+    $error = 'Too many codes were requested for this email in the last hour. Enter the most recent code you received, or try again later.';
+    unset($_SESSION['otp_limit']);
 } elseif (!empty($_SESSION['otp_sent'])) {
     $info = "We've sent a 6-digit code to " . $masked . ".";
     unset($_SESSION['otp_sent']);
@@ -58,26 +79,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     } else {
         // ── Activation form handler ────────────────────────────────
-        $code = trim($_POST['otp_code'] ?? '');
-        $password = $_POST['password'] ?? '';
-        $confirm_password = $_POST['confirm_password'] ?? '';
+        $code = trim((string)($_POST['otp_code'] ?? ''));
+        $password = (string)($_POST['password'] ?? '');
+        $confirm_password = (string)($_POST['confirm_password'] ?? '');
         $errors = [];
 
         if (($e = v_required($code, 'Verification Code')) !== true) { $errors['otp_code'] = $e; }
         elseif (($e = v_otp($code)) !== true) { $errors['otp_code'] = $e; }
-        if (($e = v_required($password, 'Password')) !== true) { $errors['password'] = $e; }
-        elseif (($e = v_password_strong($password)) !== true) { $errors['password'] = $e; }
-        if (($e = v_compare($password, $confirm_password, 'Passwords')) !== true) { $errors['confirm_password'] = $e; }
+        if (!$password_known) {
+            if (($e = v_required($password, 'Password')) !== true) { $errors['password'] = $e; }
+            elseif (($e = v_password_strong($password)) !== true) { $errors['password'] = $e; }
+            if (($e = v_compare($password, $confirm_password, 'Passwords')) !== true) { $errors['confirm_password'] = $e; }
+        }
 
         if (!empty($errors)) {
             $error = 'Please correct the highlighted fields below.';
         } else {
             $result = verify_otp($db, $user_id, 'activation', $code);
             if ($result === 'ok') {
-                $hash = password_hash($password, PASSWORD_BCRYPT);
-                $stmt = $db->prepare('UPDATE users SET is_verified = 1, password_hash = :hash WHERE id = :id');
-                $stmt->execute(['hash' => $hash, 'id' => $user_id]);
-                redirect('login.php?activated=1');
+                $activated = true;
+                if ($password_known) {
+                    // Atomic re-check: the password must still be the one this
+                    // session chose (a parallel "resume" may have replaced it).
+                    $upd = $db->prepare('UPDATE users SET is_verified = 1 WHERE id = :id AND is_verified = 0 AND SHA2(password_hash, 256) = :fp');
+                    $upd->execute(['id' => $user_id, 'fp' => $password_known]);
+                    $activated = $upd->rowCount() === 1;
+                } else {
+                    $hash = password_hash($password, PASSWORD_BCRYPT);
+                    $db->prepare('UPDATE users SET is_verified = 1, password_hash = :hash WHERE id = :id')
+                       ->execute(['hash' => $hash, 'id' => $user_id]);
+                }
+                unset($_SESSION['activation_pw_known'][$user_id]);
+                if (!$activated) {
+                    // The code was consumed but the registration changed
+                    // underneath us: make the code holder set the password.
+                    $password_known = '';
+                    $error = 'The registration for this email was changed while you were activating. Please request a new code and set your password.';
+                } elseif ($is_institution) {
+                    // Institutions still need super-admin approval: say so
+                    // instead of implying they can sign in straight away.
+                    $st = $db->prepare('SELECT status FROM institutions WHERE user_id = :u LIMIT 1');
+                    $st->execute(['u' => $user_id]);
+                    if ($st->fetchColumn() !== 'approved') {
+                        redirect('login.php?activated=1&awaiting_approval=1');
+                    }
+                    redirect('login.php?activated=1');
+                } else {
+                    redirect('login.php?activated=1');
+                }
             } elseif ($result === 'expired') {
                 $error = 'This verification code has expired. Please request a new one.';
             } elseif ($result === 'locked') {
@@ -101,7 +150,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <div class="brand-name">CertiVault</div>
         </div>
         <h2>Activate Your Account</h2>
-        <p>Enter the 6-digit code sent to <strong><?= htmlspecialchars($masked) ?></strong> and set your password.</p>
+        <?php if ($password_known): ?>
+            <p>Enter the 6-digit code sent to <strong><?= htmlspecialchars($masked) ?></strong> to verify your email. Your password is the one you just chose.</p>
+        <?php else: ?>
+            <p>Enter the 6-digit code sent to <strong><?= htmlspecialchars($masked) ?></strong> and set your password.</p>
+        <?php endif; ?>
+        <?php if ($is_institution): ?>
+            <p class="text-muted">After verification, the CertiVault administrator reviews your institution; you can sign in once it is approved.</p>
+        <?php endif; ?>
+        <?php if ($notice): ?>
+            <div class="alert alert-info"><?= htmlspecialchars($notice) ?></div>
+        <?php endif; ?>
         <?php if ($error): ?>
             <div class="alert alert-danger"><?= htmlspecialchars($error) ?></div>
         <?php endif; ?>
@@ -113,20 +172,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
             <input type="hidden" name="user_id" value="<?= (int)$user_id ?>">
             <div class="form-group">
-                <label>Verification Code:</label>
-                <input type="text" name="otp_code" maxlength="6" inputmode="numeric" autocomplete="one-time-code" class="otp-input" data-validate="required|otp" required>
+                <label for="otp_code">Verification Code:</label>
+                <input type="text" name="otp_code" id="otp_code" maxlength="6" inputmode="numeric" autocomplete="one-time-code" class="otp-input" data-validate="required|otp" required>
                 <?php render_field_error($errors, 'otp_code'); ?>
             </div>
+            <?php if (!$password_known): ?>
             <div class="form-group">
-                <label>Set Password:</label>
-                <input type="password" name="password" id="password" data-validate="required|min:8|max:72|strong" required>
+                <label for="password">Set Password:</label>
+                <input type="password" name="password" id="password" autocomplete="new-password" data-validate="required|min:8|max:72|strong" required>
                 <?php render_field_error($errors, 'password'); ?>
             </div>
             <div class="form-group">
-                <label>Confirm Password:</label>
-                <input type="password" name="confirm_password" data-validate="required|match:#password" required>
+                <label for="confirm_password">Confirm Password:</label>
+                <input type="password" name="confirm_password" id="confirm_password" autocomplete="new-password" data-validate="required|match:#password" required>
                 <?php render_field_error($errors, 'confirm_password'); ?>
             </div>
+            <?php endif; ?>
             <button type="submit" class="btn btn-primary">Activate Account</button>
         </form>
         <form method="POST" action="" style="margin-top:12px;">

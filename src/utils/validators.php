@@ -57,6 +57,18 @@ function v_compare($a, $b, $label) {
 
 /**
  * Valid email address, max 254 characters (RFC 5321 limit).
+ *
+ * filter_var(FILTER_VALIDATE_EMAIL) is the base check; on top of it we
+ * apply the same practical shape rules as ruleEmail() in
+ * public/assets/js/validation.js, so the browser and the server agree:
+ *   - local part: unquoted "dot-atom" (no leading/trailing/consecutive
+ *     dots), max 64 characters — quoted local parts are legal RFC syntax
+ *     but no real mailbox provider issues them;
+ *   - domain: at least two dot-separated labels of letters/digits/hyphens
+ *     (no leading/trailing hyphen, max 63 each) — this also rejects IP
+ *     literals such as user@[127.0.0.1], which filter_var accepts;
+ *   - top-level domain: 2+ letters, or an IDN "xn--" A-label.
+ * No DNS/MX lookups: they are slow, flaky offline, and leak user input.
  */
 function v_email($value) {
     $value = (string)$value;
@@ -65,6 +77,26 @@ function v_email($value) {
     }
     if (!filter_var($value, FILTER_VALIDATE_EMAIL)) {
         return 'Please provide a valid email address.';
+    }
+    $at = strrpos($value, '@');
+    $local = substr($value, 0, $at);
+    $domain = substr($value, $at + 1);
+    if (strlen($local) > 64
+        || !preg_match('/^[A-Za-z0-9!#$%&\'*+\/=?^_`{|}~-]+(\.[A-Za-z0-9!#$%&\'*+\/=?^_`{|}~-]+)*$/', $local)) {
+        return 'Please provide a valid email address.';
+    }
+    $labels = explode('.', $domain);
+    if (count($labels) < 2) {
+        return 'Please provide a valid email address (the domain needs a dot, e.g. example.com).';
+    }
+    foreach ($labels as $label) {
+        if (!preg_match('/^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/', $label)) {
+            return 'Please provide a valid email address.';
+        }
+    }
+    $tld = end($labels);
+    if (!preg_match('/^([A-Za-z]{2,63}|xn--[A-Za-z0-9-]{1,59})$/', $tld)) {
+        return 'Please provide a valid email address (check the ending, e.g. .com or .in).';
     }
     return true;
 }

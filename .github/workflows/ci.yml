@@ -23,6 +23,10 @@ env:
   CV_DB_USER: root
   CV_DB_PASS: ci-root-password
   CV_TEST_DB: certivault_test
+  # Guest free-verification quota off for every php -S the suites start
+  # (they verify as guests many times on purpose). tests/test_guest_quota.php
+  # sets its own limit explicitly, so the quota itself is still covered.
+  CV_GUEST_VERIFY_LIMIT: '0'
 
 jobs:
   php:

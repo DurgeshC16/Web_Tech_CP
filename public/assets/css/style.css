@@ -1207,3 +1207,35 @@ img { max-width: 100%; height: auto; }
     .viz-bar-row { grid-template-columns: 1fr auto; }
     .viz-bar-track { grid-column: 1 / -1; grid-row: 2; }
 }
+
+/* ===================================================================
+   AUTH: password field helpers (show/hide eye + strength meter)
+   Appended by the auth-flows change. JS: ui.js wraps every password
+   input in .pw-field and adds .pw-toggle; validation.js renders
+   .pw-meter (bar + .pw-rules checklist) on data-validate="...strong".
+   Keep these class names when redesigning.
+   =================================================================== */
+.pw-field { position: relative; display: block; }
+.form-group .pw-field input { padding-right: 48px; }
+.pw-field .pw-toggle {
+    position: absolute; top: 50%; right: 2px; transform: translateY(-50%);
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 44px; height: 44px; min-height: 44px; margin: 0; padding: 0;
+    background: transparent; border: 0; border-radius: 6px;
+    color: var(--muted); cursor: pointer; text-decoration: none;
+}
+.pw-field .pw-toggle:hover { color: var(--ink); }
+.pw-field .pw-toggle:focus-visible { outline: 2px solid var(--seal); outline-offset: 1px; color: var(--ink); }
+.pw-field .pw-toggle[aria-pressed="true"] { color: var(--seal); }
+.pw-meter-fill { width: 0; background: var(--danger); transition: width .2s ease, background-color .2s ease; }
+.pw-meter-fill[data-score="1"] { width: 20%; background: var(--danger); }
+.pw-meter-fill[data-score="2"] { width: 40%; background: var(--warn); }
+.pw-meter-fill[data-score="3"] { width: 60%; background: var(--warn); }
+.pw-meter-fill[data-score="4"] { width: 80%; background: var(--verified); }
+.pw-meter-fill[data-score="5"] { width: 100%; background: var(--verified); }
+.pw-rules { list-style: none; margin: 6px 0 0; padding: 0; font-size: 0.8125rem; color: var(--muted);
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 2px 12px; }
+.pw-rules li::before { content: "\25CB"; display: inline-block; width: 1.2em; }
+.pw-rules li.met { color: var(--verified); }
+.pw-rules li.met::before { content: "\2713"; }
+/* =================== end AUTH password helpers =================== */

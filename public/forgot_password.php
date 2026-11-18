@@ -5,12 +5,12 @@ require_once __DIR__ . '/../src/utils/helpers.php';
 $error = '';
 $errors = [];
 $info = '';
-$email = '';
+$email = normalize_email($_SESSION['pw_reset']['email'] ?? '');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     validate_csrf_token($_POST['csrf_token'] ?? '');
 
-    $email = sanitize_input($_POST['email'] ?? '');
+    $email = normalize_email($_POST['email'] ?? '');
     $errors = [];
 
     // SMTP not configured: a deterministic message for ANY submitted email.
@@ -26,34 +26,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!empty($errors)) {
             $error = 'Please correct the highlighted fields below.';
         } else {
-        $db = Database::getInstance();
-        $stmt = $db->prepare('SELECT id, is_verified FROM users WHERE email = :email LIMIT 1');
-        $stmt->execute(['email' => $email]);
-        $user = $stmt->fetch();
-
-        // ALWAYS show the same neutral message whether or not the account exists
-        $info = "If an account exists for that email, we've sent a verification code.";
-
-        // Only send an OTP to verified accounts
-        if ($user && (int)$user['is_verified'] === 1) {
-            $otp_result = create_otp($db, $user['id'], 'password_reset');
-            if ($otp_result === 'sent') {
-                // Store the target user in the session (not in the URL)
-                $_SESSION['password_reset_user_id'] = $user['id'];
-                $_SESSION['password_reset_expires'] = time() + OTP_LIFETIME; // 10 minutes, matches the OTP
-                redirect('reset_password.php');
-            } elseif ($otp_result === 'cooldown') {
-                $sec = otp_cooldown_remaining($db, $user['id'], 'password_reset');
-                $info = "If an account exists for that email, we've sent a verification code. Try again in " . max($sec, 1) . " second" . ($sec === 1 ? '' : 's') . ".";
-            } elseif ($otp_result === 'limit') {
-                $info = "If an account exists for that email, we've sent a verification code. Too many requests — please try again later.";
-            }
-            // On mail_failed, still show neutral message (already set above)
-        }
-        // For non-existent or unverified accounts, just show the neutral message
-        }
+            $db = Database::getInstance();
+            // Sends a code only to a verified account; cooldown / hourly
+            // limit / delivery failures are handled silently. Whatever
+            // happened, ALWAYS continue to the code-entry step with the
+            // same neutral wording (no account enumeration). The email is
+            // remembered in the session, never in the URL.
+            request_password_reset_code($db, $email);
+            $_SESSION['pw_reset_flash'] = 'requested';
+            redirect('reset_password.php');
         }
     }
+}
 ?>
 <?php $page_title = 'Forgot Password - CertiVault'; require __DIR__ . '/../src/partials/head.php'; ?>
 <?php require __DIR__ . '/../src/partials/header.php'; ?>
@@ -65,7 +49,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <div class="brand-name">CertiVault</div>
         </div>
         <h2>Forgot Password</h2>
-        <p>Enter your email address and we'll send you a verification code to reset your password.</p>
+        <p><strong>Step 1 of 2:</strong> enter your email address and we'll send you a 6-digit verification code. On the next step you enter that code and choose a new password.</p>
         <?php if ($error): ?>
             <div class="alert alert-danger"><?= htmlspecialchars($error) ?></div>
         <?php endif; ?>
@@ -73,15 +57,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <div class="alert alert-success"><?= htmlspecialchars($info) ?></div>
         <?php endif; ?>
 
-        <?php if (!empty($errors)): ?>
-            <div class="alert alert-danger">Please correct the highlighted fields below.</div>
-        <?php endif; ?>
-
         <form method="POST" action="">
             <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
             <div class="form-group">
-                <label>Email:</label>
-                <input type="email" name="email" value="<?= htmlspecialchars($email ?? '') ?>" data-validate="required|email" required>
+                <label for="fp_email">Email:</label>
+                <input type="email" name="email" id="fp_email" autocomplete="email" value="<?= htmlspecialchars($email) ?>" data-validate="required|email" required>
                 <?php render_field_error($errors, 'email'); ?>
             </div>
             <div class="form-group">
@@ -89,6 +69,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
             <button type="submit" class="btn btn-primary">Send Reset Code</button>
         </form>
+        <div class="alert alert-info" data-have-code>
+            <strong>Already have a code?</strong>
+            <a href="reset_password.php">Enter it here</a> together with your email and a new password.
+        </div>
         <p><a href="login.php">Back to Login</a></p>
     </div>
     <script src="assets/js/validation.js"></script>

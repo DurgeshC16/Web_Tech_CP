@@ -7,7 +7,6 @@ $error = '';
 $errors = [];
 $success = '';
 $show_resend = false;
-$resend_email = '';
 $email = '';
 
 if (empty($_SESSION['user_id']) && !empty($_COOKIE[REMEMBER_COOKIE])) {
@@ -33,8 +32,16 @@ if (empty($_SESSION['user_id']) && !empty($_COOKIE[REMEMBER_COOKIE])) {
     }
 }
 
+$info = '';
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['activated'])) {
-    $success = 'Account activated successfully! You can now login.';
+    if (isset($_GET['awaiting_approval'])) {
+        // Institution accounts: email verified, but sign-in only works
+        // after the super admin approves the institution.
+        $success = 'Your email is verified.';
+        $info = 'Your institution is now awaiting approval by the CertiVault administrator. You will be able to log in once it is approved.';
+    } else {
+        $success = 'Account activated successfully! You can now login.';
+    }
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['password_reset'])) {
@@ -57,31 +64,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     validate_csrf_token($_POST['csrf_token'] ?? '');
 
     // ── POST-based resend handler ──────────────────────────────────
+    // Only honoured for the account whose password was just proven in this
+    // session (stored below as pending_activation_user), so this button can
+    // no longer be used to probe arbitrary addresses for user ids.
     if (isset($_POST['resend_activation'])) {
-        $resend_email_input = sanitize_input($_POST['resend_email'] ?? '');
+        $pending_uid = (int)($_SESSION['pending_activation_user'] ?? 0);
         $db = Database::getInstance();
-        $stmt = $db->prepare('SELECT id, is_verified FROM users WHERE email = :email LIMIT 1');
-        $stmt->execute(['email' => $resend_email_input]);
-        $resend_user = $stmt->fetch();
-        if ($resend_user && !(int)$resend_user['is_verified']) {
-            $otp_result = create_otp($db, $resend_user['id'], 'activation');
-            if ($otp_result === 'sent') {
-                $_SESSION['otp_sent'] = true;
-            } elseif ($otp_result === 'cooldown') {
-                $_SESSION['otp_cooldown_seconds'] = max(otp_cooldown_remaining($db, $resend_user['id'], 'activation'), 1);
-            } elseif ($otp_result === 'smtp_not_configured') {
-                $_SESSION['otp_smtp_unconfigured'] = true;
-            } else {
-                $_SESSION['otp_send_failed'] = true;
-            }
-            redirect('activate_account.php?user_id=' . $resend_user['id']);
+        $resend_user = null;
+        if ($pending_uid > 0) {
+            $stmt = $db->prepare('SELECT id, is_verified FROM users WHERE id = :id LIMIT 1');
+            $stmt->execute(['id' => $pending_uid]);
+            $resend_user = $stmt->fetch();
         }
-        // If user doesn't exist or is already verified, just redirect to login
+        if ($resend_user && !(int)$resend_user['is_verified']) {
+            unset($_SESSION['pending_activation_user']);
+            queue_activation_otp($db, (int)$resend_user['id']); // cooldown/limit still lead to the code page
+            redirect('activate_account.php?user_id=' . (int)$resend_user['id']);
+        }
+        // Unknown / already verified / no proven password: back to login.
         redirect('login.php');
     }
 
     // ── Normal login handler ───────────────────────────────────────
-    $email = sanitize_input($_POST['email'] ?? '');
+    // Trimmed + lowercased so "User@Example.com " matches the stored
+    // address and the per-email rate limit can't be split by case.
+    $email = normalize_email($_POST['email'] ?? '');
     $password = $_POST['password'] ?? '';
     $errors = [];
 
@@ -111,23 +118,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $error = 'Account temporarily locked due to too many failed login attempts. Please try again after ' . $user['locked_until'] . '.';
             $user = null;
         } elseif ($user && password_verify($password, $user['password_hash'])) {
-            // Check institution approval status if admin
-            if ($user['role'] === 'admin') {
-                $instStmt = $db->prepare('SELECT status FROM institutions WHERE user_id = :user_id LIMIT 1');
+            // Order matters: email verification comes FIRST for every role.
+            // (It used to be checked after institution approval, so an
+            // unverified institution was told "pending approval or
+            // rejected" and never offered the activation step.)
+            if ((int)$user['is_verified'] === 0) {
+                $error = 'Please verify your email first — enter the 6-digit code we emailed you.';
+                $show_resend = true;
+                // The password was just proven: the activation page then
+                // only asks for the code, and the resend button below is
+                // bound to this account (not to a posted email address).
+                $_SESSION['pending_activation_user'] = (int)$user['id'];
+                mark_activation_password_known((int)$user['id'], $db);
+                $user = null; // prevent login
+            } elseif ($user['role'] === 'admin') {
+                // Verified institution: is it approved yet?
+                $instStmt = $db->prepare('SELECT status, rejection_reason FROM institutions WHERE user_id = :user_id LIMIT 1');
                 $instStmt->execute(['user_id' => $user['id']]);
                 $inst = $instStmt->fetch();
 
-                if (!$inst || $inst['status'] !== 'approved') {
-                    $error = 'Your institution account is pending approval or rejected.';
-                    $user = null; // nullify to prevent login
+                if (!$inst) {
+                    $error = 'No institution profile is linked to this account. Please contact the CertiVault administrator.';
+                    $user = null;
+                } elseif ($inst['status'] === 'pending') {
+                    $error = 'Your email is verified. Your institution is awaiting approval by the CertiVault administrator.';
+                    $user = null;
+                } elseif ($inst['status'] === 'rejected') {
+                    $reason = trim((string)($inst['rejection_reason'] ?? ''));
+                    $error = 'Your institution registration was rejected by the CertiVault administrator.'
+                        . ($reason !== '' ? ' Reason: ' . $reason : '')
+                        . ' Please contact the administrator if you believe this is a mistake.';
+                    $user = null;
+                } elseif ($inst['status'] !== 'approved') {
+                    $error = 'Your institution account is not approved. Please contact the CertiVault administrator.';
+                    $user = null;
                 }
-            }
-
-            if ($user && (int)$user['is_verified'] === 0) {
-                $error = 'Please verify your account first — check your email for the code.';
-                $show_resend = true;
-                $resend_email = $email;
-                $user = null; // prevent login
             }
 
             if ($user) {
@@ -195,20 +220,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <?php if ($show_resend): ?>
             <form method="POST" action="" class="inline-form" style="margin-bottom:12px;">
                 <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
-                <input type="hidden" name="resend_email" value="<?= htmlspecialchars($resend_email) ?>">
                 <input type="hidden" name="resend_activation" value="1">
-                <button type="submit" class="btn btn-secondary">Resend verification code</button>
+                <button type="submit" class="btn btn-secondary" data-continue-activation>Continue activation (send me a code)</button>
             </form>
         <?php endif; ?>
         <?php if ($success): ?>
             <div class="alert alert-success"><?= htmlspecialchars($success) ?></div>
         <?php endif; ?>
+        <?php if ($info): ?>
+            <div class="alert alert-info"><?= htmlspecialchars($info) ?></div>
+        <?php endif; ?>
 
         <form method="POST" action="">
             <input type="hidden" name="csrf_token" value="<?= generate_csrf_token() ?>">
             <div class="form-group">
-                <label>Email:</label>
-                <input type="email" name="email" value="<?= htmlspecialchars($email !== '' ? $email : $remembered_email) ?>" data-validate="required|email" required>
+                <label for="login_email">Email:</label>
+                <input type="email" name="email" id="login_email" autocomplete="username" value="<?= htmlspecialchars($email !== '' ? $email : $remembered_email) ?>" data-validate="required|email" required>
                 <?php render_field_error($errors, 'email'); ?>
             </div>
             <div class="form-group">
@@ -218,8 +245,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <label><input type="checkbox" name="remember_me" value="1" style="width:auto;"> Keep me signed in on this device (30 days)</label>
             </div>
             <div class="form-group">
-                <label>Password:</label>
-                <input type="password" name="password" data-validate="required" required>
+                <label for="login_password">Password:</label>
+                <input type="password" name="password" id="login_password" autocomplete="current-password" data-validate="required" required>
                 <?php render_field_error($errors, 'password'); ?>
             </div>
             <div class="form-group">

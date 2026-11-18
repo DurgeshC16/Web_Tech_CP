@@ -117,6 +117,15 @@ for ($i = 0; $i < 5; $i++) {
 }
 t_check('6th code in an hour => limit', create_otp($db, $u4, 'activation') === 'limit');
 
+// ── 8b. queue_activation_otp() flashes every outcome for the code page ─
+// (registration / login always continue to activate_account.php; a limit
+// or cooldown must surface as a message there, never as a dead end).
+$_SESSION = [];
+t_check('queue_activation_otp: limit => otp_limit flash', queue_activation_otp($db, $u4) === 'limit' && !empty($_SESSION['otp_limit']));
+$_SESSION = [];
+t_check('queue_activation_otp: cooldown => seconds flash', queue_activation_otp($db, $u1) === 'cooldown' && (int)($_SESSION['otp_cooldown_seconds'] ?? 0) >= 1);
+$_SESSION = [];
+
 // ── 9. A fresh unused code supersedes older unused codes ─────────────
 $u5 = otp_make_user($db, 'otp5@test.local');
 otp_clear_spool();

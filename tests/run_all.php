@@ -32,6 +32,9 @@ $files = [
     'test_bulk_issuance.php', // shared issuance pipeline, generated PDFs, CSV
     'test_two_factor.php',    // TOTP 2FA: RFC vectors, replay, recovery codes, HTTP login
     'test_analytics.php',     // institution analytics (DST-safe days, scoping)
+    'test_auth_flows.php',    // resumable registration, login message order, forgot->reset always reachable
+    'test_guest_quota.php',   // guest verification quota: unit + HTTP (spawns php -S, limit 5)
+    'test_dataset.php',       // 100-person demo dataset generator against the test DB
     // Browser suite (needs Chrome/Edge + Node >= 21): node tests/test_verify_ui.mjs
     // test_smtp_live.php needs a real SMTP account; run it by hand.
 ];

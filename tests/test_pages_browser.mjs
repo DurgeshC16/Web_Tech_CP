@@ -99,7 +99,7 @@ async function main() {
   const BASE = `http://127.0.0.1:${port}`;
   const server = spawn(PHP, ['-S', `127.0.0.1:${port}`, '-t', 'public'], {
     cwd: ROOT, stdio: 'ignore',
-    env: { ...phpEnv, CV_DB_NAME: process.env.CV_TEST_DB || 'certivault_test', CV_MAIL_TRANSPORT: 'file', CV_ENV: 'development', CV_BASE_URL: BASE },
+    env: { ...phpEnv, CV_DB_NAME: process.env.CV_TEST_DB || 'certivault_test', CV_MAIL_TRANSPORT: 'file', CV_ENV: 'development', CV_BASE_URL: BASE, CV_GUEST_VERIFY_LIMIT: '0' },
   });
   let up = false;
   for (let i = 0; i < 80 && !up; i++) { try { up = (await fetch(`${BASE}/index.php`)).ok; } catch { /* starting */ } if (!up) await sleep(150); }

@@ -27,9 +27,27 @@
     function ruleRequired(v) {
         return v.trim() !== '' ? true : 'This field is required.';
     }
+    // Mirrors v_email() in validators.php: 254 max, dot-atom local part
+    // (no leading/trailing/double dots, max 64), domain of 2+ labels made
+    // of letters/digits/hyphens (no edge hyphens, max 63 each), and a TLD
+    // of 2+ letters (or an IDN xn-- label). IP literals are rejected.
+    var EMAIL_LOCAL = /^[A-Za-z0-9!#$%&'*+\/=?^_`{|}~-]+(\.[A-Za-z0-9!#$%&'*+\/=?^_`{|}~-]+)*$/;
+    var EMAIL_LABEL = /^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/;
+    var EMAIL_TLD = /^([A-Za-z]{2,63}|xn--[A-Za-z0-9-]{1,59})$/;
     function ruleEmail(v) {
+        var bad = 'Please provide a valid email address.';
         if (v.length > 254) return 'Email address must not exceed 254 characters.';
-        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) ? true : 'Please provide a valid email address.';
+        var at = v.lastIndexOf('@');
+        if (at < 1 || at === v.length - 1) return bad;
+        var local = v.slice(0, at), domain = v.slice(at + 1);
+        if (local.length > 64 || !EMAIL_LOCAL.test(local)) return bad;
+        var labels = domain.split('.');
+        if (labels.length < 2) return 'Please provide a valid email address (the domain needs a dot, e.g. example.com).';
+        for (var i = 0; i < labels.length; i++) {
+            if (!EMAIL_LABEL.test(labels[i])) return bad;
+        }
+        if (!EMAIL_TLD.test(labels[labels.length - 1])) return 'Please provide a valid email address (check the ending, e.g. .com or .in).';
+        return true;
     }
     function ruleNumber(v) {
         return /^-?\d+$/.test(v.trim()) ? true : 'Value must be a whole number.';
@@ -202,14 +220,20 @@
                 msg = document.createElement('div');
                 msg.className = 'field-error';
                 msg.setAttribute('aria-live', 'polite');
-                input.parentNode.insertBefore(msg, input.nextSibling);
+                var anchor = input.closest('.pw-field') || input;
+                anchor.parentNode.insertBefore(msg, anchor.nextSibling);
             }
             msg.textContent = result;
             msg.style.display = 'block';
         }
     }
 
-    // ── Password strength meter ───────────────────────────────────────
+    // ── Password strength meter + live rule checklist ─────────────────
+    // Attached to every data-validate="...strong" field (registration,
+    // activation, reset, change password). The checklist mirrors
+    // v_password_strong() exactly; the bar is only a coarse hint. State is
+    // exposed through classes / data-score (styled in style.css), never
+    // inline style attributes. The show/hide eye button lives in ui.js.
     function strengthScore(v) {
         var s = 0;
         if (v.length >= 8) s++;
@@ -220,45 +244,58 @@
         return s; // 0..5
     }
     var METER_LABELS = ['Very weak', 'Weak', 'Fair', 'Good', 'Strong', 'Very strong'];
+    var PW_RULES = [
+        ['len', '8–72 characters', function (v) { return v.length >= 8 && v.length <= 72; }],
+        ['upper', 'An uppercase letter (A–Z)', function (v) { return /[A-Z]/.test(v); }],
+        ['lower', 'A lowercase letter (a–z)', function (v) { return /[a-z]/.test(v); }],
+        ['digit', 'A digit (0–9)', function (v) { return /\d/.test(v); }],
+        ['special', 'A symbol (e.g. !@#?)', function (v) { return /[^A-Za-z0-9]/.test(v); }]
+    ];
 
     function attachMeter(input) {
-        var group = input.closest('.form-group') || input.parentNode;
         var meter = document.createElement('div');
         meter.className = 'pw-meter';
         var bar = document.createElement('div');
         bar.className = 'pw-meter-bar';
         var fill = document.createElement('div');
         fill.className = 'pw-meter-fill';
+        fill.setAttribute('data-score', '0');
         var label = document.createElement('div');
         label.className = 'pw-meter-label';
+        label.setAttribute('aria-live', 'polite');
         bar.appendChild(fill);
         meter.appendChild(bar);
         meter.appendChild(label);
-        input.parentNode.insertBefore(meter, input.nextSibling);
-        input.addEventListener('input', function () {
-            var s = input.value ? strengthScore(input.value) : 0;
-            fill.style.width = (s / 5 * 100) + '%';
-            fill.style.background = ['#B3261E', '#B3261E', '#C2780B', '#C2780B', '#1F7A4D', '#1F7A4D'][s];
-            label.textContent = input.value ? 'Strength: ' + METER_LABELS[s] : '';
-        });
-    }
 
-    // ── Show/hide password toggle ─────────────────────────────────────
-    function attachToggle(input) {
-        var btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'pw-toggle';
-        btn.textContent = 'Show';
-        btn.setAttribute('aria-label', 'Show password');
-        btn.addEventListener('click', function () {
-            var show = input.type === 'password';
-            input.type = show ? 'text' : 'password';
-            btn.textContent = show ? 'Hide' : 'Show';
-            btn.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+        var list = document.createElement('ul');
+        list.className = 'pw-rules';
+        list.setAttribute('aria-label', 'Password requirements');
+        var items = PW_RULES.map(function (r) {
+            var li = document.createElement('li');
+            li.setAttribute('data-rule', r[0]);
+            li.textContent = r[1];
+            list.appendChild(li);
+            return li;
         });
-        var ref = input.nextSibling;
-        if (ref && ref.nodeType === 1 && ref.classList.contains('pw-meter')) ref = ref.nextSibling;
-        input.parentNode.insertBefore(btn, ref);
+        meter.appendChild(list);
+
+        // Place after the ui.js wrapper (input + eye button) when present.
+        var anchor = input.closest('.pw-field') || input;
+        anchor.parentNode.insertBefore(meter, anchor.nextSibling);
+
+        function update() {
+            var v = input.value;
+            var s = v ? strengthScore(v) : 0;
+            fill.setAttribute('data-score', String(s));
+            label.textContent = v ? 'Strength: ' + METER_LABELS[s] : '';
+            PW_RULES.forEach(function (r, i) {
+                var met = v !== '' && r[2](v);
+                items[i].classList.toggle('met', met);
+                items[i].setAttribute('aria-label', r[1] + (met ? ' — done' : ' — missing'));
+            });
+        }
+        input.addEventListener('input', update);
+        update();
     }
 
     // ── Smart Verify either/or: at least one of ID / file must exist ──
@@ -320,7 +357,6 @@
 
     document.addEventListener('DOMContentLoaded', function () {
         document.querySelectorAll('input[data-validate*="strong"]').forEach(attachMeter);
-        document.querySelectorAll('input[type="password"]').forEach(function (input) { attachToggle(input); });
 
         document.querySelectorAll('[data-validate]').forEach(function (input) {
             input.addEventListener('blur', function () { validateInput(input); });
@@ -338,6 +374,12 @@
                 // are shown; skip re-validation and the button-disable step.
                 if (form.dataset.svBlocked === '1') {
                     form.dataset.svBlocked = '';
+                    return;
+                }
+                // A secondary submit button marked formnovalidate (e.g.
+                // "Resend code" on reset_password.php) only needs the
+                // fields the server re-checks itself — skip the rules.
+                if (e.submitter && e.submitter.hasAttribute('formnovalidate')) {
                     return;
                 }
                 var ok = true;

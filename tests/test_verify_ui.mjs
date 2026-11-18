@@ -240,6 +240,7 @@ async function main() {
     CV_DB_NAME: process.env.CV_TEST_DB || 'certivault_test',
     CV_MAIL_TRANSPORT: 'file',
     CV_ENV: 'development',
+    CV_GUEST_VERIFY_LIMIT: '0', // guest quota off: this suite verifies as a guest many times
     CV_BASE_URL: BASE,
   };
   const server = spawn(PHP, ['-S', `127.0.0.1:${port}`, '-t', 'public'], { cwd: ROOT, env: serverEnv, stdio: 'ignore' });
